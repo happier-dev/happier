@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 
 import {
     SessionAuthoringControls,
@@ -10,7 +11,6 @@ import {
     type SessionAuthoringControlFacts,
     type SessionAuthoringFieldId,
 } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
-import { Item } from '@/components/ui/lists/Item';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Text } from '@/components/ui/text/Text';
@@ -39,10 +39,12 @@ import type { WorkflowRunAsTarget, WorkflowRunAsTargetKind } from '../run/workfl
 import { formatWorkflowContinuitySummary, WorkflowContinuityControls } from './WorkflowContinuityControls';
 import { WorkflowFinalOutputEditor } from './WorkflowFinalOutputEditor';
 import { WorkflowInputsEditor } from './WorkflowInputsEditor';
+import { WorkflowRolesEditor } from './WorkflowRolesEditor';
 import { formatWorkflowWhereSummary, WorkflowProjectTargetControl } from './WorkflowProjectTargetControl';
 import { WorkflowBlockOptions } from './WorkflowBlockOptions';
 import { issuesUnder, NO_DISCLOSURE, WorkflowInspectorGroup } from './workflowInspectorGroup';
 import { workflowEditorStyles } from './workflowEditorStyles';
+import type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
 
 /**
  * The one content owner for workflow and step settings (04 §5.2): one
@@ -59,8 +61,7 @@ import { workflowEditorStyles } from './workflowEditorStyles';
  * opened it — the person's choice lives in the editor view state, never in the
  * definition. A closed disclosure never hides an error or a required field.
  *
- * Triggers ("Runs automatically", U-16) and "Roles for this workflow" (ORC's
- * resolver) extend this owner in place when their producers land.
+ * Triggers and definition-local roles extend the same draft/history owner.
  */
 export type WorkflowInspectorSubject =
     | Readonly<{ kind: 'workflow' }>
@@ -73,6 +74,8 @@ export type WorkflowInspectorProps = Readonly<{
     presentation: WorkflowInspectorPresentation;
     draft: WorkflowEditorDraft;
     onChange: (next: WorkflowEditorDraft) => void;
+    /** Definition access is independent of the active Account's personal triggers. */
+    documentEditable?: boolean;
     /** The page's validation: an issue inside a group keeps that group open. */
     validation?: WorkflowDraftValidation;
     /** The person's own open/closed choices, from the editor view state. */
@@ -82,6 +85,7 @@ export type WorkflowInspectorProps = Readonly<{
     onDone?: () => void;
     authoringFacts?: SessionAuthoringControlFacts;
     existingSessions?: readonly WorkflowExistingSessionOption[];
+    bindExistingSession?: WorkflowSessionDrop['bind'];
     /** Where it runs: the host's placement, edited through the Where owner. */
     projectTarget?: WorkflowAuthoringTarget | null;
     machineName: string | null;
@@ -104,6 +108,7 @@ const AGENT_SUMMARY_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget',
 
 
 export function WorkflowInspector(props: WorkflowInspectorProps): React.ReactElement | null {
+    if (props.documentEditable === false) return <View>{props.runsAutomatically ?? null}</View>;
     if (props.subject.kind === 'block') {
         const block = findWorkflowBlock(props.draft, props.subject.blockId);
         // A subject that no longer resolves renders nothing and the host closes its presentation.
@@ -166,26 +171,24 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 valueSet
                 testID={`${testIDPrefix}-group-where`}
             >
-                <Item
-                    testID={`${testIDPrefix}-where-field`}
-                    title={t('workflows.page.sections.machineAndProject')}
-                    mode="info"
-                    accessoryLayout="stacked"
-                    rightElement={(
-                        <WorkflowProjectTargetControl
-                            presentation="field"
-                            target={props.projectTarget}
-                            machineName={props.machineName}
-                            {...(props.projectMachines === undefined ? {} : { machines: props.projectMachines })}
-                            {...(props.onChangeProjectTarget === undefined ? {} : { onChange: props.onChangeProjectTarget })}
-                            testIDPrefix={testIDPrefix}
-                        />
-                    )}
-                />
+                {/* One row, one field select (lab E1 "Machine and project"); the Where owner draws it. */}
+                <View testID={`${testIDPrefix}-where-field`}>
+                    <WorkflowProjectTargetControl
+                        presentation="field"
+                        title={t('workflows.page.sections.machineAndProject')}
+                        target={props.projectTarget}
+                        machineName={props.machineName}
+                        {...(props.projectMachines === undefined ? {} : { machines: props.projectMachines })}
+                        {...(props.onChangeProjectTarget === undefined ? {} : { onChange: props.onChangeProjectTarget })}
+                        testIDPrefix={testIDPrefix}
+                    />
+                </View>
                 {props.runAsTargets === undefined || props.onChangeExecutionTarget === undefined ? null : (
                     <SegmentedChoiceItem<WorkflowRunAsTargetKind>
                         testIDPrefix={`${testIDPrefix}-run-as`}
                         title={t('workflows.page.sections.eachStepRunsIn')}
+                        // The consequence wraps; it is never cut to an ellipsis.
+                        subtitleLines={0}
                         subtitle={executionTarget === 'detached_run'
                             ? t('workflows.page.sections.eachStepBackground')
                             : t('workflows.page.sections.eachStepSession')}
@@ -240,6 +243,14 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 />
             </WorkflowInspectorGroup>
 
+            <WorkflowInspectorGroup {...groupProps} groupId="roles"
+                title={t('workflows.page.sections.rolesTitle')}
+                summary={(draft.roles?.map((role) => 'name' in role ? role.name : role.roleId).join(' · ')) || t('workflows.page.inspector.none')}
+                attention={issuesUnder(issues, ['/roles'])} valueSet={(draft.roles?.length ?? 0) > 0}
+                testID={`${testIDPrefix}-group-roles`}>
+                <WorkflowRolesEditor draft={draft} onChange={onChange} prefix={testIDPrefix} />
+            </WorkflowInspectorGroup>
+
             <WorkflowInspectorGroup
                 {...groupProps}
                 groupId="conversation"
@@ -261,6 +272,9 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                         workspace={draft.defaults.workspace}
                         {...(props.existingSessions === undefined ? {} : { existingSessions: props.existingSessions })}
                         onChangeConversation={(value) => onChange(setWorkflowDefaultField(draft, 'conversation', value))}
+                        {...(props.bindExistingSession === undefined ? {} : {
+                            onBindExistingSession: (sessionId: string) => props.bindExistingSession!(null, sessionId),
+                        })}
                         onChangeWorkspace={(value) => onChange(setWorkflowDefaultField(draft, 'workspace', value))}
                         testIDPrefix={`${testIDPrefix}-defaults-continuity`}
                     />

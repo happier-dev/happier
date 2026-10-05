@@ -27,6 +27,30 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
     spies: { confirm: boundary.confirm },
 }).module);
+// These injected account journeys make no HTTP requests; fail if the transport is reached.
+vi.mock('@/sync/http/client', () => ({
+    serverFetch: () => { throw new Error('Unexpected HTTP request in injected account detail'); },
+}));
+// Session/Team envelope HTTP APIs are unrelated to this injected account journey.
+// Throw if reached instead of replacing any encryption or Account-domain logic.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Unexpected Session envelope API in account detail'); };
+    return {
+        createSessionDataKeyEnvelopeClient: unused,
+        readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused,
+        prepareSessionDataKeyEnvelopesDetached: unused,
+    };
+});
+vi.mock('@/sync/api/teams/membershipSessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Unexpected Team envelope API in account detail'); };
+    return {
+        createMembershipSessionDataKeyEnvelopeClient: unused,
+        prepareMembershipHistoryEnvelopesForScope: unused,
+        prepareMembershipHistoryEnvelopesDetached: unused,
+        membershipHistoryPreparationScopeKey: unused,
+    };
+});
 
 afterEach(standardCleanup);
 

@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { flattenTestStyle, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover/OverlayPortal';
+import { PopoverPortalTargetContextProvider } from '@/components/ui/popover/PopoverPortalTarget';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import {
     ConnectedServiceAuthGroupPolicyV1Schema,
@@ -24,8 +27,11 @@ const modalState = vi.hoisted(() => ({
     confirmResult: true,
     confirmSpy: vi.fn(),
 }));
+const platformState = vi.hoisted(() => ({ os: 'web' }));
 
-vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    Platform: { get OS() { return platformState.os; } },
+}));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 // These account journeys do not render Markdown; fail if the unavailable third-party export is used.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
@@ -99,6 +105,13 @@ function hasTitle(root: ReactTestInstance, title: string): boolean {
     return root.findAll((node) => node.props?.title === title).length > 0;
 }
 
+it('offers the supported usage refresh at the account header', async () => {
+    const refresh = vi.fn();
+    const screen = await renderDetail({ onRefresh: refresh });
+    await screen.pressByTestIdAsync('qualified-account-detail:refresh');
+    expect(refresh).toHaveBeenCalledTimes(1);
+});
+
 /** The row's own `title` prop (the label), read from the list row that carries it. */
 function rowTitleOf(root: ReactTestInstance, testID: string): unknown {
     return root.findAll((node) => (
@@ -123,6 +136,7 @@ function metaTextOf(root: ReactTestInstance, testID: string): string | undefined
 describe('QualifiedAccountDetailView', () => {
     let restoreWebGlobals: () => void;
     beforeEach(() => {
+        platformState.os = 'web';
         restoreWebGlobals = withPopoverWebGlobals();
         modalState.confirmResult = true;
         modalState.confirmSpy.mockClear();
@@ -130,7 +144,68 @@ describe('QualifiedAccountDetailView', () => {
 
     afterEach(() => {
         standardCleanup();
+        platformState.os = 'web';
         restoreWebGlobals();
+    });
+
+    it('keeps compact Rename and Save reachable from a measurable account identity', async () => {
+        platformState.os = 'ios';
+        const onRename = vi.fn();
+        const portalRoot = { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(0, 0, 390, 844) };
+        let screen: Awaited<ReturnType<typeof renderScreen>>;
+        // Native layout is the boundary. Only actually painted text gives a host an anchor box;
+        // the compact pencil wrapper is empty once its popover moves into the overlay host.
+        const paintsText = (node: ReactTestInstance | string): boolean => typeof node === 'string'
+            ? node.length > 0 : node.children.some(paintsText);
+        screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={{ rootRef: { current: portalRoot }, layout: { width: 390, height: 844 } }}>
+                <OverlayPortalProvider>
+                    <QualifiedAccountDetailView account={ACCOUNT} serviceLabel="Codex"
+                        presentation={{ primaryLabel: 'Work account', secondaryLabel: 'Codex', accessibilityLabel: 'Work account' }}
+                        rename={{ currentLabel: 'Work account', onRename }} />
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+            { createNodeMock: (element) => {
+                const props = React.isValidElement<{ ref?: unknown; children?: React.ReactNode }>(element) ? element.props : null;
+                const bounds = () => {
+                    const host = screen?.root.findAll((node) => node.type === element.type && (
+                        props?.ref ? node.props.ref === props.ref : node.props.children === props?.children
+                    ))[0];
+                    return host && paintsText(host) ? { width: 390, height: 120 } : { width: 0, height: 0 };
+                };
+                return {
+                    measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => {
+                        const rect = bounds(); callback(0, 60, rect.width, rect.height);
+                    },
+                    measureLayout: (_relative: unknown, callback: (x: number, y: number, width: number, height: number) => void) => {
+                        const rect = bounds(); callback(0, 60, rect.width, rect.height);
+                    },
+                };
+            } },
+        );
+        await act(async () => {
+            screen.root.findAll((node) => typeof node.type === 'string' && node.props.testID === 'qualified-account-detail')[0]
+                .props.onLayout({ nativeEvent: { layout: { width: 390, height: 844 } } });
+        });
+        await screen.pressByTestIdAsync('qualified-account-detail:action:edit-label');
+        await act(async () => {
+            for (const node of screen.root.findAll((node) => typeof node.type === 'string' && typeof node.props.onLayout === 'function')) {
+                node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 380, height: 170 } } });
+            }
+            await flushHookEffects({ cycles: 1, turns: 8 });
+        });
+        const save = screen.findHostByTestId('qualified-account-detail:rename:save');
+        expect(save).not.toBeNull();
+        for (let node = save; node; node = node.parent) {
+            if (typeof node.type !== 'string') continue;
+            expect(node.props.pointerEvents).not.toBe('none');
+            expect(flattenTestStyle(node.props.style).opacity).not.toBe(0);
+        }
+        await act(async () => screen.changeTextByTestId('qualified-account-detail:rename:input', 'Team'));
+        await screen.pressByTestIdAsync('qualified-account-detail:rename:save');
+        expect(onRename).toHaveBeenCalledWith('Team');
+        expect(screen.findHostByTestId('qualified-account-detail:rename:input')).toBeNull();
     });
 
     it('offers account configuration only when declared and opens its existing form', async () => {

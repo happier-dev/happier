@@ -76,5 +76,13 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // Only its exact dev/debug specimen is public so clean-browser visual QA can reach it.
     if (isDevRouteEnabled() && first === 'dev' && normalized[1] === 'changes' && normalized.length === 2) return true;
 
+    // The Find bar specimen draws the shared bar with fixture states and inert callbacks, no account
+    // or machine data. Only its exact dev/debug route is public so clean-browser visual QA can reach it.
+    if (isDevRouteEnabled() && first === 'dev' && normalized[1] === 'find' && normalized.length === 2) return true;
+
+    // The prompts specimen draws the composer prompt picker and library button with fixture prompts and
+    // inert callbacks, no account or machine data. Only its exact dev/debug route is public.
+    if (isDevRouteEnabled() && first === 'dev' && normalized[1] === 'prompts' && normalized.length === 2) return true;
+
     return false;
 }

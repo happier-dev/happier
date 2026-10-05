@@ -34,6 +34,7 @@ import type { AgentTextMessage, Message, ToolCallMessage, UserTextMessage } from
 import type { Settings } from '@/sync/domains/settings/settings';
 import { getPermissionModeLabelForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { t } from '@/text';
+import { resolveThinkingDisplayChoiceDelta, type ThinkingDisplayChoice } from '@/components/settings/session/thinkingDisplayChoice';
 
 /**
  * Previews for the visual choices on the transcript and composer settings pages. Each tile renders
@@ -72,6 +73,13 @@ function messageDisplayCommon(thinking: ThinkingDisplay): TranscriptMessageDispl
         ...thinking,
         transcriptMessageTimestampDisplayMode: 'never',
         transcriptMessageSelectionEnabled: false,
+        transcriptMessageCopyActionEnabled: false,
+        transcriptMessageForkActionEnabled: false,
+        transcriptMessageRollbackActionEnabled: false,
+        transcriptMessagePinActionEnabled: false,
+        transcriptMessageSavePromptActionEnabled: false,
+        transcriptMessageMakeRepeatableActionEnabled: false,
+        transcriptMessagePluginActionsEnabled: false,
         transcriptMessageSendToSessionEnabled: false,
         transcriptStreamingMarkdownRenderingEnabled: true,
         transcriptStreamingPartialOutputEnabled: true,
@@ -202,14 +210,12 @@ export const TranscriptLayoutPreview = React.memo(function TranscriptLayoutPrevi
     );
 });
 
-export type ThinkingDisplayPreviewMode = 'inline_summary' | 'inline_full' | 'tool' | 'hidden';
+export type ThinkingDisplayPreviewMode = ThinkingDisplayChoice;
 
-const THINKING_BY_MODE: Record<ThinkingDisplayPreviewMode, Omit<ThinkingDisplay, 'sessionThinkingInlineChrome'>> = {
-    inline_summary: { sessionThinkingDisplayMode: 'inline', sessionThinkingInlinePresentation: 'summary' },
-    inline_full: { sessionThinkingDisplayMode: 'inline', sessionThinkingInlinePresentation: 'full' },
-    tool: { sessionThinkingDisplayMode: 'tool', sessionThinkingInlinePresentation: 'summary' },
-    hidden: { sessionThinkingDisplayMode: 'hidden', sessionThinkingInlinePresentation: 'summary' },
-};
+/** The fields a thinking choice stores, from its one owner; a static preview still names a presentation. */
+function thinkingFieldsForChoice(choice: ThinkingDisplayChoice): Omit<ThinkingDisplay, 'sessionThinkingInlineChrome'> {
+    return { sessionThinkingInlinePresentation: 'summary', ...resolveThinkingDisplayChoiceDelta(choice) };
+}
 
 export const ThinkingDisplayPreview = React.memo(function ThinkingDisplayPreview(props: Readonly<{
     mode: ThinkingDisplayPreviewMode;
@@ -217,7 +223,7 @@ export const ThinkingDisplayPreview = React.memo(function ThinkingDisplayPreview
     inlineChrome: Settings['sessionThinkingInlineChrome'];
 }>) {
     const thinking = React.useMemo<ThinkingDisplay>(
-        () => ({ ...THINKING_BY_MODE[props.mode], sessionThinkingInlineChrome: props.inlineChrome }),
+        () => ({ ...thinkingFieldsForChoice(props.mode), sessionThinkingInlineChrome: props.inlineChrome }),
         [props.inlineChrome, props.mode],
     );
     return (
@@ -243,10 +249,90 @@ export const ToolStylePreview = React.memo(function ToolStylePreview(props: Read
     );
 });
 
+function readToolMessage(id: string, path: string): ToolCallMessage {
+    return {
+        kind: 'tool-call', id, localId: null, createdAt: 0, children: [],
+        tool: { name: 'Read', state: 'completed', input: { file_path: path }, createdAt: 0, startedAt: 0, completedAt: 0, description: null, result: '' },
+    };
+}
+
+function editToolMessage(id: string, path: string): ToolCallMessage {
+    return {
+        kind: 'tool-call', id, localId: null, createdAt: 0, children: [],
+        tool: {
+            name: 'Edit', state: 'completed', createdAt: 0, startedAt: 0, completedAt: 0, description: null, result: '',
+            input: { file_path: path, old_string: 'retryTimer = setTimeout(retry, delay);', new_string: 'clearTimeout(retryTimer);\nretryTimer = setTimeout(retry, delay);' },
+        },
+    };
+}
+
+/**
+ * A two-turn session at full size for a larger preview stage (Personalize Happier): the same real
+ * rows and the same sample as the tiles above, under the transcript choices being previewed. Static
+ * props only — no session, subscription or RPC.
+ */
+export const SessionTranscriptSample = React.memo(function SessionTranscriptSample(props: Readonly<{
+    layout: 'linear' | 'turns';
+    thinking: ThinkingDisplayPreviewMode;
+    toolChrome: ToolChromeMode;
+    toolDetail: ToolViewDisplaySettings['toolViewDetailLevelDefault'];
+    width: number;
+}>) {
+    const thinking = React.useMemo<ThinkingDisplay>(() => ({ ...thinkingFieldsForChoice(props.thinking), sessionThinkingInlineChrome: 'plain' }), [props.thinking]);
+    const display = React.useMemo(() => messageDisplayCommon(thinking), [thinking]);
+    const chrome = React.useMemo<TranscriptToolChromeCommon>(() => ({
+        ...toolChromeCommon(props.toolChrome),
+        toolDisplaySettings: { ...PREVIEW_TOOL_DISPLAY_SETTINGS, toolViewDetailLevelDefault: props.toolDetail },
+    }), [props.toolChrome, props.toolDetail]);
+    const tools = React.useMemo(() => [
+        readToolMessage('sample-read', 'relay/reconnect.ts'),
+        editToolMessage('sample-edit', 'relay/reconnect.ts'),
+        toolMessage('sample-test', 'yarn test reconnect'),
+    ], []);
+    const row = (message: Message) => (
+        <MessageViewWithSessionCommon
+            key={message.id}
+            message={message}
+            metadata={null}
+            sessionId={PREVIEW_SESSION_ID}
+            interaction={READ_ONLY_INTERACTION}
+            forkCommon={FORK_COMMON}
+            messageDisplayCommon={display}
+            toolChromeCommon={chrome}
+            toolRouteCommon={TOOL_ROUTE_COMMON}
+        />
+    );
+    return (
+        <SessionTranscriptSourceProvider source={PREVIEW_SOURCE}>
+            <View style={{ width: props.width }} pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+                {row(userMessage())}
+                {row(thinkingMessage())}
+                {props.layout === 'turns' ? (
+                    <ToolCallsGroupViewWithSessionCommon
+                        id="sample-group"
+                        status="completed"
+                        toolMessages={tools}
+                        metadata={null}
+                        sessionId={PREVIEW_SESSION_ID}
+                        expanded
+                        setExpanded={NOOP}
+                        interaction={READ_ONLY_INTERACTION}
+                        forkCommon={FORK_COMMON}
+                        messageDisplayCommon={display}
+                        toolChromeCommon={chrome}
+                        toolRouteCommon={TOOL_ROUTE_COMMON}
+                    />
+                ) : tools.map(row)}
+                {row(agentMessage())}
+            </View>
+        </SessionTranscriptSourceProvider>
+    );
+});
+
 type ChipLabels = 'all' | 'core' | 'none';
 
 /** The composer panel with the real action chips, as `AgentInput` lays them out. */
-function ComposerStage(props: Readonly<{ layout: 'wrap' | 'scroll' | 'collapsed'; labels: ChipLabels }>) {
+export function SessionComposerSample(props: Readonly<{ layout: 'wrap' | 'scroll' | 'collapsed'; labels: ChipLabels; width?: number }>) {
     const { theme } = useUnistyles();
     const tint = theme.colors.composer.chipTint;
     const textStyle = React.useMemo(() => resolveAgentInputActionChipTextStyle(theme), [theme]);
@@ -270,8 +356,8 @@ function ComposerStage(props: Readonly<{ layout: 'wrap' | 'scroll' | 'collapsed'
             createActionMenuTriggerChip({ anchorRef: anchor, tint, showLabel: props.labels === 'all', chipStyle: extraChipStyle, textStyle, onPress: NOOP }),
         ];
     return (
-        <View style={{ flex: 1, overflow: 'hidden', justifyContent: 'flex-end' }} pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
-            <View style={{ width: CANVAS_WIDTH, transform: [{ scale: CANVAS_SCALE }], transformOrigin: 'bottom left', padding: 10 }}>
+        <View style={{ flex: props.width === undefined ? 1 : undefined, overflow: 'hidden', justifyContent: 'flex-end' }} pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+            <View style={{ width: props.width ?? CANVAS_WIDTH, transform: [{ scale: props.width === undefined ? CANVAS_SCALE : 1 }], transformOrigin: 'bottom left', padding: 10 }}>
                 <View style={panelStyle}>
                     <Text style={{ paddingHorizontal: 8, paddingVertical: 10, color: theme.colors.input.placeholder, fontSize: 15 }}>
                         {t('session.inputPlaceholder')}
@@ -289,13 +375,13 @@ export const ComposerActionBarPreview = React.memo(function ComposerActionBarPre
     layout: 'auto' | 'wrap' | 'scroll' | 'collapsed';
 }>) {
     // Auto wraps on wide screens (where this page is usually read) and scrolls on phones.
-    return <ComposerStage layout={props.layout === 'auto' ? 'wrap' : props.layout} labels="all" />;
+    return <SessionComposerSample layout={props.layout === 'auto' ? 'wrap' : props.layout} labels="all" />;
 });
 
 export const ComposerChipDensityPreview = React.memo(function ComposerChipDensityPreview(props: Readonly<{
     density: 'auto' | 'labels' | 'icons';
 }>) {
-    return <ComposerStage layout="wrap" labels={props.density === 'labels' ? 'all' : props.density === 'icons' ? 'none' : 'core'} />;
+    return <SessionComposerSample layout="wrap" labels={props.density === 'labels' ? 'all' : props.density === 'icons' ? 'none' : 'core'} />;
 });
 
 const EMBEDDED_CHAT_CANVAS_WIDTH = 340;

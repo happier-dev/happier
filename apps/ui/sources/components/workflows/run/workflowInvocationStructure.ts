@@ -10,6 +10,7 @@ import type {
 import type { WorkflowInvocationCoverageKind } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import {
     indexWorkflowFlowRunStates,
+    resolveWorkflowFlowScopedNodeId,
     type WorkflowFlowNodeRunState,
 } from '@/components/workflows/flow/workflowFlowProjection';
 
@@ -54,6 +55,11 @@ export type WorkflowInvocationStructureEntry = Readonly<{
 }>;
 
 type Scope = WorkflowInvocationPathV1['scope'];
+type FrozenChildren = Readonly<Record<string, WorkflowDefinitionV1>>;
+
+function scopedBlockId(blockId: string, scope: Scope): string {
+    return resolveWorkflowFlowScopedNodeId(blockId, scope.flatMap((entry) => entry.kind === 'workflow' ? [entry.blockId] : []));
+}
 
 type ParallelBlock = Extract<WorkflowBlock, { kind: 'parallel' }>;
 type LoopBlock = Extract<WorkflowBlock, { kind: 'loop' }>;
@@ -85,12 +91,16 @@ function toIndex(decimal: string): number | null {
     return Number.isSafeInteger(value) ? value : null;
 }
 
-function childContextForBlock(block: WorkflowBlock, scope: Scope): MemberContext | null {
+function childContextForBlock(block: WorkflowBlock, scope: Scope, frozenChildren: FrozenChildren): MemberContext | null {
     switch (block.kind) {
         case 'step':
         case 'action':
-        case 'workflow':
         case 'wait': return null;
+        case 'workflow': {
+            const child = frozenChildren[block.workflowRef];
+            return child === undefined ? null : { kind: 'list', blocks: child.blocks,
+                scope: [...scope, { kind: 'workflow', blockId: block.id }] };
+        }
         case 'parallel': return { kind: 'branchFrames', block, scope };
         case 'loop': return { kind: 'memberFrames', block, scope };
         case 'if': return { kind: 'conditionalBlocks', block, scope };
@@ -101,18 +111,19 @@ function resolveListMember(
     blocks: readonly WorkflowBlock[],
     ordinal: number,
     scope: Scope,
+    frozenChildren: FrozenChildren,
 ): ResolvedMember | null {
     const block = blocks[ordinal];
     if (block === undefined) return null;
-    return { blockId: block.id, isFrame: false, scope, children: childContextForBlock(block, scope) };
+    return { blockId: block.id, isFrame: false, scope, children: childContextForBlock(block, scope, frozenChildren) };
 }
 
 const UNRESOLVED: ResolvedMember = { blockId: null, isFrame: false, scope: [], children: null };
 
-function resolveMember(context: MemberContext, ordinal: number): ResolvedMember | null {
+function resolveMember(context: MemberContext, ordinal: number, frozenChildren: FrozenChildren): ResolvedMember | null {
     switch (context.kind) {
         case 'list':
-            return resolveListMember(context.blocks, ordinal, context.scope);
+            return resolveListMember(context.blocks, ordinal, context.scope, frozenChildren);
         case 'conditionalBlocks': {
             // Which branch executed is a private decision. When only one branch
             // can hold this ordinal the answer is structural; otherwise the row
@@ -120,8 +131,8 @@ function resolveMember(context: MemberContext, ordinal: number): ResolvedMember 
             const inThen = ordinal < context.block.then.length;
             const inOtherwise = ordinal < context.block.otherwise.length;
             if (inThen && inOtherwise) return UNRESOLVED;
-            if (inThen) return resolveListMember(context.block.then, ordinal, context.scope);
-            if (inOtherwise) return resolveListMember(context.block.otherwise, ordinal, context.scope);
+            if (inThen) return resolveListMember(context.block.then, ordinal, context.scope, frozenChildren);
+            if (inOtherwise) return resolveListMember(context.block.otherwise, ordinal, context.scope, frozenChildren);
             return null;
         }
         case 'branchFrames': {
@@ -152,7 +163,7 @@ function resolveMember(context: MemberContext, ordinal: number): ResolvedMember 
         }
         case 'loopBody': {
             const body = context.block.body;
-            if (ordinal < body.length) return resolveListMember(body, ordinal, context.scope);
+            if (ordinal < body.length) return resolveListMember(body, ordinal, context.scope, frozenChildren);
             // The evaluator continuation runs after the body and occupies the
             // slot immediately past it.
             const repetition = context.block.repetition;
@@ -181,36 +192,42 @@ export function resolveWorkflowFlowNodeIdForInvocation(params: Readonly<{
     isFrame: boolean;
 }>): string | null {
     if (params.blockId === null || params.blockId === '$root') return null;
-    // This Flow contains the parent definition, not a called workflow's blocks.
-    // A coincidentally equal child id must not attach to a parent node.
-    if (params.scope.some((entry) => entry.kind === 'workflow')) return null;
     if (params.isFrame) {
         const tail = params.scope[params.scope.length - 1];
         if (tail !== undefined && tail.kind === 'branch' && tail.blockId === params.blockId) {
-            return `${params.blockId}#${tail.branchId}`;
+            return scopedBlockId(`${params.blockId}#${tail.branchId}`, params.scope);
         }
     }
-    return params.blockId;
+    return scopedBlockId(params.blockId, params.scope);
 }
 
-function collectWorkflowBlocksById(blocks: readonly WorkflowBlock[], into: Map<string, WorkflowBlock>): void {
+function collectWorkflowBlocksById(
+    blocks: readonly WorkflowBlock[], into: Map<string, WorkflowBlock>, frozenChildren: FrozenChildren,
+    workflowPath: readonly string[] = [], refs: readonly string[] = [],
+): void {
     for (const block of blocks) {
-        into.set(block.id, block);
+        into.set(resolveWorkflowFlowScopedNodeId(block.id, workflowPath), block);
         switch (block.kind) {
             case 'step':
             case 'action':
-            case 'workflow':
             case 'wait': break;
+            case 'workflow': {
+                const child = frozenChildren[block.workflowRef];
+                if (child !== undefined && !refs.includes(block.workflowRef)) {
+                    collectWorkflowBlocksById(child.blocks, into, frozenChildren, [...workflowPath, block.id], [...refs, block.workflowRef]);
+                }
+                break;
+            }
             case 'parallel':
-                for (const branch of block.branches) collectWorkflowBlocksById(branch.blocks, into);
+                for (const branch of block.branches) collectWorkflowBlocksById(branch.blocks, into, frozenChildren, workflowPath, refs);
                 break;
             case 'loop':
-                collectWorkflowBlocksById(block.body, into);
-                if (block.repetition.kind === 'evaluate') into.set(block.repetition.evaluator.id, block.repetition.evaluator);
+                collectWorkflowBlocksById(block.body, into, frozenChildren, workflowPath, refs);
+                if (block.repetition.kind === 'evaluate') into.set(resolveWorkflowFlowScopedNodeId(block.repetition.evaluator.id, workflowPath), block.repetition.evaluator);
                 break;
             case 'if':
-                collectWorkflowBlocksById(block.then, into);
-                collectWorkflowBlocksById(block.otherwise, into);
+                collectWorkflowBlocksById(block.then, into, frozenChildren, workflowPath, refs);
+                collectWorkflowBlocksById(block.otherwise, into, frozenChildren, workflowPath, refs);
                 break;
         }
     }
@@ -225,12 +242,14 @@ function childContextFromProgress(
     progress: WorkflowProgressEnvelopeV1,
     definition: WorkflowDefinitionV1,
     blocksById: ReadonlyMap<string, WorkflowBlock>,
+    frozenChildren: FrozenChildren,
 ): MemberContext | null {
     const path = progress.invocationPath;
     if (path.blockId === '$root') return { kind: 'list', blocks: definition.blocks, scope: [] };
-    const block = blocksById.get(path.blockId);
+    const block = blocksById.get(scopedBlockId(path.blockId, path.scope));
     if (block === undefined) return null;
-    if (progress.frame !== undefined) {
+    if (progress.frame !== undefined && progress.frame.ownerBlockId === path.blockId
+        && (block.kind === 'parallel' || block.kind === 'loop')) {
         if (block.kind === 'parallel') {
             const tail = path.scope[path.scope.length - 1];
             const branch = tail !== undefined && tail.kind === 'branch'
@@ -247,7 +266,7 @@ function childContextFromProgress(
         const selected = progress.container.selected === 'then' ? block.then : block.otherwise;
         return { kind: 'list', blocks: selected, scope: path.scope };
     }
-    return childContextForBlock(block, path.scope);
+    return childContextForBlock(block, path.scope, frozenChildren);
 }
 
 /**
@@ -263,9 +282,11 @@ function describeOccurrence(
     loopsById: ReadonlyMap<string, LoopBlock>,
     frameHint?: WorkflowProgressEnvelopeV1['frame'],
 ): readonly WorkflowOccurrenceCoordinate[] {
+    const workflowPath: string[] = [];
     return scope.map((entry) => {
+        if (entry.kind === 'workflow') workflowPath.push(entry.blockId);
         if (entry.kind === 'branch' || entry.kind === 'workflow') return entry;
-        const loop = loopsById.get(entry.blockId);
+        const loop = loopsById.get(resolveWorkflowFlowScopedNodeId(entry.blockId, workflowPath));
         const isItem = loop !== undefined
             ? loop.repetition.kind === 'items'
             : frameHint?.ownerBlockId === entry.blockId && frameHint.source.kind === 'item';
@@ -277,6 +298,7 @@ function describeOccurrence(
 
 export function projectWorkflowInvocationStructure(params: Readonly<{
     definition: WorkflowDefinitionV1 | null;
+    frozenChildren?: FrozenChildren;
     invocations: readonly WorkflowRunInvocationIndexV1[];
     /** Exact rows already opened through the authorized Action; authoritative when present. */
     progressByInvocationId?: ReadonlyMap<string, WorkflowProgressEnvelopeV1>;
@@ -286,22 +308,23 @@ export function projectWorkflowInvocationStructure(params: Readonly<{
     if (definition === null) return entries;
 
     const blocksById = new Map<string, WorkflowBlock>();
-    collectWorkflowBlocksById(definition.blocks, blocksById);
+    const frozenChildren = params.frozenChildren ?? {};
+    collectWorkflowBlocksById(definition.blocks, blocksById, frozenChildren);
     const loopsById = new Map<string, LoopBlock>();
-    for (const block of blocksById.values()) if (block.kind === 'loop') loopsById.set(block.id, block);
+    for (const [key, block] of blocksById) if (block.kind === 'loop') loopsById.set(key, block);
 
     const record = (
         invocationId: string,
         resolved: Readonly<{ blockId: string | null; scope: Scope; isFrame: boolean; blockKind?: WorkflowProgressEnvelopeV1['blockKind'] }>,
         frameHint?: WorkflowProgressEnvelopeV1['frame'],
     ): void => {
-        const block = resolved.blockId === null ? undefined : blocksById.get(resolved.blockId);
+        const block = resolved.blockId === null ? undefined : blocksById.get(scopedBlockId(resolved.blockId, resolved.scope));
         // An opened row states its own kind, including inside a called workflow.
         // The parent definition can explain only unopened parent-definition rows.
         const blockKind = resolved.blockKind ?? block?.kind;
         entries.set(invocationId, {
             invocationId,
-            nodeId: resolveWorkflowFlowNodeIdForInvocation(resolved),
+            nodeId: block === undefined ? null : resolveWorkflowFlowNodeIdForInvocation(resolved),
             blockId: resolved.blockId,
             occurrence: describeOccurrence(resolved.scope, loopsById, frameHint),
             isFrame: resolved.isFrame,
@@ -327,7 +350,8 @@ export function projectWorkflowInvocationStructure(params: Readonly<{
                 blockKind: progress.blockKind,
                 scope: progress.invocationPath.scope,
                 isFrame: progress.blockKind === 'root'
-                    || (progress.frame !== undefined
+                    || ((progress.blockKind === 'parallel' || progress.blockKind === 'loop')
+                        && progress.frame !== undefined
                         && progress.frame.ownerBlockId === progress.invocationPath.blockId),
             }, progress.frame);
         }
@@ -366,11 +390,11 @@ export function projectWorkflowInvocationStructure(params: Readonly<{
         for (const child of children) {
             const progress = progressById?.get(child.id);
             if (progress !== undefined) {
-                queue.push({ invocationId: child.id, children: childContextFromProgress(progress, definition, blocksById) });
+                queue.push({ invocationId: child.id, children: childContextFromProgress(progress, definition, blocksById, frozenChildren) });
                 continue;
             }
             const ordinal = toIndex(child.memberOrdinal);
-            const resolved = ordinal === null ? null : resolveMember(current.children, ordinal);
+            const resolved = ordinal === null ? null : resolveMember(current.children, ordinal, frozenChildren);
             if (resolved === null) {
                 // An ordinal the frozen definition cannot explain is recorded as
                 // unresolved so the row still appears, without a fabricated node.

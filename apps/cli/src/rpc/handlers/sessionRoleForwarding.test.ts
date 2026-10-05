@@ -6,6 +6,7 @@ import { createRoleActionExecutor } from '@/session/actions/roleActions';
 import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 
 describe('Session role RPC provenance', () => {
   it('admits the original Session caller and refuses the next edit after subtree membership changes', async () => {
@@ -17,7 +18,7 @@ describe('Session role RPC provenance', () => {
       stageSessionStateMutation: async (mutation) => { metadata = applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation); } });
     const deps = { roleActionExecute,
       resolveAgentStartContext: async (context) => resolveCliAgentStartContextV1({ sessionId: 'lead', machineId: 'source-machine',
-        directory: '/repo', backendTarget: { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'agent' } },
+        directory: '/repo', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         metadata: createTestMetadata(), starterDepth: 2, turnDepth: 3, settings: null,
         callerPermissionMode: context.callerPermissionMode ?? null }),
       sessionList: async () => ({ queryVersion: 1, sessions: inSubtree ? [{ id: 'child', createdAt: 1, updatedAt: 1,
@@ -25,11 +26,12 @@ describe('Session role RPC provenance', () => {
         attentionNextCursor: null, attentionHasNext: false }),
     } satisfies Pick<ActionExecutorDeps, 'roleActionExecute' | 'resolveAgentStartContext' | 'sessionList'>;
     registerActionSpecRpcHandlers({ rpcHandlerManager: rpc, actionIds: ['session.notes.set'],
-      actionExecutor: createActionExecutor(deps as ActionExecutorDeps) });
+      actionExecutor: createActionExecutor({ ...createCliActionDeps({ token: 'token', sessionId: 'child', mode: 'plain', ctx: null }), ...deps }) });
     const request = { method: 'child:session.notes.set', params: { sessionId: 'child', notes: 'Copied notes' },
       callerAuthority: 'account_automation' as const, sessionActionOrigin: { v: 1 as const,
         caller: { kind: 'session' as const, sessionId: 'lead', starterDepth: 2, turnDepth: 3 },
-        sourceTurnId: 'original-turn', callerPermissionMode: 'default' as const, requestId: 'original-request' } };
+        sourceTurnId: 'original-turn', callerPermissionMode: 'default' as const, requestId: 'original-request',
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const } } };
     expect(await rpc.handleRequest(request)).toEqual({ updated: true });
     expect(metadata).toMatchObject({ work: { sessionRolesV1: { notes: 'Copied notes' } } });
     inSubtree = false;
@@ -47,7 +49,7 @@ describe('Session role RPC provenance', () => {
     // real Action dispatcher, transport binding and mutation owner are retained.
     const deps = { roleActionExecute } satisfies Pick<ActionExecutorDeps, 'roleActionExecute'>;
     registerActionSpecRpcHandlers({ rpcHandlerManager: rpc, actionIds: ['session.notes.set'],
-      actionExecutor: createActionExecutor(deps as ActionExecutorDeps) });
+      actionExecutor: createActionExecutor({ ...createCliActionDeps({ token: 'token', sessionId: 'child', mode: 'plain', ctx: null }), ...deps }) });
     const request = { method: 'child:session.notes.set', params: { sessionId: 'child', notes: 'Copied notes' } };
     expect(await rpc.handleRequest(request)).toMatchObject({ ok: false, errorCode: 'role_rpc_origin_unavailable' });
     expect(metadata).not.toMatchObject({ work: { sessionRolesV1: { notes: 'Copied notes' } } });

@@ -5,7 +5,8 @@ import { describeLegacyTriggerSet, describeTriggerTarget } from './sessionTrigge
 
 export type AccountTriggerRow = Readonly<{
     automationId: string;
-    /** "{when}": the set's one summary (07 S1, 04 §3.3). */
+    triggerId: WorkflowTriggerSetV1['triggers'][number]['id'] | null;
+    /** "{when}": this trigger's summary (07 S1, 04 §3.3). */
     title: string;
     /** "{then}": what it runs, or "Workflow deleted" when its source is gone. */
     subtitle: string;
@@ -24,14 +25,15 @@ export function projectAccountTriggerRows(params: Readonly<{
     resolveWorkflowTitle: (ref: string) => string | null;
     resolveMachineTitle?: (id: string) => string | null;
 }>): readonly AccountTriggerRow[] {
-    return params.sets.map((set) => {
-        const legacy = describeLegacyTriggerSet(set, params.resolveMachineTitle);
+    return params.sets.flatMap((set) => (set.triggers.length > 0 ? set.triggers : [null]).map((trigger) => {
+        const legacy = describeLegacyTriggerSet(trigger ? { ...set, triggers: [trigger] } : set, params.resolveMachineTitle);
         return {
             automationId: set.automationId,
-            title: formatTriggerSetSummary(set.triggers),
+            triggerId: trigger?.id ?? null,
+            title: formatTriggerSetSummary(trigger ? [trigger] : []),
             subtitle: legacy ? `${legacy.title}\n${legacy.qualifier}` : describeTriggerTarget(set.health === 'available' ? set.target : undefined, params.resolveWorkflowTitle),
-            off: !set.enabled || (set.triggers.length > 0 && set.triggers.every((trigger) => !trigger.enabled)),
+            off: !set.enabled || trigger?.enabled === false,
             ...(legacy ? { legacy } : {}),
         };
-    });
+    }));
 }

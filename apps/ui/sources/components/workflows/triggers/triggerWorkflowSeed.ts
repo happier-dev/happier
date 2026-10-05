@@ -16,7 +16,7 @@ import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';
  */
 export type TriggerRetarget =
     | Readonly<{ scope: 'session'; sessionId: string; triggerId: string; expectedRevision: number }>
-    | Readonly<{ scope: 'account'; automationId: string; triggerId: string; expectedRevision: number }>;
+    | Readonly<{ scope: 'account'; automationId: string; triggerId?: string; expectedRevision: number }>;
 
 export type TriggerWorkflowSeed = Readonly<{
     definition: WorkflowDefinitionV1;
@@ -48,7 +48,7 @@ export async function retargetTriggerToWorkflow(retarget: TriggerRetarget, workf
     if (retarget.scope === 'account') {
         await updateWorkflowTrigger({
             automationId: retarget.automationId,
-            triggerId: retarget.triggerId,
+            ...(retarget.triggerId === undefined ? {} : { triggerId: retarget.triggerId }),
             expectedRevision: retarget.expectedRevision,
             patch: { target },
         });

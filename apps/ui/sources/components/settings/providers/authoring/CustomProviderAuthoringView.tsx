@@ -8,7 +8,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile, PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -96,9 +97,9 @@ export function CustomProviderAuthoringView(props: Readonly<{
                 title={draft.name.trim() || t('settingsProvidersCollection.newTitle')}
                 description={t('settingsProviders.customFooter')}
                 leading={(
-                    <PageHeaderMarkTile appearance="glyph">
+                    <PageHeaderMarkSlot>
                         <ProviderIcon icon={null} size={24} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkTile>
+                    </PageHeaderMarkSlot>
                 )}
                 details={probeResult ? (
                     <ProviderProbeResult testID="settings-provider-authoring-probe-result" text={probeResult} failed={false} />

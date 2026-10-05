@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveConnectMoreBlockForRequest, selectConnectMoreOffer, CONNECT_MORE_BROWSE_ID } from './connectMoreBlocks';
+import { resolveConnectMoreBlockForRequest, selectConnectMoreOffer, CONNECT_MORE_BROWSE_ID, readConnectedServiceSetupResult } from './connectMoreBlocks';
 
 type Entry = Parameters<typeof selectConnectMoreOffer>[0]['addable'][number];
 
@@ -21,6 +21,14 @@ function entry(serviceKey: string, fields: Partial<Entry> & Readonly<{ oauth?: b
 }
 
 describe('selectConnectMoreOffer', () => {
+    it('reads only an exact qualified account result for the index to settle after the phone journey', () => {
+        expect(readConnectedServiceSetupResult({ connectedService: 'happier.agent.codex/openai-codex', connectedAccount: 'work' })).toEqual({
+            serviceKey: 'happier.agent.codex/openai-codex', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+        });
+        expect(readConnectedServiceSetupResult({ connectedService: 'not-qualified', connectedAccount: 'work' })).toBeNull();
+        expect(readConnectedServiceSetupResult({ connectedService: 'happier.agent.codex/openai-codex', connectedAccount: '' })).toBeNull();
+        expect(readConnectedServiceSetupResult({ connectedService: ['happier.agent.codex/openai-codex'], connectedAccount: ['work'] })).toBeNull();
+    });
     const claude = entry('claude', { oauth: true });
     const gemini = entry('gemini');
     const keyed = entry('anthropic', { connectedCount: 1 });
@@ -37,14 +45,21 @@ describe('selectConnectMoreOffer', () => {
         expect(offer.browse).toBe(true);
     });
 
-    it('offers, on first run, the plans people sign in with; keys, code hosts and tools wait behind browse', () => {
+    it('features the curated Claude, ChatGPT and Gemini services on first run, browsing other keys', () => {
+        const featured = [
+            entry('claude', { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, oauth: true }),
+            entry('chatgpt', { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, oauth: true }),
+            entry('gemini', { service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' } }),
+        ];
+        const openai = entry('openai', { service: { pluginId: 'happier.provider.openai', localId: 'openai' } });
+        const anthropic = entry('anthropic', { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } });
         const offer = selectConnectMoreOffer({
             layout: 'firstRun',
-            addable: [claude, gemini, github],
-            connectableKeys: new Set(['claude', 'gemini']),
+            addable: [...featured, openai, anthropic, github],
+            connectableKeys: new Set(['claude', 'chatgpt', 'gemini', 'openai', 'anthropic']),
             hidden: new Set(),
         });
-        expect(offer.offered.map((candidate) => candidate.serviceKey)).toEqual(['claude']);
+        expect(offer.offered.map((candidate) => candidate.serviceKey)).toEqual(['claude', 'chatgpt', 'gemini']);
         expect(offer.browse).toBe(true);
     });
 

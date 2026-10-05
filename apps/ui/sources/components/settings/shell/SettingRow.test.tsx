@@ -197,3 +197,32 @@ describe('SettingSection', () => {
         expect(screen.findAllHostsByTestId(`setting-reveal.${PAGE.sectionRefs.content.id}`)).toHaveLength(1);
     });
 });
+
+describe('SettingAnchor divider', () => {
+    it('passes the section divider to a single row but never to a fragment of rows', async () => {
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        function Row(props: { testID: string; showDivider?: boolean }) {
+            return <View testID={props.testID} accessibilityHint={String(props.showDivider)} />;
+        }
+        try {
+            const tree = () => <>
+                <SettingAnchor setting={PAGE.settings.indexMode} showDivider={false}>
+                    <Row testID="single" />
+                </SettingAnchor>
+                <SettingAnchor setting={PAGE.settings.backfill} showDivider={false}>
+                    <>
+                        <Row testID="first" showDivider />
+                        <Row testID="last" />
+                    </>
+                </SettingAnchor>
+            </>;
+            const screen = await renderScreen(tree());
+            // React checks a fragment's props when it reconciles an existing one, so render twice.
+            await act(async () => screen.update(tree()));
+            expect(screen.findByTestId('single')!.props.accessibilityHint).toBe('false');
+            expect(screen.findByTestId('first')!.props.accessibilityHint).toBe('true');
+            expect(errors.mock.calls.some((call) => call.some((part) => String(part).includes('React.Fragment')))).toBe(false);
+            await screen.unmount();
+        } finally { errors.mockRestore(); }
+    });
+});

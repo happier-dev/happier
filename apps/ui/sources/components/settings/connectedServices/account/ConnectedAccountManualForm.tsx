@@ -7,6 +7,12 @@ import type { PluginSettingFieldV2 } from '@happier-dev/protocol';
 import { ConnectedServiceSetupFlowActions } from '../setup/ConnectedServiceSetupFlowBody';
 import { ConnectedAccountFormSection } from './ConnectedAccountFormSection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { Icon } from '@/components/ui/icons/Icon';
+import { SetupSteps } from '@/components/ui/setupBlocks/SetupSteps';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
@@ -15,7 +21,11 @@ import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/res
 import { useConnectedAccountInvalidFieldFocus } from './useConnectedAccountInvalidFieldFocus';
 import { useConnectedAccountDraftNavigationGuard } from './useConnectedAccountDraftNavigationGuard';
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
+    guided: { gap: 14 },
+    field: { width: '100%' },
+    accessories: { flexDirection: 'row', alignItems: 'center' },
+    note: { ...Typography.default(), fontSize: 12, lineHeight: 17, color: theme.colors.text.secondary },
     panelActions: {
         paddingTop: 12,
     },
@@ -60,12 +70,21 @@ type ConnectedAccountManualFormProps = Readonly<{
     embedded?: boolean;
     localize?: (value: Parameters<typeof resolveProjectedLocalizedText>[0]) => string;
     fields: readonly ManualAuthenticationField[];
+    /** Built-in presentation metadata only; the daemon descriptor still owns credential validation. */
+    guided?: Readonly<{
+        consoleUrl: string;
+        createKeyTitle: string;
+        billingNote: string;
+        shapePattern?: string;
+        shapeHint?: string;
+    }>;
     submitting: boolean;
     navigation?: unknown;
     /** In a setup panel: a compact footer with Cancel (local) beside Continue. */
     onCancel?: () => void;
     onSubmit(input: Readonly<{
         fields: Readonly<Record<string, string>>;
+        displayName?: string;
     }>): Promise<boolean | void> | boolean | void;
 }>;
 
@@ -78,6 +97,8 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         initialDraft
     ));
     const [invalidFieldIds, setInvalidFieldIds] = React.useState<readonly string[]>([]);
+    const [displayName, setDisplayName] = React.useState('');
+    const [revealed, setRevealed] = React.useState(false);
 
     const fields = React.useMemo(
         () => [...props.fields]
@@ -96,14 +117,16 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
             setInvalidFieldIds(invalid);
             return false;
         }
-        const accepted = await props.onSubmit({ fields: values });
+        const accepted = await props.onSubmit({ fields: values, ...(props.guided && displayName.trim() ? { displayName: displayName.trim() } : {}) });
         return accepted !== false;
-    }, [draft, fields, props]);
+    }, [displayName, draft, fields, props]);
     const discardDraft = React.useCallback(() => {
         setDraft(initialDraft);
         setInvalidFieldIds([]);
+        setDisplayName('');
+        setRevealed(false);
     }, [initialDraft]);
-    const isDirty = props.fields.some((field) => (
+    const isDirty = displayName.length > 0 || props.fields.some((field) => (
         (draft[field.id] ?? '') !== (initialDraft[field.id] ?? '')
     ));
     useConnectedAccountDraftNavigationGuard({
@@ -118,17 +141,58 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         announcement: t('common.error'),
     });
 
+    const fieldControl = (field: ManualAuthenticationField) => {
+        const title = resolveProjectedLocalizedText(field.title, props.localize);
+        const invalid = invalidFieldIds.includes(field.id);
+        return <FieldTextInput
+            testID={`connected-account-manual:${field.id}`}
+            ref={registerInvalidFieldTarget(field.id)}
+            accessibilityLabel={invalid ? `${title}: ${t('common.error')}` : title}
+            error={invalid ? t('common.error') : null}
+            value={draft[field.id] ?? ''}
+            onChangeText={(value) => {
+                setDraft((current) => ({ ...current, [field.id]: value }));
+                setInvalidFieldIds((current) => current.filter((id) => id !== field.id));
+            }}
+            editable={!props.submitting}
+            secureTextEntry={field.secret === true && !revealed}
+            multiline={field.presentation?.control === 'textarea'}
+            placeholder={resolveProjectedLocalizedText(field.presentation?.placeholder, props.localize)}
+            style={props.guided ? styles.field : undefined}
+            trailing={props.guided && field.secret ? <View style={styles.accessories}>
+                <IconButton testID={`connected-account-manual:${field.id}.reveal`} iconName={revealed ? 'eye-slash' : 'eye'} variant="plain" size={18}
+                    accessibilityLabel={t(revealed ? 'connectedServicesSettings.keyHide' : 'connectedServicesSettings.keyReveal')} disabled={props.submitting} onPress={() => setRevealed((value) => !value)} />
+                <IconButton testID={`connected-account-manual:${field.id}.clear`} iconName="x" variant="plain" size={18}
+                    accessibilityLabel={t('connectedServicesSettings.keyClear')} disabled={props.submitting || !draft[field.id]} onPress={() => setDraft((value) => ({ ...value, [field.id]: '' }))} />
+            </View> : undefined}
+        />;
+    };
+    const guided = props.guided;
+    const keyShapeOk = Boolean(guided?.shapePattern && fields.some((field) => new RegExp(guided.shapePattern!).test(draft[field.id] ?? '')));
     return (
         <ConnectedAccountFormSection
             embedded={props.embedded}
             title={props.embedded ? undefined : props.title}
             description={invalidFieldIds.length > 0 ? t('common.error') : undefined}
         >
-            {fields.map((field) => {
+            {guided ? <View style={styles.guided}>
+                <SetupSteps steps={[
+                    { key: 'create', title: guided.createKeyTitle, state: 'current', body: <RoundButton size="small" display="secondary"
+                        title={t('connectedServicesSettings.keyOpenConsole')} trailing={<Icon name="arrow-square-out" size={13} />}
+                        onPress={() => openExternalUrl(guided.consoleUrl)} /> },
+                    { key: 'paste', title: t('connectedServicesSettings.keyPaste'), state: 'current', body: <View style={styles.field}>
+                        {fields.map((field) => <React.Fragment key={field.id}>{fieldControl(field)}</React.Fragment>)}
+                        {keyShapeOk && guided.shapeHint ? <Text style={styles.note}>{guided.shapeHint}</Text> : null}
+                    </View> },
+                    { key: 'name', title: t('connectedServicesSettings.keyName'), detail: t('connectedServicesSettings.keyNameOptional'), body: <FieldTextInput testID="connected-account-manual:name"
+                        value={displayName} onChangeText={setDisplayName} accessibilityLabel={t('connectedServicesSettings.keyName')}
+                        editable={!props.submitting} style={styles.field} /> },
+                ]} />
+                <Text style={styles.note}>{guided.billingNote}</Text>
+            </View> : fields.map((field) => {
                 const title = resolveProjectedLocalizedText(field.title, props.localize);
                 const description = resolveProjectedLocalizedText(field.description, props.localize);
                 const multiline = field.presentation?.control === 'textarea';
-                const invalid = invalidFieldIds.includes(field.id);
                 return (
                     <Item
                         key={field.id}
@@ -138,23 +202,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                         mode="info"
                         showChevron={false}
                         accessoryLayout={multiline ? 'stacked' : 'adaptive'}
-                        rightElement={(
-                            <FieldTextInput
-                                testID={`connected-account-manual:${field.id}`}
-                                ref={registerInvalidFieldTarget(field.id)}
-                                accessibilityLabel={invalid ? `${title}: ${t('common.error')}` : title}
-                                error={invalid ? t('common.error') : null}
-                                value={draft[field.id] ?? ''}
-                                onChangeText={(value) => {
-                                    setDraft((current) => ({ ...current, [field.id]: value }));
-                                    setInvalidFieldIds((current) => current.filter((id) => id !== field.id));
-                                }}
-                                editable={!props.submitting}
-                                secureTextEntry={field.secret === true}
-                                multiline={multiline}
-                                placeholder={resolveProjectedLocalizedText(field.presentation?.placeholder, props.localize)}
-                            />
-                        )}
+                        rightElement={fieldControl(field)}
                     />
                 );
             })}
@@ -164,7 +212,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                         onCancel={props.onCancel}
                         primary={{
                             testID: 'connected-account-manual:submit',
-                            label: t('common.continue'),
+                            label: t(guided ? 'connectedServicesSettings.keyAdd' : 'common.continue'),
                             disabled: props.submitting,
                             loading: props.submitting,
                             onPress: () => void submit(),
@@ -175,7 +223,8 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                 <View style={styles.actions}>
                     <RoundButton
                         testID="connected-account-manual:submit"
-                        title={t('common.continue')}
+                        title={t(guided ? 'connectedServicesSettings.keyAdd' : 'common.continue')}
+                        size={guided ? 'small' : undefined}
                         disabled={props.submitting}
                         loading={props.submitting}
                         onPress={submit}

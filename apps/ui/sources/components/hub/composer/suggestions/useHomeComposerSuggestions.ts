@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { storage } from '@/sync/domains/state/storage';
 import type { StorageState } from '@/sync/store/types';
@@ -14,7 +15,7 @@ import {
 const NO_SUGGESTIONS: readonly HomeComposerSuggestion[] = Object.freeze([]);
 
 function suggestionSignature(suggestions: readonly HomeComposerSuggestion[]): string {
-    return suggestions.map((suggestion) => [
+    return suggestions.map((suggestion) => suggestion.source === 'starter' ? suggestion.id : [
         suggestion.id,
         suggestion.sessionCount,
         suggestion.since.kind,
@@ -30,14 +31,17 @@ function suggestionSignature(suggestions: readonly HomeComposerSuggestion[]): st
  */
 export function useHomeComposerSuggestions(): readonly HomeComposerSuggestion[] {
     const activeServerId = useActiveServerSnapshot().serverId ?? null;
+    const automationsEnabled = useAutomationsSupport().enabled;
     const selector = React.useMemo(() => {
         let previousRows: ReturnType<typeof readSessionListRowsForServerId> | undefined;
+        let readRows = false;
         let previous: readonly HomeComposerSuggestion[] = NO_SUGGESTIONS;
         let previousSignature = '';
         return (state: StorageState): readonly HomeComposerSuggestion[] => {
             if (!state.isDataReady) return NO_SUGGESTIONS;
             const rows = readSessionListRowsForServerId(state.sessionListRowsByServerId, activeServerId);
-            if (rows === previousRows) return previous;
+            if (readRows && rows === previousRows) return previous;
+            readRows = true;
             previousRows = rows;
             const sessions: HomeComposerSuggestionSession[] = Object.values(rows ?? {}).map((row) => ({
                 id: row.id,
@@ -45,7 +49,7 @@ export function useHomeComposerSuggestions(): readonly HomeComposerSuggestion[] 
                 createdAt: row.createdAt,
                 metadata: row.metadata,
             }));
-            const next = deriveHomeComposerSuggestions({ sessions, nowMs: Date.now() });
+            const next = deriveHomeComposerSuggestions({ sessions, nowMs: Date.now(), automationsEnabled });
             const signature = suggestionSignature(next);
             if (signature !== previousSignature) {
                 previousSignature = signature;
@@ -53,6 +57,6 @@ export function useHomeComposerSuggestions(): readonly HomeComposerSuggestion[] 
             }
             return previous;
         };
-    }, [activeServerId]);
+    }, [activeServerId, automationsEnabled]);
     return storage(selector);
 }

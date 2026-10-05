@@ -36,7 +36,7 @@ export function PluginDetailContributionsSection(props: Readonly<{
                 <Item
                     key={resource.id}
                     testID={`settings.plugins.detail.${props.pluginId}.contribution.resource.${resource.id}`}
-                    title={resource.path}
+                    title={resource.path ?? resource.id}
                     subtitle={[
                         resource.resourceKind,
                         resource.contentType,

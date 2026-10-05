@@ -4,7 +4,9 @@ import type {
   BackendTargetRefV1,
   ProviderBoundModelRef,
   VoiceAgentOutputEventV1,
+  VoiceAgentOutputTurnV1,
   VoiceAssistantAction,
+  ExecutionRunVoiceAgentIntentInputV1,
 } from '@happier-dev/protocol';
 import type { ExecutionRunResumeHandle } from '@happier-dev/protocol';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
@@ -30,6 +32,7 @@ export type VoiceAgentStartParams = Readonly<{
   permissionIntent: PermissionIntent;
   idleTtlSeconds: number;
   initialContext: string;
+  voicePolicy?: ExecutionRunVoiceAgentIntentInputV1['voicePolicy'];
   initialContextMode?: 'bootstrap' | 'first_turn';
   verbosity?: Verbosity;
   resumeHandle?: ExecutionRunResumeHandle | null;
@@ -125,10 +128,13 @@ export type VoiceAgentTurnStreamState = {
   cancelled: boolean;
   deltaHold: string;
   outputSpeechBuffer: string;
-  outputSpeechChars: number;
+  outputSpeechText: string;
+  outputBudget: VoiceAgentOutputTurnV1;
+  outputIncomplete: boolean;
   suppressActionDeltas: boolean;
   outputSeq: number;
   outputSegmentIndex: number;
+  targetChars?: number;
   onEventsChanged: () => void;
   eventWaiters: Set<() => void>;
 };
@@ -152,6 +158,7 @@ export type VoiceAgentInstance = {
   commitModelSelection?: ProviderBoundModelRef;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   initialContext: string;
+  voicePolicy?: ExecutionRunVoiceAgentIntentInputV1['voicePolicy'];
   connectedServices?: ConnectedServiceBindingsV2 | null;
   disabledActionIds: readonly string[];
   memoryRecallGuidanceEnabled: boolean;

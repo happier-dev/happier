@@ -12,9 +12,14 @@ import {
 import { DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
+import { clearActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 
 const platformState = vi.hoisted(() => ({
     os: 'ios' as 'ios' | 'web' | 'android',
+}));
+// Notification rows render no Markdown; the real internal renderer must never call this absent SDK export.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected Markdown in notifications settings'); },
 }));
 const tauriDesktopState = vi.hoisted(() => ({
     value: false,
@@ -265,6 +270,13 @@ installSettingsViewCommonModuleMocks({
     },
 });
 
+// This unrelated Session-envelope HTTP/process API must never run in this settings journey.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Unexpected Session-envelope API call'); };
+    return { createSessionDataKeyEnvelopeClient: unused, readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused, prepareSessionDataKeyEnvelopesDetached: unused };
+});
+
 vi.mock('@/utils/platform/desktopHost', () => ({
     isDesktopHost: () => tauriDesktopState.value,
 }));
@@ -326,6 +338,7 @@ async function selectFromMenu(screen: { findAll: (predicate: (node: any) => bool
 
 describe('NotificationsSettingsView', () => {
     beforeEach(() => {
+        clearActiveUnsavedChangesGuard();
         accountScopeState.value = { serverId: 'home-studio', accountId: 'account-a' };
         settingsState.sessionRemoteAlertsEnabled = false;
         localSettingsState.deviceRemoteAlertsEnabled = true;
@@ -1372,11 +1385,6 @@ describe('NotificationsSettingsView', () => {
         });
         expect(applySettingsMock).not.toHaveBeenCalled();
         expect(screen.findByTestId('settings-notifications-webhook-webhook-primary-secret-input')!.props.secureTextEntry).toBe(true);
-        act(() => screen.changeTextByTestId('settings-notifications-webhook-webhook-primary-secret-input', 'discard-on-hide'));
-        act(() => screen.pressRow('settings-notifications-webhook-webhook-primary'));
-        act(() => screen.pressRow('settings-notifications-webhook-webhook-primary'));
-        act(() => screen.pressRow('settings-notifications-webhook-webhook-primary-set-secret'));
-        expect(screen.findByTestId('settings-notifications-webhook-webhook-primary-secret-input')!.props.value).toBe('');
         act(() => screen.changeTextByTestId('settings-notifications-webhook-webhook-primary-secret-input', ' shared-webhook-secret '));
         act(() => screen.pressRow('settings-notifications-webhook-webhook-primary-secret-save'));
         expect(screen.findByTestId('settings-notifications-webhook-webhook-primary-secret-input')).toBeNull();
@@ -1432,8 +1440,6 @@ describe('NotificationsSettingsView', () => {
             topics: enabledLegacyNotificationTopics,
             readyIncludeMessageText: false, requestIncludeMessageText: false,
         });
-        // Load through its real page entry point before exercising the section lifecycle.
-        await import('./NotificationsSettingsView');
         const { NotificationWebhooksSection } = await import('./NotificationWebhooksSection');
         const save = vi.fn();
         // Updating the real section's public props exercises its lifecycle without relying on

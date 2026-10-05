@@ -149,7 +149,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                 consequence: t('connectedServicesCollection.signedOutConsequence'),
                 onSignInAgain: () => props.onSignInAgain(sheet, account.accountId),
             } : null,
-            fixProminence: props.fixProminence,
+            fixProminence: props.settled ? 'secondary' : props.fixProminence,
             legacyServiceId: sheet.legacyServiceId,
             accountId: account.accountId,
             star: target ? props.renderStar(target, `${testID}:star`) : null,
@@ -228,20 +228,20 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                         onPress={() => void Modal.alert(t('common.details'), sheet.supportDetails ?? '')}
                     />
                 ) : null}
-                {sheet.accounts.map((account) => {
+                {sheet.accounts.map((account, index) => {
                     const entry = entryFor(sheet, account);
                     const settled = props.settled?.serviceKey === sheet.serviceKey && props.settled.accountId === account.accountId;
                     return (
-                        <React.Fragment key={account.accountId}>
+                        <View key={account.accountId} style={settled ? styles.settledRow : undefined}>
                             {props.renderAccount({
                                 sheet,
                                 account,
                                 render: (facts) => (
-                                    <ConnectedAccountIndexRowView {...entry} facts={facts} now={props.now} compact={props.compact} />
+                                    <ConnectedAccountIndexRowView {...entry} facts={facts} now={props.now} compact={props.compact} showDivider={!settled && index < sheet.accounts.length - 1} />
                                 ),
                             })}
                             {settled ? props.settled!.node : null}
-                        </React.Fragment>
+                        </View>
                     );
                 })}
             </ItemGroup>
@@ -251,15 +251,15 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
     const renderGridSheet = (sheet: ConnectedServicesIndexSheet, sectionTitle?: string) => {
         const header = serviceHeader(sheet);
         return (
-            <View key={sheet.serviceKey} style={styles.gridGroup}>
-                {sectionTitle ? <Text style={styles.sectionLabelText}>{sectionTitle}</Text> : null}
-                <View style={styles.gridLabel}>
-                    <ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} size="inline" />
-                    <Text style={styles.gridLabelTitle} numberOfLines={1}>{sheet.label}</Text>
-                    <Text style={styles.gridLabelCount}>{String(sheet.accounts.length)}</Text>
-                    <View style={styles.grow} />
-                    {props.compact ? null : header.addAccount}
-                </View>
+            <React.Fragment key={sheet.serviceKey}>
+                {sectionTitle ? <ItemGroup title={sectionTitle} surface="none">{null}</ItemGroup> : null}
+                <ItemGroup
+                    title={sheet.label}
+                    titleLeading={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} size="inline" />}
+                    titleAccessory={<Text style={styles.gridLabelCount}>{String(sheet.accounts.length)}</Text>}
+                    action={props.compact ? undefined : header.addAccount}
+                    surface="none"
+                >
                 <CardGrid columns={props.compact ? 1 : 2}>
                     {sheet.accounts.map((account) => {
                         const entry = entryFor(sheet, account);
@@ -283,7 +283,8 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                     })}
                 </CardGrid>
                 {props.settled?.serviceKey === sheet.serviceKey ? <View style={styles.gridSettle}>{props.settled.node}</View> : null}
-            </View>
+                </ItemGroup>
+            </React.Fragment>
         );
     };
 
@@ -301,14 +302,13 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
         />
     )) : undefined;
     const pools = pooled.length === 0 ? null : grid ? (
-        <View style={styles.gridGroup}>
-            <View style={styles.gridLabel}>
-                <Icon name="stack" size={15} color={theme.colors.text.secondary} />
-                <Text style={styles.gridLabelTitle}>{poolsTitle}</Text>
-                <Text style={styles.gridLabelCount}>{String(pooled.length)}</Text>
-                <View style={styles.grow} />
-                {props.compact ? null : newPool}
-            </View>
+        <ItemGroup
+            title={poolsTitle}
+            titleLeading={<Icon name="stack" size={15} color={theme.colors.text.secondary} />}
+            titleAccessory={<Text style={styles.gridLabelCount}>{String(pooled.length)}</Text>}
+            action={props.compact ? undefined : newPool}
+            surface="none"
+        >
             <CardGrid columns={props.compact ? 1 : 2}>
                 {pooled.map(({ sheet, pool }) => (
                     <View key={`${sheet.serviceKey}:${pool.ref.groupId}`} style={styles.cardCell}>
@@ -316,7 +316,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                     </View>
                 ))}
             </CardGrid>
-        </View>
+        </ItemGroup>
     ) : (
         <ItemGroup
             title={poolsTitle}
@@ -339,6 +339,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                     description: t('connectedServicesCollection.indexDescription'),
                 })}
                 alwaysShowTitle
+                detailsPlacement="column"
                 actions={props.compact ? props.headerActions : switcher}
                 details={(
                     <View style={styles.details}>
@@ -369,31 +370,16 @@ const styles = StyleSheet.create((theme) => ({
     details: {
         gap: 14,
     },
-    gridGroup: {
-        marginBottom: 26,
-    },
-    gridLabel: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        minHeight: 28,
-        marginHorizontal: 2,
-        marginBottom: 10,
-    },
-    gridLabelTitle: {
-        ...Typography.default('semiBold'),
-        fontSize: 13,
-        lineHeight: 18,
-        color: theme.colors.text.primary,
+    settledRow: {
+        backgroundColor: theme.colors.state.success.background,
+        borderLeftWidth: 2,
+        borderLeftColor: theme.colors.state.success.foreground,
     },
     gridLabelCount: {
         ...Typography.default(),
         fontSize: 13,
         lineHeight: 18,
         color: theme.colors.text.tertiary,
-    },
-    grow: {
-        flex: 1,
     },
     cardCell: {
         flex: 1,
@@ -402,13 +388,5 @@ const styles = StyleSheet.create((theme) => ({
     },
     gridSettle: {
         marginTop: 10,
-    },
-    sectionLabelText: {
-        marginBottom: 10,
-        paddingHorizontal: 2,
-        ...Typography.default('semiBold'),
-        fontSize: 15,
-        lineHeight: 20,
-        color: theme.colors.text.primary,
     },
 }));

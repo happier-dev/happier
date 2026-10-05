@@ -41,7 +41,6 @@ export function ConnectedAccountSettled(props: Readonly<{
     onDismiss: () => void;
     testID?: string;
 }>) {
-    const { theme } = useUnistyles();
     const settings = useSettings();
     const applySettings = useApplySettings();
     const { present } = useConnectedAccountIdentityPrivacy();
@@ -89,6 +88,32 @@ export function ConnectedAccountSettled(props: Readonly<{
         labelFor,
     });
 
+    const primaryAction = offer?.kind === 'pool' ? (
+        <AddToPoolButton account={account} offer={offer} onDone={onDismiss} />
+    ) : offer?.kind === 'agentDefault' ? (
+        <RoundButton
+            testID="connected-services-settle:use"
+            size="small"
+            title={t('connectedServicesSettings.settleUseForAction', { agent: offer.agentTitle })}
+            onPress={() => {
+                applySettings(offer.write());
+                onDismiss();
+            }}
+        />
+    ) : null;
+    return <ConnectedAccountSettledView identity={identity} offer={offer} primaryAction={primaryAction} onDismiss={onDismiss} testID={props.testID} />;
+}
+
+/** The shared settle presentation; specimens provide their own simulated action, never live pools. */
+export function ConnectedAccountSettledView(props: Readonly<{
+    identity: string | null;
+    offer: ConnectedAccountSettleOffer | null;
+    primaryAction: React.ReactNode;
+    onDismiss: () => void;
+    testID?: string;
+}>) {
+    const { theme } = useUnistyles();
+    const { identity, offer, onDismiss } = props;
     return (
         <View
             testID={props.testID ?? 'connected-services-settle'}
@@ -123,19 +148,7 @@ export function ConnectedAccountSettled(props: Readonly<{
                         onPress={onDismiss}
                     />
                 )}
-                {offer?.kind === 'pool' ? (
-                    <AddToPoolButton account={account} offer={offer} onDone={onDismiss} />
-                ) : offer?.kind === 'agentDefault' ? (
-                    <RoundButton
-                        testID="connected-services-settle:use"
-                        size="small"
-                        title={t('connectedServicesSettings.settleUseForAction', { agent: offer.agentTitle })}
-                        onPress={() => {
-                            applySettings(offer.write());
-                            onDismiss();
-                        }}
-                    />
-                ) : null}
+                {props.primaryAction}
             </View>
         </View>
     );

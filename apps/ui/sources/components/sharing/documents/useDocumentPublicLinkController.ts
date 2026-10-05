@@ -10,13 +10,12 @@ import { useActionApprovalContinuation } from '@/components/approvals/useActionA
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import type { SessionPublicLinkCreateOptions } from '@/components/sessions/collaboration/useSessionPublicLinkController';
 import { randomUUID } from '@/platform/randomUUID';
-import { createStoredContentPublicShareClient } from '@/sync/api/sharing/storedContentPublicShareApi';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 
-type PublicLinkAction = 'artifact.public_link.create' | 'artifact.public_link.list' | 'artifact.public_link.revoke';
+type PublicLinkAction = 'artifact.public_link.create' | 'artifact.public_link.list' | 'artifact.public_link.revoke' | 'artifact.public_link.audit';
 type State = Readonly<{ publication: StoredContentPublicShareV1 | null; loaded: boolean; loading: boolean; error: boolean }>;
 
 /** One document's local bearer custody. Publication authority stays with the Action/server owner. */
@@ -115,8 +114,10 @@ export function useDocumentPublicLinkController(input: Readonly<{
     const listAccessLog = React.useCallback(async () => {
         const current = publication.current;
         if (!current || !isCurrent()) throw new HappyError(t('errors.permissionDenied'), false);
-        return createStoredContentPublicShareClient(scope).listAccessLog({ shareId: current.id, isCurrent });
-    }, [isCurrent, scope.serverId, scope.accountId]);
+        const result = await request('artifact.public_link.audit', { artifactId, shareId: current.id });
+        if (result === null || !isCurrent()) throw new HappyError(t('errors.permissionDenied'), false);
+        return ArtifactActionOutputSchemasV1['artifact.public_link.audit'].parse(result);
+    }, [artifactId, isCurrent, request]);
     return { ...state, shareUrl: canManage && issued.current?.shareId === state.publication?.id ? issued.current?.url ?? null : null,
         readOnly: !canManage, pendingApproval: approval.approvalPending, reload, create, remove, listAccessLog,
         openPendingApproval: () => { if (approval.approvalId) router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId)}?serverId=${encodeURIComponent(scope.serverId)}`); } };

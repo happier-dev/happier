@@ -33,14 +33,14 @@ describe('session role configuration RPC', () => {
       // subtree parser, admission policy and registered mutation owner run below.
       resolveAgentStartContext: async (context) => resolveCliAgentStartContextV1({
         sessionId: 'lead', machineId: 'source-machine', directory: '/repo',
-        backendTarget: { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'agent' } },
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         metadata: source, starterDepth: 2, turnDepth: 3, callerPermissionMode: context.callerPermissionMode ?? null, settings: null,
       }),
       sessionList: async ({ query }) => ({ queryVersion: 1, sessions: inSubtree && query?.storage === 'active' ? [{
         id: 'child', createdAt: 1, updatedAt: 1, active: true, activeAt: 1, encryption: null,
       }] : [], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }),
       readCurrentReportLead: async () => currentLead,
-      readCallerWorkspaceWrites: async () => readSessionWorkspaceWritesV1(source),
+      readCallerWorkspaceWrites: async () => readSessionWorkspaceWritesV1(source) ?? null,
       stageSessionStateMutation: async (mutation) => {
         expect(mutation.source).toBe('runtime');
         target = applyRegisteredSessionStateFieldMutationToMetadata(target, mutation);

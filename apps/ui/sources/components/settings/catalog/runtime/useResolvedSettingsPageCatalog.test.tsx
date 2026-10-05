@@ -1,11 +1,13 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react-test-renderer';
+import * as React from 'react';
 
+import { FEATURE_IDS, FeaturesResponseSchema, PluginProjectionV2Schema, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
 import { normalizePluginUiSettingsPageBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
-import { renderHook } from '@/dev/testkit';
+import { renderHook as renderRealHook } from '@/dev/testkit';
 import {
-    EMPTY_PLUGIN_UI_PROJECTION,
+    normalizePluginUiProjection,
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
 
@@ -17,8 +19,6 @@ const featureGateState = vi.hoisted(() => ({
     enabled: (_featureId: string): boolean => true,
 }));
 const settingsState = vi.hoisted(() => ({
-    useProfiles: false,
-    devModeEnabled: false,
     tauriDesktop: false,
 }));
 const appShellPluginProjectionState = vi.hoisted(() => ({
@@ -66,34 +66,42 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureGateState.enabled(featureId),
-}));
-
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
-    useAppShellPluginUiProjection: () => ({
-        pluginUiProjection: appShellPluginProjectionState.projection,
-    }),
-}));
-
 vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
     isDesktopHost: () => settingsState.tauriDesktop,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSetting: (key: string) => {
-            if (key === 'useProfiles') return settingsState.useProfiles;
-            return null;
-        },
-        useLocalSetting: (key: string) => {
-            if (key === 'devModeEnabled') return settingsState.devModeEnabled;
-            return null;
-        },
-    });
-});
+// Initialize the declarations before the real store's app-context import graph.
+await import('../settingsPageDeclarations');
+const { storage } = await import('@/sync/domains/state/storage');
+const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+const profiles = await import('@/sync/domains/server/serverProfiles');
+const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+
+function CatalogProjectionProvider({ children }: React.PropsWithChildren) {
+    // The wire projection fixture enters the actual AppShell context owner.
+    // Neither the catalog hooks nor its localized-text resolver are replaced.
+    return <AppShellPluginUiProjectionValueProvider value={{
+        pluginUiProjection: appShellPluginProjectionState.projection,
+        pluginBrowserProjection: null,
+        phase: 'current',
+        interactionEnabled: true,
+        machineId: null,
+        serverId: null,
+        platform: 'web',
+        reloadConnectedAccountProjection() {},
+        clientExecutableActivation: { status: 'ready' },
+        reloadClientExecutables() {},
+    }}>{children}</AppShellPluginUiProjectionValueProvider>;
+}
+
+async function renderHook<Value>(useValue: () => Value) {
+    // Build-time environment and observed server response are genuine inputs to
+    // the real feature decision owner. Keep dependencies and local policy real.
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY', FEATURE_IDS.filter((id) => !featureGateState.enabled(id)).join(','));
+    return renderRealHook(useValue, { wrapper: CatalogProjectionProvider });
+}
 
 function flattenIds(nodes: readonly { id: string; children?: readonly any[] }[]): string[] {
     const out: string[] = [];
@@ -116,11 +124,13 @@ function pluginSettingsProjection(): PluginUiProjectionModel {
         rendererId: 'settings-form',
     });
     if (!binding) throw new Error('Settings page fixture needs a normalized binding');
-    return {
-        ...EMPTY_PLUGIN_UI_PROJECTION,
-        settingsGroupsById: {
+    return normalizePluginUiProjection(PluginProjectionV2Schema.parse({
+        v: 2, generation: 0, installedPackagesById: {}, agentsById: {}, actionsById: {},
+        toolsById: {}, commandsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+        familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
             'settingsGroup:examples.descriptor-only:descriptor-preferences': {
                 id: 'settingsGroup:examples.descriptor-only:descriptor-preferences',
+                occurrenceId: 'descriptor-preferences-occurrence',
                 pluginId: 'examples.descriptor-only',
                 contributionKind: 'settingsGroup',
                 group: {
@@ -128,10 +138,9 @@ function pluginSettingsProjection(): PluginUiProjectionModel {
                     title: 'Descriptor preferences',
                 },
             },
-        },
-        settingsPagesById: {
             'settingsPage:examples.descriptor-only:settings': {
                 id: 'settingsPage:examples.descriptor-only:settings',
+                occurrenceId: 'descriptor-settings-occurrence',
                 pluginId: 'examples.descriptor-only',
                 contributionKind: 'settingsPage',
                 descriptorId: 'settings',
@@ -145,27 +154,51 @@ function pluginSettingsProjection(): PluginUiProjectionModel {
                     icon: 'settings',
                 },
                 binding,
-                renderer: { kind: 'declarative' },
+                renderer: {
+                    kind: 'declarative', contributionId: 'settings-form', model: {
+                        identity: { pluginId: 'examples.descriptor-only', localId: 'settings-form', qualifiedId: 'examples.descriptor-only/settings-form', occurrenceId: 'settings-form-occurrence' },
+                        visible: true, requiredHostMethods: [],
+                        declarativeInventory: { actions: [], destinations: [], settings: [], uiQueries: [] },
+                        root: { kind: 'text', path: 'root', order: 0, text: 'Settings' },
+                    },
+                },
                 availability: { state: 'available', reason: 'available', diagnostics: [] },
             },
-        },
-    };
+        } } },
+    }));
 }
 
 describe('useResolvedSettingsPageCatalog', () => {
+    let priorStorage: ReturnType<typeof storage.getState>;
+    let priorView: ReturnType<typeof profiles.loadHomeViewState>;
+    let fixtureHomeId: string;
     beforeEach(async () => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         // Device credential persistence is the boundary; Home admission stays real.
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(null);
+        priorStorage = storage.getState();
+        priorView = profiles.loadHomeViewState();
+        const home = await profiles.upsertServerProfile({ name: 'Catalog fixture', serverUrl: 'https://catalog-fixture.example' });
+        fixtureHomeId = home.id;
+        const features = FeaturesResponseSchema.parse({ features: {}, capabilities: {} });
+        for (const id of FEATURE_IDS) tryWriteServerEnabledBitInPlace(features, id, true);
+        primeServerFeaturesSnapshot({ serverId: home.id, snapshot: { status: 'ready', features } });
+        await profiles.saveHomeViewState({ version: 1, groups: [], activeTargetKind: 'server', activeTargetId: home.id });
+        storage.setState({ settings: { ...settingsDefaults, experiments: true, featureToggles: Object.fromEntries(FEATURE_IDS.map((id) => [id, true])) } });
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW', '');
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV', '');
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         vi.restoreAllMocks();
+        vi.unstubAllEnvs();
+        storage.setState(priorStorage, true);
+        if (priorView) await profiles.saveHomeViewState(priorView);
+        await profiles.removeServerProfile(fixtureHomeId);
+        resetServerFeaturesClientForTests();
         pathnameState.value = '/settings';
         routeParamsState.value = {};
         featureGateState.enabled = () => true;
-        settingsState.useProfiles = false;
-        settingsState.devModeEnabled = false;
         settingsState.tauriDesktop = false;
         appShellPluginProjectionState.projection = null;
     });
@@ -193,9 +226,7 @@ describe('useResolvedSettingsPageCatalog', () => {
             activeTargetKind: 'group',
             activeTargetId: 'catalog-group',
         });
-        // Other feature decisions are outside this test. The Teams decision is
-        // real and reads the saved Home set plus the feature-response cache.
-        featureGateState.enabled = () => false;
+        // Teams admission reads the saved Home set and observed feature responses.
         pathnameState.value = `/settings/teams/${homeB.id}/team-one`;
         const hook = await renderHook(() => ({
             admission: useTeamsSettingsAdmission(),
@@ -268,7 +299,6 @@ describe('useResolvedSettingsPageCatalog', () => {
             observedAt: Date.now(),
         }));
         await profiles.saveHomeViewState({ version: 1, groups: [], activeTargetKind: 'server', activeTargetId: home.id });
-        featureGateState.enabled = () => false;
         await answer(false);
         const hook = await renderHook(() => useResolvedSettingsPageCatalog());
         try {
@@ -288,6 +318,7 @@ describe('useResolvedSettingsPageCatalog', () => {
 
     it('admits Home Administration from each Home projection and owner setup without a feature gate', async () => {
         const { HomeGovernanceProjectionV1Schema, NO_HOME_CAPABILITIES_V1 } = await import('@happier-dev/protocol/home/governance');
+        const { homeAdministrationIdentityProviderEditPath } = await import('@/components/settings/home/governance/homeAdministrationRoutes');
         const profiles = await import('@/sync/domains/server/serverProfiles');
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const snapshots = await import('@/sync/store/home/governance/homeGovernanceSnapshots');
@@ -329,7 +360,6 @@ describe('useResolvedSettingsPageCatalog', () => {
             groups: [{ id: 'administration-group', name: 'Both Homes', serverIds: [homeA.id, homeB.id] }],
             activeTargetKind: 'group', activeTargetId: 'administration-group',
         });
-        featureGateState.enabled = () => false;
         pathnameState.value = `/settings/home/${homeB.id}/people`;
         const hook = await renderHook(() => ({
             admission: useHomeAdministrationSettingsAdmission(),
@@ -347,14 +377,14 @@ describe('useResolvedSettingsPageCatalog', () => {
             pathnameState.value = `/settings/home/${homeB.id}/people`;
             await hook.rerender();
             routeParamsState.value = { serverId: homeB.id, providerId: 'provider-one' };
-            pathnameState.value = `/settings/home/${homeB.id}/policies/identity/provider-one/edit`;
+            pathnameState.value = homeAdministrationIdentityProviderEditPath(homeB.id, 'provider-one');
             await hook.rerender();
             expect(hook.getCurrent().catalog.search('issuer')).toContainEqual(expect.objectContaining({
                 route: `${pathnameState.value}?setting=homeAdministration.oidc.issuer`,
                 setting: expect.objectContaining({ anchor: 'homeAdministration.oidc.issuer' }),
             }));
             // An unrelated Home's route never borrows these params or its display name.
-            pathnameState.value = `/settings/home/${homeA.id}/policies/identity/provider-one/edit`;
+            pathnameState.value = homeAdministrationIdentityProviderEditPath(homeA.id, 'provider-one');
             await hook.rerender();
             expect(hook.getCurrent().catalog.search('issuer').some((result) => result.setting?.anchor === 'homeAdministration.oidc.issuer')).toBe(false);
             routeParamsState.value = { serverId: homeA.id, providerId: 'provider-one' };

@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { Platform, Pressable, View, type GestureResponderEvent } from 'react-native';
+import { Platform, View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text } from '@/components/ui/text/Text';
@@ -11,7 +13,7 @@ import {
     describeWorkflowInvocationAttempt,
     describeWorkflowInvocationLifecycle,
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { resolveHappierWorkMapNodePosition, type HappierWorkMapDensity, type HappierWorkMapNodePresentation } from '@happier-dev/plugin-ui/presentation';
 import { WorkMapView } from '@/components/work/map/WorkMapView';
@@ -48,6 +50,8 @@ const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 
 const styles = StyleSheet.create((theme) => ({
     actionTarget: {
+        borderWidth: 1,
+        borderColor: 'transparent',
         minHeight: MINIMUM_TARGET_SIZE,
         justifyContent: 'center',
     },
@@ -64,6 +68,8 @@ const styles = StyleSheet.create((theme) => ({
         marginLeft: theme.margins.lg,
     },
     occurrenceRow: {
+        borderWidth: 1,
+        borderColor: 'transparent',
         minHeight: MINIMUM_TARGET_SIZE,
         justifyContent: 'center',
         paddingHorizontal: theme.margins.sm,
@@ -98,6 +104,9 @@ const styles = StyleSheet.create((theme) => ({
  */
 const FLOW_NODE_LAYOUT: Readonly<Record<WorkflowFlowNode['kind'], HappierWorkMapNodePresentation>> = {
     step: { appearance: 'card' },
+    action: { appearance: 'card' },
+    wait: { appearance: 'card' },
+    workflow: { appearance: 'frame' },
     evaluator: { appearance: 'card' },
     observedAgent: { appearance: 'card' },
     parallel: { appearance: 'group', childLayout: 'lanes' },
@@ -141,12 +150,13 @@ export function WorkflowFlowView(props: Readonly<{
     runStates?: ReadonlyMap<string, readonly WorkflowFlowNodeRunState[]>;
     selectedInvocationId?: string | null;
     /** The press event travels so the caller can return focus to this node later. */
-    onSelectOccurrence?: (invocationId: string, event?: GestureResponderEvent) => void;
+    onSelectOccurrence?: (invocationId: string, event?: Parameters<React.ComponentProps<typeof HappierPressable>['onPress']>[0]) => void;
     testIDPrefix?: string;
     /** `compact`: the live mini-map under a Work row — structure and state only. */
     density?: HappierWorkMapDensity;
 }>): React.ReactElement {
     const testIDPrefix = props.testIDPrefix ?? 'workflow-flow';
+    const { theme } = useUnistyles();
     const compact = props.density === 'compact';
     const editTarget = props.onEditStep === undefined || props.selectedNodeId === null
         ? null
@@ -169,7 +179,7 @@ export function WorkflowFlowView(props: Readonly<{
         const runState = runStateOf(node);
         return runState === undefined
             ? (node.observedStatus === undefined ? null : formatWorkflowAgentStatusLabel(node.observedStatus))
-            : describeWorkflowInvocationLifecycle(runState.lifecycle).label;
+            : describeWorkflowInvocationLifecycle(runState.lifecycle, { blockKind: node.kind }).label;
     };
 
     return (
@@ -197,7 +207,7 @@ export function WorkflowFlowView(props: Readonly<{
                 // INT I3: the ring and tint come from the shared status tone, never a local colour rule.
                 const { tone } = resolveWorkStatusTone({
                     kind: 'workflow_step',
-                    facts: { lifecycle: runState.lifecycle, word: describeWorkflowInvocationLifecycle(runState.lifecycle).label },
+                    facts: { lifecycle: runState.lifecycle, word: describeWorkflowInvocationLifecycle(runState.lifecycle, { blockKind: node.kind }).label },
                 });
                 return { ...layout, tone };
             }}
@@ -231,6 +241,7 @@ export function WorkflowFlowView(props: Readonly<{
                                 <WorkflowLifecycleStatus
                                     testID={`${testIDPrefix}-node-${node.nodeId}-state`}
                                     lifecycle={runState.lifecycle}
+                                    blockKind={node.kind}
                                 />
                             </View>
                         ) : stateLabel === null ? null : (
@@ -253,7 +264,7 @@ export function WorkflowFlowView(props: Readonly<{
                     >
                         {occurrences.map((occurrence) => {
                             const occurrenceSelected = occurrence.invocationId === props.selectedInvocationId;
-                            const occurrenceState = describeWorkflowInvocationLifecycle(occurrence.lifecycle).label;
+                            const occurrenceState = describeWorkflowInvocationLifecycle(occurrence.lifecycle, { blockKind: node.kind }).label;
                             const attemptLabel = describeWorkflowInvocationAttempt(occurrence.attempt ?? '0').label;
                             const label = occurrence.occurrenceLabel === undefined
                                 ? `${attemptLabel} \u00b7 ${occurrenceState}`
@@ -264,20 +275,21 @@ export function WorkflowFlowView(props: Readonly<{
                                     testID={`${testIDPrefix}-node-${node.nodeId}-occurrence-item-${occurrence.invocationId}`}
                                     role="listitem"
                                 >
-                                    <Pressable
+                                    <HappierPressable
                                         testID={`${testIDPrefix}-node-${node.nodeId}-occurrence-${occurrence.invocationId}`}
                                         accessibilityRole="button"
                                         accessibilityState={{ selected: occurrenceSelected }}
                                         accessibilityLabel={t('workflows.a11y.flowNode', { node: node.label, state: label })}
                                         onPress={(event) => props.onSelectOccurrence?.(occurrence.invocationId, event)}
-                                        style={({ pressed }) => [
+                                        style={({ pressed, focused }) => [
                                             styles.occurrenceRow,
                                             occurrenceSelected ? styles.occurrenceSelected : null,
                                             pressed ? styles.occurrencePressed : null,
+                                            focusRingStyle({ focused, color: theme.colors.border.focus }),
                                         ]}
                                     >
                                         <Text style={styles.occurrenceMeta}>{label}</Text>
-                                    </Pressable>
+                                    </HappierPressable>
                                 </View>
                             );
                         })}
@@ -285,15 +297,17 @@ export function WorkflowFlowView(props: Readonly<{
                 );
             }}
             footer={editTarget === null ? null : (
-                <Pressable
+                <HappierPressable
                     testID={`${testIDPrefix}-edit-step`}
                     accessibilityRole="button"
                     accessibilityLabel={editLabel}
                     onPress={() => props.onEditStep?.(editTarget)}
-                    style={styles.actionTarget}
+                    style={({ focused, pressed }) => [styles.actionTarget,
+                        pressed ? styles.occurrencePressed : null,
+                        focusRingStyle({ focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={styles.editAction}>{editLabel}</Text>
-                </Pressable>
+                </HappierPressable>
             )}
         />
     );

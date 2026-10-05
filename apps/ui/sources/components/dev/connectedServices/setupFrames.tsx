@@ -6,6 +6,7 @@ import { HubUsageSectionView } from '@/components/hub/HubUsageSection';
 import { ConnectedAccountDeviceForm } from '@/components/settings/connectedServices/account/ConnectedAccountDeviceForm';
 import { ConnectedAccountManualForm } from '@/components/settings/connectedServices/account/ConnectedAccountManualForm';
 import { ConnectedAccountOAuthForm } from '@/components/settings/connectedServices/account/ConnectedAccountOAuthForm';
+import { getConnectedServiceSetupPresentation } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { buildConnectServicesSetupItem } from '@/components/settings/connectedServices/home/useConnectServicesSetupItem';
 import { selectHomeConnectInvitations } from '@/components/settings/connectedServices/home/selectHomeConnectInvitations';
 import {
@@ -31,8 +32,18 @@ import {
     ACCOUNTS, AGENT_USES, CHATGPT, CHATGPT_BOT, CLAUDE, CODEX_POOL, DAY, ENTRIES, GEMINI, GROUPS, HOUR, LABELS, MIN,
 } from './connectedServicesFixtures';
 import { renderCollectionFrame } from './collectionFrames';
+import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 
 const noop = () => {};
+const fixtureTarget = { serverIdentityId: 'fixture-home', machineId: 'fixture-macbook' };
+const fixtureMachine = { target: fixtureTarget, displayName: 'MacBook Pro', serverLabel: 'Personal Home', availability: 'online' as const,
+    observation: 'live' as const, observedAt: Date.now() };
+const FIXTURE_SELECTION: MachineAdministrationTargetSelectionV1 = {
+    candidates: [fixtureMachine], pickerRows: [], selectedTarget: fixtureTarget,
+    state: { kind: 'online', target: fixtureTarget, machine: fixtureMachine },
+    selectedTargetServerMatchesActiveAccount: false, canExecute: false,
+    selectTarget: noop, clearTarget: noop, resolveExecutionTarget: () => null,
+};
 const SETUP_FRAMES = new Set(['A1', 'A2', 'A3', 'A4', 'A5', 'AS', 'P0', 'H2', 'H2c', 'H2b']);
 const CHATGPT_KEY = 'happier.agent.codex/openai-codex';
 const CLAUDE_KEY = 'happier.agent.claude/claude-subscription';
@@ -90,8 +101,8 @@ function FixtureFlow(props: Readonly<{ entry: ConnectedServiceSetupCatalogEntry;
             <ConnectedServiceSetupFlowBody
                 state="ready"
                 methods={[
-                    { id: 'device', title: t('connectedServicesSettings.modeDeviceCode'), recommended: true },
-                    { id: 'oauth', title: t('connectedServicesSettings.modeBrowser'), recommended: false },
+                    { id: 'device', title: t('connectedServicesSettings.methodCode'), recommended: true },
+                    { id: 'oauth', title: t('connectedServicesSettings.methodBrowser'), recommended: false },
                 ]}
                 activeMethodId="device"
                 onSelectMethod={noop}
@@ -116,8 +127,8 @@ function FixtureFlow(props: Readonly<{ entry: ConnectedServiceSetupCatalogEntry;
             <ConnectedServiceSetupFlowBody
                 state="ready"
                 methods={[
-                    { id: 'oauth', title: t('connectedServicesSettings.modeBrowser'), recommended: true },
-                    { id: 'setup-token', title: t('connectedServicesSettings.modeManual'), recommended: false },
+                    { id: 'oauth', title: t('connectedServicesSettings.methodBrowser'), recommended: true },
+                    { id: 'setup-token', title: t('connectedServicesSettings.methodToken'), recommended: false },
                 ]}
                 activeMethodId="oauth"
                 onSelectMethod={noop}
@@ -134,6 +145,8 @@ function FixtureFlow(props: Readonly<{ entry: ConnectedServiceSetupCatalogEntry;
             />
         );
     }
+    const presentation = getConnectedServiceSetupPresentation(props.entry.service);
+    const guide = presentation && 'manual' in presentation ? presentation.manual : null;
     return (
         <ConnectedServiceSetupFlowBody
             state="ready"
@@ -141,7 +154,9 @@ function FixtureFlow(props: Readonly<{ entry: ConnectedServiceSetupCatalogEntry;
                 <ConnectedAccountManualForm
                     embedded
                     title={props.entry.label}
-                    fields={[{ id: 'token', title: props.entry.label, secret: true, schema: { type: 'string', minLength: 1 } }] as never}
+                    fields={[{ id: 'token', title: props.entry.label, secret: true, schema: { type: 'string', minLength: 1 } }]}
+                    guided={guide ? { consoleUrl: guide.consoleUrl, createKeyTitle: t(guide.createKeyTitleKey),
+                        billingNote: t(guide.billingNoteKey), shapePattern: guide.shapePattern, shapeHint: t(guide.shapeHintKey) } : undefined}
                     submitting={false}
                     onCancel={noop}
                     onSubmit={noop}
@@ -157,11 +172,12 @@ const renderFixtureFlow = (entry: ConnectedServiceSetupCatalogEntry, target: Con
 
 /** A1–A4: "Connect more", opened by the request the page's "+" / "Add account" sends. */
 function ConnectMoreFrame(props: Readonly<{ request: ConnectedServiceSetupTarget }>) {
+    const phone = useDeviceType() === 'phone';
     const model = useModel({ accounts: true });
     const [request, setRequest] = React.useState<ConnectedServiceSetupTarget | null>(props.request);
     return (
         <ItemList>
-            <PageHeader title={t('settings.connectedServices')} description={t('settings.connectedServicesSubtitle')} />
+            {!phone ? <PageHeader title={t('settings.connectedServices')} description={t('settings.connectedServicesSubtitle')} /> : null}
             <ConnectedServicesConnectMore
                 model={model}
                 layout="section"
@@ -169,6 +185,7 @@ function ConnectMoreFrame(props: Readonly<{ request: ConnectedServiceSetupTarget
                 onRequestHandled={() => setRequest(null)}
                 onConnected={noop}
                 renderServiceFlow={renderFixtureFlow}
+                targetSelection={FIXTURE_SELECTION}
             />
         </ItemList>
     );
@@ -179,7 +196,6 @@ function FirstRunFrame() {
     const model = useModel({ accounts: false });
     return (
         <ItemList>
-            <PageHeader title={t('settings.connectedServices')} description={t('settings.connectedServicesSubtitle')} />
             <ItemGroup surface="none">
                 <ConnectedServicesConnectMore
                     model={model}
@@ -188,6 +204,7 @@ function FirstRunFrame() {
                     onRequestHandled={noop}
                     onConnected={noop}
                     renderServiceFlow={renderFixtureFlow}
+                    targetSelection={FIXTURE_SELECTION}
                 />
             </ItemGroup>
         </ItemList>
@@ -243,7 +260,7 @@ function HomeFrame(props: Readonly<{ stage: 'rest' | 'open' | 'after' }>) {
         hidden: new Set(),
         hasAccounts: after,
     });
-    const services = buildConnectServicesSetupItem({ offer, catalog, layout: phone ? 'row' : 'card', target, setTarget, dismiss: noop, renderServiceFlow: renderFixtureFlow });
+    const services = buildConnectServicesSetupItem({ offer, catalog, layout: phone ? 'row' : 'card', target, setTarget, dismiss: noop, renderServiceFlow: renderFixtureFlow, targetSelection: FIXTURE_SELECTION });
     const tile = (id: string, icon: 'device-mobile' | 'desktop', title: string, subtitle: string, label: string): SetupBlockItem => ({
         id,
         renderTile: () => (

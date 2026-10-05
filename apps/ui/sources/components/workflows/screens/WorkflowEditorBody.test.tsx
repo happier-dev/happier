@@ -8,8 +8,14 @@ import {
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { sessionEnvelopeTransportMock } from '@/dev/testkit/mocks/sessionEnvelopeTransport';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import type { IModal } from '@/modal';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+import { useWorkflowEditorHistory } from '../editor/useWorkflowEditorHistory';
+
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', async () => (await import('@/dev/testkit/mocks/sessionEnvelopeTransport')).sessionEnvelopeTransportMock);
+vi.mock('@/sync/api/teams/membershipSessionDataKeyEnvelopesApi', async () => (await import('@/dev/testkit/mocks/sessionEnvelopeTransport')).sessionEnvelopeTransportMock);
 
 // Hoisted: the accessibility mock factory below runs during static-import collection.
 const announceSpy = vi.hoisted(() => vi.fn());
@@ -26,6 +32,7 @@ const composerInstanceIds = vi.hoisted(() => ({ issued: [] as string[], next: 0 
 /** The latest props each step composer was rendered with, addressed by block. */
 const composerProps = vi.hoisted(() => ({ byBlockId: new Map<string, Record<string, unknown>>() }));
 const promptFocus = vi.fn();
+const bindingBoundaries: Array<() => void> = [];
 let registeredHandlers: Record<string, () => void> = {};
 let windowDimensions = { width: 1200, height: 800 };
 /**
@@ -98,6 +105,10 @@ vi.mock('@/components/ui/selectionList', async (importOriginal) => {
         ...createPassThroughModule(['SelectionList', 'SelectionListFilterChip']),
     };
 });
+// The New Session surface is its own owner; the Agent tab only hosts it.
+vi.mock('@/components/sessions/new/NewSessionScreen', () => ({
+    NewSessionScreen: () => React.createElement('NewSessionScreen'),
+}));
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
     AppPaneScopeHost: (props: Record<string, unknown> & {
         main: React.ReactNode;
@@ -130,6 +141,11 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 vi.mock('@/components/appShell/panes/details/detailsPaneAvailability', () => ({
     useDetailsPaneAvailable: () => paneState.detailsAvailable,
 }));
+// The Session renderer is the composition boundary here: the real SessionInPane
+// decides whether to mount it; its transcript/composer behavior has its own suites.
+vi.mock('@/components/sessions/shell/SessionView', () => ({
+    SessionView: (props: Record<string, unknown>) => React.createElement('SessionView', props),
+}));
 vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
     MachineSelector: (props: Record<string, unknown>) => React.createElement('MachineSelector', props),
 }));
@@ -153,6 +169,7 @@ vi.mock('@/scm/scmRepositoryService', async (importOriginal) => ({
 vi.mock('@/components/sessions/agentInput', async () => {
     const { createAgentInputModuleMock } = await import('@/dev/testkit/mocks/agentInput');
     return createAgentInputModuleMock({
+        renderExtraActionChips: true,
         onFocusRequest: () => promptFocus(),
         onRender: (props) => {
             const ref = props.composerRef as Readonly<{ blockId?: string }> | undefined;
@@ -219,8 +236,16 @@ beforeAll(async () => {
 }, 300_000);
 
 afterEach(async () => {
+    for (const request of Object.values(sessionEnvelopeTransportMock)) expect(request).not.toHaveBeenCalled();
     await standardCleanup();
+    for (const dispose of bindingBoundaries.splice(0)) dispose();
 });
+
+async function bindingHome() {
+    const boundary = await serveActionHomes({ homes: [{ key: 'workflow', serverUrl: 'https://workflow-binding.test', accountId: 'account-a' }], route: () => undefined });
+    bindingBoundaries.push(() => boundary.dispose());
+    return { serverId: boundary.homes.workflow!.id, accountId: 'account-a' };
+}
 
 const AGENT_TARGET = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
 
@@ -286,6 +311,24 @@ async function renderBody(
     } as never);
     return renderScreen(element, renderOptions);
 }
+
+it('expands a called workflow in editor Flow while selection reveals the parent call, not the read-only child', async () => {
+    const harness = await loadHarness();
+    const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol/workflows');
+    const child = getBuiltinWorkflowCatalogV1().find((entry) => entry.id === 'builtin:plan-with-a-panel')!;
+    const childNodeId = JSON.stringify(['call', child.definition.blocks[0]!.id]);
+    const onSelectBlock = vi.fn();
+    const draft = harness.createWorkflowEditorDraft({ draftId: 'nested-flow', name: 'Nested', defaults: { agentTarget: AGENT_TARGET },
+        blocks: [{ kind: 'workflow', id: 'call', workflowRef: child.id,
+            input: { request: { kind: 'literal', value: 'Review the plan' } } }],
+    });
+    paneState.rightOpen = true;
+    const screen = await renderBody(harness, { draft, view: 'flow', onSelectBlock, onRunNow: () => {} });
+    expect(screen.findByTestId('workflow-editor-flow-node-call'), screen.getTextContent()).not.toBeNull();
+    await vi.waitFor(() => expect(screen.findByTestId(`workflow-editor-flow-node-${childNodeId}`), screen.getTextContent()).not.toBeNull());
+    await screen.pressByTestIdAsync(`workflow-editor-flow-node-${childNodeId}`);
+    expect(onSelectBlock).toHaveBeenCalledWith('call');
+});
 
 it('keeps description metadata editable outside the portable draft and offers a return to its reviewed run', async () => {
     const harness = await loadHarness();
@@ -362,6 +405,37 @@ function isInspectorModalConfig(value: unknown): value is Readonly<{
 }
 
 describe('workflow editor body', () => {
+    it('keeps the authoring Session in the one Settings/Agent details pane and retires its hidden renderer', async () => {
+        const harness = await loadHarness();
+        const screen = await renderBody(harness, { authoringSessionId: 'author-session', authoringServerId: 'server-a', onSave: () => {} });
+        expect(screen.findByTestId('workflow-editor-details-tabs:settings')).not.toBeNull();
+        await screen.pressByTestIdAsync('workflow-editor-details-tabs:settings');
+        expect(screen.findByTestId('session-in-pane-inactive:author-session')).not.toBeNull();
+    });
+    it('offers Edit with an agent in the header and shows its seeded composer in the Agent tab (04 §4.7; DESIGN-1 B8)', async () => {
+        const harness = await loadHarness();
+        const onEditWithAgent = vi.fn();
+        const header = await renderBody(harness, { onEditWithAgent, onSave: () => {} });
+        // No agent conversation yet: the pane has no Agent tab and nothing opens as a modal.
+        expect(header.findByTestId('workflow-editor-details-tabs:agent')).toBeNull();
+        await header.pressByTestIdAsync('workflow-editor-edit-with-agent');
+        expect(onEditWithAgent).toHaveBeenCalledTimes(1);
+        expect(modalShowSpy).not.toHaveBeenCalled();
+        await header.unmount();
+
+        const seeded = await renderBody(harness, {
+            onEditWithAgent,
+            onSave: () => {},
+            authoringDraft: { draftId: 'agent-draft-1', serverId: 'server-a', isCurrent: () => true, onSessionCreated: () => {} },
+        });
+        expect(seeded.findByTestId('workflow-editor-details-tabs:agent')).not.toBeNull();
+        expect(seeded.findByTestId('workflow-editor-agent-draft')).not.toBeNull();
+        // Pressing it again returns to that conversation instead of starting another.
+        await seeded.pressByTestIdAsync('workflow-editor-details-tabs:settings');
+        await seeded.pressByTestIdAsync('workflow-editor-edit-with-agent');
+        expect(onEditWithAgent).toHaveBeenCalledTimes(1);
+        expect(seeded.findByTestId('workflow-editor-agent-draft')).not.toBeNull();
+    });
     it('can suppress only its title field when a wrapper owns the visible name', async () => {
         const harness = await loadHarness();
         const screen = await renderBody(harness, {
@@ -416,7 +490,8 @@ describe('workflow editor body', () => {
         // The document reads the loop as a sentence; its options open beside it.
         expect(screen.getTextContent()).toContain('workflows.page.inspector.repeatTimes');
         await screen.pressByTestIdAsync('workflow-editor-loop-repeat-summary');
-        await screen.pressByTestIdAsync('workflow-editor-inspector-loop-repeat-count-input-0-kind-input');
+        const source = dropdownField(screen, 'workflow-editor-inspector-loop-repeat-count-input-0-kind');
+        await act(async () => { source.props.onSelect('input'); });
         expect(changed.mock.calls[0]?.[0].blocks[0].repetition.count.kind).toBe('input');
     });
 
@@ -626,16 +701,19 @@ describe('workflow editor body', () => {
         expect(promptFocus).toHaveBeenCalledTimes(1);
     });
 
-    it('lets the machine and project controls wrap without imposing a phone-breaking minimum', async () => {
+    it('shows Machine and project as one field that opens the choices, which wrap without a phone-breaking minimum', async () => {
         const harness = await loadHarness();
         const screen = await renderBody(harness, {
-            projectTarget: { machineId: 'machine-1', directory: '/workspace/project' },
+            projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' },
             projectMachines: [{ id: 'machine-1', metadata: { displayName: 'Mac Studio', homeDir: '/Users/me' } }],
             onChangeProjectTarget: vi.fn(),
         });
 
-        expect(flattenTestStyle(screen.findByTestId('workflow-editor-machine-row')?.props.style))
-            .toMatchObject({ flexWrap: 'wrap' });
+        // One row and one value: the where-summary, home-relative, never a raw absolute path.
+        expect(screen.getTextContent()).toContain('Mac Studio / ~/project');
+        expect(screen.findByTestId('workflow-editor-project-directory')).toBeNull();
+        await screen.pressByTestIdAsync('workflow-editor-machine-row');
+        expect(screen.findByTestId('workflow-editor-where-popover')).not.toBeNull();
         const folder = screen.findByTestId('workflow-editor-project-directory');
         expect(folder?.props.role ?? folder?.props.accessibilityRole).toBe('button');
         expect(flattenTestStyle(folder?.props.style)).toMatchObject({ minWidth: 0, flexShrink: 1 });
@@ -668,7 +746,8 @@ describe('workflow editor body', () => {
         };
         const screen = await renderBody(harness, { draft, onChange: changed });
 
-        await screen.pressByTestIdAsync('workflow-editor-step-implement-input-0-kind-workspace');
+        const source = dropdownField(screen, 'workflow-editor-step-implement-input-0-kind');
+        await act(async () => { source.props.onSelect('workspace'); });
         expect(changed.mock.calls[0]?.[0].blocks[1].input).toEqual([{
             kind: 'workspace',
             producer: { blockId: 'analyze', scope: { kind: 'current' } },
@@ -938,24 +1017,27 @@ describe('workflow editor body', () => {
      */
     it('says parallel branches use separate conversations only when every branch step runs fresh', async () => {
         const harness = await loadHarness();
-        const noteId = 'workflow-editor-parallel-parallel-1-separate-conversations';
+        const noteId = 'workflow-editor-inspector-parallel-parallel-1-separate-conversations';
         const withParallel = harness.insertWorkflowBlock(buildDraft(harness), {
             list: { kind: 'root' },
             block: harness.createWorkflowBlock('parallel', new Set(['analyze'])),
         });
         const shared = await renderBody(harness, { draft: withParallel });
         expect(shared.findByTestId('workflow-editor-parallel-parallel-1')).not.toBeNull();
+        await shared.pressByTestIdAsync('workflow-editor-parallel-parallel-1-summary');
         expect(shared.findByTestId(noteId)).toBeNull();
         await shared.unmount();
 
         const freshDraft = harness.setWorkflowDefaultField(withParallel, 'conversation', { kind: 'fresh' });
         const fresh = await renderBody(harness, { draft: freshDraft });
+        await fresh.pressByTestIdAsync('workflow-editor-parallel-parallel-1-summary');
         expect(fresh.findByTestId(noteId)?.props.children).toBe('workflows.conversation.branchesUseSeparate');
         await fresh.unmount();
 
         const oneShared = await renderBody(harness, {
             draft: harness.setWorkflowStepExecutionField(freshDraft, 'step-1', 'conversation', { kind: 'shared_run' }),
         });
+        await oneShared.pressByTestIdAsync('workflow-editor-parallel-parallel-1-summary');
         expect(oneShared.findByTestId(noteId)).toBeNull();
         await oneShared.unmount();
     });
@@ -1086,19 +1168,22 @@ describe('workflow editor body', () => {
         commandsRef.current!.schedule();
         expect(ran).not.toHaveBeenCalled();
         expect(scheduled).not.toHaveBeenCalled();
-        expect(announceSpy).toHaveBeenCalledTimes(2);
+        expect(String(announceSpy.mock.calls.at(-1)?.[0])).toContain('workflows.a11y.commandRefused');
         await blocked.unmount();
 
         const eligible = await renderBody(harness, {
             onRunNow: ran,
             onSchedule: scheduled,
+            authoringFacts: { agentTargets: [{ id: 'agent:happier.agent.claude/claude',
+                label: 'Claude Code', target: AGENT_TARGET, agentId: 'claude' }] },
             projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' },
             commandsRef,
         });
         commandsRef.current!.runNow();
         commandsRef.current!.schedule();
         expect(ran).toHaveBeenCalledTimes(1);
-        expect(scheduled).toHaveBeenCalledTimes(1);
+        // Schedule opens this page's trigger settings; it is not a second host effect.
+        expect(scheduled).not.toHaveBeenCalled();
         await eligible.unmount();
     });
 
@@ -1246,7 +1331,7 @@ describe('workflow editor body', () => {
         await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
 
         const field = dropdownField(screen, 'workflow-editor-inspector-continuity-conversation-field');
-        expect(field.props.items[0]).toMatchObject({ id: 'default', title: 'workflows.page.inspector.workflowDefault' });
+        expect(field.props.items[0]).toMatchObject({ id: 'default' });
         // The option equal to the default is still offered, and it is what is pinned now (F24).
         expect(field.props.selectedId).toBe('shared_run');
         await act(async () => { field.props.onSelect('default'); });
@@ -1279,9 +1364,17 @@ describe('workflow editor body', () => {
      */
     it('binds a Session dropped onto a step and refuses one from another machine', async () => {
         const harness = await loadHarness();
-        const { encodeSessionSplitCanvasDragData } = await import('@/components/sessions/canvas/sessionSplitCanvasDragData');
+        const { useEntityDragDropRuntime } = await import('@/components/ui/treeDragDrop');
+        const scope = await bindingHome();
         const changed = vi.fn();
+        const ran = vi.fn();
+        const saved = vi.fn();
+        const initial = buildDraft(harness);
+        let runtime: ReturnType<typeof useEntityDragDropRuntime> | undefined;
+        function Realm() { runtime = useEntityDragDropRuntime(); return null; }
         const screen = await renderBody(harness, {
+            draft: initial, sessionBindingScope: scope,
+            onRunNow: ran, onSave: saved,
             onChange: changed,
             projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' },
             projectMachines: [
@@ -1292,27 +1385,42 @@ describe('workflow editor body', () => {
                 { sessionId: 'here', machineId: 'machine-1', label: 'Fix login' },
                 { sessionId: 'there', machineId: 'machine-2', label: 'Elsewhere' },
             ],
-        });
-        const zone = screen.findHostByTestId('workflow-editor-step-analyze-session-drop');
-        const drop = async (sessionId: string) => {
-            const event = {
-                preventDefault: vi.fn(),
-                stopPropagation: vi.fn(),
-                dataTransfer: { getData: () => encodeSessionSplitCanvasDragData({ sessionId }) },
-            };
-            await act(async () => { zone?.props.onDrop(event); });
-            return event;
+        }, { wrapper: ({ children }) => <><Realm />{children}</>, createNodeMock: element =>
+            React.isValidElement<{ testID?: string }>(element) && element.props.testID === 'workflow-editor-step-analyze-session-drop'
+                ? { getBoundingClientRect: () => ({ x: 10, y: 10, left: 10, top: 10, width: 500, height: 200 }) } : null });
+        let sessionId = 'there';
+        const retireSource = runtime!.registerSource({ id: 'workflow-source', scope, isCurrent: () => true,
+            getItem: () => ({ kind: 'session', scope, address: { serverId: scope.serverId, sessionId } }) });
+        const target = runtime!.getDestinations('workflow-source').find(destination => destination.label === 'Analyze the repository')!;
+        expect(target.admission).toMatchObject({ status: 'refused', reason: { code: 'workflow_where_machine_mismatch' } });
+        const drop = async () => {
+            let result: Awaited<ReturnType<NonNullable<typeof runtime>['perform']>> = null;
+            await act(async () => {
+                runtime!.begin('workflow-source'); runtime!.move({ x: 20, y: 20 });
+                result = await runtime!.release();
+            });
+            return result;
         };
 
-        const refused = await drop('there');
+        const refused = await drop();
         // Never inserted as text into the composer, and nothing is bound.
-        expect(refused.preventDefault).toHaveBeenCalled();
+        expect(refused).toMatchObject({ status: 'refused' });
         expect(changed).not.toHaveBeenCalled();
 
-        await drop('here');
+        sessionId = 'here';
+        await act(async () => { runtime!.begin('workflow-source')!.choose(target.targetId); runtime!.cancel(); });
+        expect(changed).not.toHaveBeenCalled();
+        expect(await drop()).toMatchObject({ status: 'applied' });
         expect(changed).toHaveBeenCalledTimes(1);
         expect(changed.mock.calls[0]?.[0].blocks[0].execution.conversation)
             .toEqual({ kind: 'existing_session', sessionId: 'here', machineId: 'machine-1' });
+        expect(changed.mock.calls[0]?.[0]).toEqual({ ...initial, blocks: [{ ...initial.blocks[0], execution: {
+            conversation: { kind: 'existing_session', sessionId: 'here', machineId: 'machine-1' },
+        } }] });
+        expect(ran).not.toHaveBeenCalled();
+        expect(saved).not.toHaveBeenCalled();
+        await act(async () => { retireSource(); });
+        await screen.unmount();
     });
 
     /**
@@ -1324,8 +1432,10 @@ describe('workflow editor body', () => {
      */
     it('authors an existing Session continuation from the host-supplied candidates', async () => {
         const harness = await loadHarness();
+        const scope = await bindingHome();
         const changed = vi.fn();
         const screen = await renderBody(harness, {
+            sessionBindingScope: scope,
             onChange: changed,
             existingSessions: [
                 { sessionId: 'session-1', machineId: 'machine-1', label: 'Fix login' },
@@ -1345,13 +1455,38 @@ describe('workflow editor body', () => {
         expect(picker).not.toBeNull();
         const options = picker!.props.rootStep.sections[0].options as Array<{ id: string; label: string }>;
         expect(options.map((option) => option.id)).toEqual(['session-1', 'session-2']);
-        await act(async () => { picker!.props.onSelect('session-2', options[1]); });
+        await act(async () => { await picker!.props.onSelect('session-2', options[1]); });
 
         expect(changed).toHaveBeenCalledTimes(1);
         const next = changed.mock.calls[0]?.[0];
         expect(next.defaults.conversation).toEqual({ kind: 'existing_session', sessionId: 'session-2', machineId: 'machine-1' });
         expect(harness.validateWorkflowEditorDraft(next).normalizedDefinition?.defaults.conversation)
             .toEqual({ kind: 'existing_session', sessionId: 'session-2', machineId: 'machine-1' });
+    });
+
+    it('retires mounted conversation binding before passive editor cleanup', async () => {
+        const harness = await loadHarness();
+        const scope = await bindingHome();
+        const { invokeWorkflowConversationBinding } = await import('@/sync/ops/actions/workflowAuthoringAction');
+        const draft = buildDraft(harness);
+        const changed = vi.fn();
+        let result: ReturnType<typeof invokeWorkflowConversationBinding> | undefined;
+        function Host({ shown }: { shown: boolean }) {
+            React.useLayoutEffect(() => {
+                if (!shown) result = invokeWorkflowConversationBinding({
+                    input: { scope, draftId: draft.draftId, stepId: 'analyze', address: { serverId: scope.serverId, sessionId: 'session' } },
+                    context: { serverId: scope.serverId, runtimeAccountId: scope.accountId },
+                });
+            }, [shown]);
+            return shown ? <harness.WorkflowEditorBody draft={draft} onChange={changed} machineName="Mac Studio"
+                composerScope={MACHINE_COMPOSER_SCOPE} sessionBindingScope={scope} selectedBlockId={null}
+                onSelectBlock={() => {}} onCustomizeBlock={() => {}} view="steps" onChangeView={() => {}}
+                sessionDropCandidates={[{ sessionId: 'session', machineId: 'machine-1', label: 'Review' }]} /> : null;
+        }
+        const screen = await renderScreen(<Host shown />);
+        await screen.update(<Host shown={false} />);
+        expect(await result).toEqual({ status: 'unavailable' });
+        expect(changed).not.toHaveBeenCalled();
     });
 
     it('shows a recorded existing Session and states when none can be offered', async () => {
@@ -1368,11 +1503,11 @@ describe('workflow editor body', () => {
         const field = dropdownField(listed, 'workflow-editor-defaults-continuity-conversation-field');
         expect(field.props.selectedId).toBe('existing_session');
         expect(field.props.items.find((item) => item.id === 'existing_session')?.title)
-            .toBe('workflows.page.inspector.continues');
+            .toContain('Ship release');
         await listed.unmount();
 
         const unlisted = await renderBody(harness, { draft: recorded });
-        expect(unlisted.getTextContent()).toContain('workflows.page.inspector.continues');
+        expect(unlisted.getTextContent()).toContain('session-9');
         await unlisted.unmount();
 
         const none = await renderBody(harness);
@@ -1786,11 +1921,18 @@ describe('workflow editor body', () => {
         );
         function ControlledBody() {
             const [current, setCurrent] = React.useState(draft);
+            const history = useWorkflowEditorHistory<WorkflowEditorDraft>('composer-custody', (snapshot) => {
+                draft = snapshot;
+                setCurrent(snapshot);
+            });
             return React.createElement(harness.WorkflowEditorBody, {
                 draft: current,
-                onChange: (next: WorkflowEditorDraft) => {
-                    draft = next as typeof draft;
-                    setCurrent(next as typeof current);
+                history: history.controls,
+                onCommitChange: history.commit,
+                onChange: (next: WorkflowEditorDraft, label?: string, committed?: boolean) => {
+                    history.record(current, next, label ?? 'Edit workflow', committed);
+                    draft = next;
+                    setCurrent(next);
                 },
                 machineName: 'Mac Studio',
                 composerScope: MACHINE_COMPOSER_SCOPE,
@@ -1811,7 +1953,7 @@ describe('workflow editor body', () => {
         await act(async () => {});
         expect(draft.blocks.map((block) => block.id)).toEqual(['implement']);
 
-        await screen.pressByTestIdAsync('workflow-editor-undo-removal');
+        await screen.pressByTestIdAsync('workflow-editor-undo');
         await act(async () => {});
         expect(draft.blocks.map((block) => block.id)).toEqual(['analyze', 'implement']);
         const restoredRef = composerProps.byBlockId.get('analyze')?.composerRef as
@@ -1894,7 +2036,7 @@ describe('workflow editor body', () => {
         expect(screen.findByTestId('workflow-editor-validity')).toBeNull();
     });
 
-    it('offers an inline Undo after a block removal and restores it in place', async () => {
+    it('offers labelled Undo/Redo from the host history and clears Redo after a new edit', async () => {
         const harness = await loadHarness();
         let draft = harness.setWorkflowDefaultField(
             harness.createWorkflowEditorDraft({
@@ -1916,32 +2058,47 @@ describe('workflow editor body', () => {
             'agentTarget',
             AGENT_TARGET,
         );
-        const screen = await renderBody(harness, {
-            draft,
-            onChange: (next: WorkflowEditorDraft) => { draft = next as typeof draft; },
-        });
+        let redoLabel: string | null = null;
+        function ControlledBody() {
+            const [current, setCurrent] = React.useState(draft);
+            const history = useWorkflowEditorHistory<WorkflowEditorDraft>('removal-history', (snapshot) => {
+                draft = snapshot;
+                setCurrent(snapshot);
+            });
+            redoLabel = history.controls.redoLabel;
+            return React.createElement(harness.WorkflowEditorBody, {
+                draft: current,
+                history: history.controls,
+                onCommitChange: history.commit,
+                onChange: (next: WorkflowEditorDraft, label?: string, committed?: boolean) => {
+                    history.record(current, next, label ?? 'Edit workflow', committed);
+                    draft = next;
+                    setCurrent(next);
+                },
+                machineName: 'Mac Studio', composerScope: MACHINE_COMPOSER_SCOPE,
+                inspectorGroupDisclosure: OPEN_SETTINGS_GROUPS,
+                selectedBlockId: null, onSelectBlock: () => {}, onCustomizeBlock: () => {},
+                view: 'steps', onChangeView: () => {},
+            });
+        }
+        const screen = await renderScreen(React.createElement(ControlledBody));
 
         await screen.pressByTestIdAsync('workflow-editor-step-analyze-actions');
         await screen.pressByTestIdAsync('workflow-editor-step-analyze-actions-remove');
         await act(async () => {});
         expect(draft.blocks.map((block) => block.id)).toEqual(['implement']);
 
-        await screen.update(React.createElement(harness.WorkflowEditorBody, {
-            draft,
-            onChange: (next: WorkflowEditorDraft) => { draft = next as typeof draft; },
-            machineName: 'Mac Studio',
-            composerScope: MACHINE_COMPOSER_SCOPE,
-            selectedBlockId: null,
-            onSelectBlock: () => {},
-            onCustomizeBlock: () => {},
-            view: 'steps',
-            onChangeView: () => {},
-        } as never));
-
         expect(screen.getTextContent()).toContain('workflows.editor.removedBlock');
-        await screen.pressByTestIdAsync('workflow-editor-undo-removal');
+        await screen.pressByTestIdAsync('workflow-editor-undo');
         // Restored at its original position, not appended to the end.
         expect(draft.blocks.map((block) => block.id)).toEqual(['analyze', 'implement']);
+        expect(redoLabel).toContain('workflows.editor.removedBlock');
+        await screen.pressByTestIdAsync('workflow-editor-redo');
+        expect(draft.blocks.map((block) => block.id)).toEqual(['implement']);
+        await screen.pressByTestIdAsync('workflow-editor-undo');
+        await screen.pressByTestIdAsync('workflow-editor-final-output-option-implement');
+        expect(redoLabel).toBeNull();
+        expect(draft.finalOutput).toMatchObject({ producer: { blockId: 'implement' } });
     });
 
     it('announces the first blocking validation issue exactly once', async () => {

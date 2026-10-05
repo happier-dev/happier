@@ -16,7 +16,7 @@ import { WorkflowRunComposer } from './WorkflowRunComposer';
  * Run now anchors to its button; other entry points use the canonical modal.
  * Both presentations share the same composer and preserve the caller's draft.
  *
- * Closing cancels only the unsubmitted command. The caller's draft, values and
+ * Closing (outside press, Escape, the modal's close) cancels only the unsubmitted command. The caller's draft, values and
  * pending Run id are untouched.
  */
 export type WorkflowRunComposerModalProps = React.ComponentProps<typeof WorkflowRunComposer>;
@@ -24,15 +24,8 @@ export type WorkflowRunComposerModalProps = React.ComponentProps<typeof Workflow
 function WorkflowRunComposerModal(
     props: WorkflowRunComposerModalProps & CustomModalInjectedProps,
 ): React.ReactElement {
-    return (
-        <WorkflowRunComposer
-            {...props}
-            onCancel={() => {
-                props.onCancel();
-                props.onClose();
-            }}
-        />
-    );
+    // The modal's own close control dismisses it (`onRequestClose`); the composer has no Cancel row.
+    return <WorkflowRunComposer {...props} />;
 }
 
 export function useWorkflowRunComposerModal(params: Readonly<{
@@ -62,8 +55,11 @@ export function useWorkflowRunComposerModal(params: Readonly<{
             open
             anchorRef={params.anchorRef}
             focusReturnRef={params.anchorRef}
-            placement="auto"
-            portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}
+            // Anchored under Run now, right edges aligned (convo-N7); it flips above only when the
+            // space below cannot hold it, and never covers the page from the window's top edge.
+            placement="bottom"
+            flip
+            portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false, anchorAlign: 'end' }}
             maxWidthCap={520}
             onRequestClose={params.props.onCancel}
         >

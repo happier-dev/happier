@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
 
@@ -13,12 +14,28 @@ function texts(screen: Awaited<ReturnType<typeof renderScreen>>): string {
 }
 
 describe('UsageMeterRow (lab csvc MT, the one meter)', () => {
+    it('drops the redundant clock time when a wide meter is measured in a narrow pane', async () => {
+        const screen = await renderScreen(<UsageMeterRow testID="meter" label="5-hour" remainingPct={42} resetsAt={NOW + 135 * MIN} tone="neutral" now={NOW} size="wide" />);
+        const at = new Date(NOW + 135 * MIN).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        act(() => screen.findHostByTestId('meter')?.props.onLayout?.({ nativeEvent: { layout: { width: 320, height: 20, x: 0, y: 0 } } }));
+        expect(texts(screen)).toContain('in 2h 15m');
+        expect(texts(screen)).not.toContain(`· ${at}`);
+    });
     it('says when the window comes back as a countdown, and adds the clock time only on wide surfaces', async () => {
         const row = await renderScreen(
-            <UsageMeterRow label="5-hour" remainingPct={42} resetsAt={NOW + 135 * MIN} tone="neutral" now={NOW} />,
+            <UsageMeterRow testID="default-meter" label="5-hour" remainingPct={42} resetsAt={NOW + 135 * MIN} tone="neutral" now={NOW} />,
         );
+        act(() => row.findHostByTestId('default-meter')?.props.onLayout?.({ nativeEvent: { layout: { width: 320, height: 20, x: 0, y: 0 } } }));
+        expect(texts(row)).toContain('5-hour');
         expect(texts(row)).toContain('42% left');
         expect(texts(row)).toContain('in 2h 15m');
+
+        const card = await renderScreen(
+            <UsageMeterRow testID="card-meter" label="Weekly · Sonnet" remainingPct={42} resetsAt={NOW + 135 * MIN} tone="neutral" now={NOW} size="card" />,
+        );
+        act(() => card.findHostByTestId('card-meter')?.props.onLayout?.({ nativeEvent: { layout: { width: 280, height: 20, x: 0, y: 0 } } }));
+        expect(texts(card)).toContain('Weekly · Sonnet');
+        expect(texts(card)).toContain('42% left');
 
         const wide = await renderScreen(
             <UsageMeterRow label="5-hour" remainingPct={42} resetsAt={NOW + 135 * MIN} tone="neutral" now={NOW} size="wide" />,

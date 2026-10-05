@@ -1,4 +1,10 @@
-import { VOICE_ACTIONS_BLOCK, resolveVoiceSpeechSegmentLength } from '@happier-dev/protocol';
+import {
+  VOICE_ACTIONS_BLOCK,
+  fitVoiceAgentOutputTextV1,
+  ingestVoiceAgentOutputEventV1,
+  resolveVoiceSpeechSegmentLength,
+  type VoiceAgentOutputTurnV1,
+} from '@happier-dev/protocol';
 
 type VoiceOutputDeltaEvent = Readonly<{
   t: 'voice_output';
@@ -12,14 +18,15 @@ type VoiceOutputDeltaEvent = Readonly<{
   }>;
 }>;
 
-const MAX_STREAMED_SPEECH_CHARS = 65_536;
-
 type VoiceStreamingOutputState = Readonly<{
   done: boolean;
   suppressActionDeltas: boolean;
   deltaHold: string;
   outputSpeechBuffer: string;
-  outputSpeechChars: number;
+  outputSpeechText: string;
+  outputBudget: VoiceAgentOutputTurnV1;
+  outputIncomplete: boolean;
+  targetChars?: number;
   events: unknown[];
   id: string;
   outputSeq: number;
@@ -31,15 +38,16 @@ type VoiceStreamingOutputPatch = (next: Readonly<{
   suppressActionDeltas?: boolean;
   deltaHold?: string;
   outputSpeechBuffer?: string;
-  outputSpeechChars?: number;
+  outputSpeechText?: string;
+  outputBudget?: VoiceAgentOutputTurnV1;
+  outputIncomplete?: boolean;
   outputSeq?: number;
   outputSegmentIndex?: number;
 }>) => void;
 
 function appendSpeechText(stream: VoiceStreamingOutputState, patch: VoiceStreamingOutputPatch, text: string): void {
-  const remaining = Math.max(0, MAX_STREAMED_SPEECH_CHARS - stream.outputSpeechChars - stream.outputSpeechBuffer.length);
-  if (remaining === 0) return;
-  patch({ outputSpeechBuffer: `${stream.outputSpeechBuffer}${text.slice(0, remaining)}` });
+  if (stream.outputIncomplete) return;
+  patch({ outputSpeechBuffer: `${stream.outputSpeechBuffer}${text}` });
 }
 
 export function flushVoiceAgentStreamingSpeech(
@@ -48,23 +56,30 @@ export function flushVoiceAgentStreamingSpeech(
   force = false,
 ): void {
   while (stream.outputSpeechBuffer) {
-    const segmentLength = resolveVoiceSpeechSegmentLength(stream.outputSpeechBuffer, { force, firstSegment: stream.outputSegmentIndex === 0 });
+    const segmentLength = resolveVoiceSpeechSegmentLength(stream.outputSpeechBuffer, { force, firstSegment: stream.outputSegmentIndex === 0, targetChars: stream.targetChars });
     if (segmentLength === 0) return;
-    const text = stream.outputSpeechBuffer.slice(0, segmentLength);
-    stream.events.push({
-      t: 'voice_output',
-      output: {
-        v: 1,
-        kind: 'speech_segment',
-        turnId: stream.id,
-        seq: stream.outputSeq,
-        segmentId: `${stream.id}:segment:${stream.outputSegmentIndex}`,
-        text,
-      },
-    } satisfies VoiceOutputDeltaEvent);
+    const candidateText = stream.outputSpeechBuffer.slice(0, segmentLength);
+    const candidate = {
+      v: 1,
+      kind: 'speech_segment',
+      turnId: stream.id,
+      seq: stream.outputSeq,
+      segmentId: `${stream.id}:segment:${stream.outputSegmentIndex}`,
+      text: candidateText,
+    } satisfies VoiceOutputDeltaEvent['output'];
+    const text = fitVoiceAgentOutputTextV1(stream.outputBudget, candidate, stream.outputSpeechText);
+    const incomplete = text.length < candidateText.length;
+    if (!text) {
+      patch({ outputSpeechBuffer: '', outputIncomplete: true });
+      return;
+    }
+    const output = { ...candidate, text };
+    stream.events.push({ t: 'voice_output', output } satisfies VoiceOutputDeltaEvent);
     patch({
-      outputSpeechBuffer: stream.outputSpeechBuffer.slice(segmentLength),
-      outputSpeechChars: stream.outputSpeechChars + text.length,
+      outputSpeechBuffer: incomplete ? '' : stream.outputSpeechBuffer.slice(segmentLength),
+      outputSpeechText: `${stream.outputSpeechText}${text}`,
+      outputBudget: ingestVoiceAgentOutputEventV1(stream.outputBudget, output).state,
+      outputIncomplete: incomplete,
       outputSeq: stream.outputSeq + 1,
       outputSegmentIndex: stream.outputSegmentIndex + 1,
     });

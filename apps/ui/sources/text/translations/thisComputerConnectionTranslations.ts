@@ -16,6 +16,13 @@ type RemovalServiceParams = { home: string; service: string };
 type MoveParams = { home: string; daemonHome: string; daemonAccount: string; appAccount: string };
 
 const en = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `Connect this computer to ${home}?`,
+        body: ({ home }: HomeParams) => `${home} will be able to start sessions on this computer. Your terminal’s Home and other Home connections stay in place.`,
+        connect: 'Connect',
+        keep: 'Keep current connections',
+    },
+    setupAlreadyRunning: 'Setup is already running. Wait for it to finish.',
     title: {
         daemon_url_mismatch: 'Background service is on another Home',
         daemon_account_mismatch: 'Background service uses another account',
@@ -102,6 +109,13 @@ const en = {
 export type ThisComputerConnectionTranslation = typeof en;
 
 const de: ThisComputerConnectionTranslation = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `Diesen Computer mit ${home} verbinden?`,
+        body: ({ home }: HomeParams) => `${home} kann Sitzungen auf diesem Computer starten. Das Home deines Terminals und andere Home-Verbindungen bleiben bestehen.`,
+        connect: 'Verbinden',
+        keep: 'Aktuelle Verbindungen behalten',
+    },
+    setupAlreadyRunning: 'Die Einrichtung läuft bereits. Warte, bis sie abgeschlossen ist.',
     title: {
         daemon_url_mismatch: 'Der Hintergrunddienst nutzt ein anderes Home',
         daemon_account_mismatch: 'Der Hintergrunddienst nutzt ein anderes Konto',
@@ -186,6 +200,13 @@ const de: ThisComputerConnectionTranslation = {
 };
 
 const es: ThisComputerConnectionTranslation = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `¿Conectar este ordenador a ${home}?`,
+        body: ({ home }: HomeParams) => `${home} podrá iniciar sesiones en este ordenador. El Home del terminal y las demás conexiones se mantienen.`,
+        connect: 'Conectar',
+        keep: 'Mantener las conexiones actuales',
+    },
+    setupAlreadyRunning: 'Ya hay una configuración en curso. Espera a que termine.',
     title: {
         daemon_url_mismatch: 'El servicio en segundo plano está en otro Home',
         daemon_account_mismatch: 'El servicio en segundo plano usa otra cuenta',
@@ -270,6 +291,13 @@ const es: ThisComputerConnectionTranslation = {
 };
 
 const fr: ThisComputerConnectionTranslation = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `Connecter cet ordinateur à ${home} ?`,
+        body: ({ home }: HomeParams) => `${home} pourra lancer des sessions sur cet ordinateur. Le Home du terminal et les autres connexions restent en place.`,
+        connect: 'Connecter',
+        keep: 'Garder les connexions actuelles',
+    },
+    setupAlreadyRunning: 'Une configuration est déjà en cours. Attendez qu’elle se termine.',
     title: {
         daemon_url_mismatch: 'Le service en arrière-plan est sur un autre Home',
         daemon_account_mismatch: 'Le service en arrière-plan utilise un autre compte',
@@ -354,6 +382,13 @@ const fr: ThisComputerConnectionTranslation = {
 };
 
 const it: ThisComputerConnectionTranslation = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `Collegare questo computer a ${home}?`,
+        body: ({ home }: HomeParams) => `${home} potrà avviare sessioni su questo computer. Il Home del terminale e le altre connessioni restano attivi.`,
+        connect: 'Collega',
+        keep: 'Mantieni le connessioni attuali',
+    },
+    setupAlreadyRunning: 'È già in corso una configurazione. Attendi che termini.',
     title: {
         daemon_url_mismatch: 'Il servizio in background è su un altro Home',
         daemon_account_mismatch: 'Il servizio in background usa un altro account',
@@ -438,6 +473,13 @@ const it: ThisComputerConnectionTranslation = {
 };
 
 const pt: ThisComputerConnectionTranslation = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `Conectar este computador ao ${home}?`,
+        body: ({ home }: HomeParams) => `${home} poderá iniciar sessões neste computador. O Home do terminal e as outras conexões permanecem.`,
+        connect: 'Conectar',
+        keep: 'Manter as conexões atuais',
+    },
+    setupAlreadyRunning: 'Já está em curso uma configuração. Aguarde até terminar.',
     title: {
         daemon_url_mismatch: 'O serviço em segundo plano está em outro Home',
         daemon_account_mismatch: 'O serviço em segundo plano usa outra conta',
@@ -522,6 +564,13 @@ const pt: ThisComputerConnectionTranslation = {
 };
 
 const ca: ThisComputerConnectionTranslation = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `Vols connectar aquest ordinador a ${home}?`,
+        body: ({ home }: HomeParams) => `${home} podrà iniciar sessions en aquest ordinador. El Home del terminal i les altres connexions es mantenen.`,
+        connect: 'Connecta',
+        keep: 'Mantén les connexions actuals',
+    },
+    setupAlreadyRunning: 'Ja hi ha una configuració en curs. Espera que acabi.',
     title: {
         daemon_url_mismatch: 'El servei en segon pla és en un altre Home',
         daemon_account_mismatch: 'El servei en segon pla fa servir un altre compte',
@@ -606,6 +655,13 @@ const ca: ThisComputerConnectionTranslation = {
 };
 
 const pl: ThisComputerConnectionTranslation = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `Połączyć ten komputer z ${home}?`,
+        body: ({ home }: HomeParams) => `${home} będzie mógł uruchamiać sesje na tym komputerze. Home terminala i pozostałe połączenia pozostaną bez zmian.`,
+        connect: 'Połącz',
+        keep: 'Zachowaj obecne połączenia',
+    },
+    setupAlreadyRunning: 'Konfiguracja jest już uruchomiona. Poczekaj na jej zakończenie.',
     title: {
         daemon_url_mismatch: 'Usługa w tle działa w innym Home',
         daemon_account_mismatch: 'Usługa w tle używa innego konta',
@@ -690,6 +746,13 @@ const pl: ThisComputerConnectionTranslation = {
 };
 
 const ru: ThisComputerConnectionTranslation = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `Подключить этот компьютер к ${home}?`,
+        body: ({ home }: HomeParams) => `${home} сможет запускать сеансы на этом компьютере. Home терминала и другие подключения сохранятся.`,
+        connect: 'Подключить',
+        keep: 'Сохранить текущие подключения',
+    },
+    setupAlreadyRunning: 'Настройка уже выполняется. Дождитесь её завершения.',
     title: {
         daemon_url_mismatch: 'Фоновая служба работает с другим Home',
         daemon_account_mismatch: 'Фоновая служба использует другой аккаунт',
@@ -774,6 +837,13 @@ const ru: ThisComputerConnectionTranslation = {
 };
 
 const ja: ThisComputerConnectionTranslation = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `このコンピュータを${home}に接続しますか？`,
+        body: ({ home }: HomeParams) => `${home}からこのコンピュータでセッションを開始できるようになります。ターミナルのHomeと他のHomeへの接続は維持されます。`,
+        connect: '接続',
+        keep: '現在の接続を維持',
+    },
+    setupAlreadyRunning: 'セットアップが実行中です。完了するまでお待ちください。',
     title: {
         daemon_url_mismatch: 'バックグラウンドサービスが別の Home を使っています',
         daemon_account_mismatch: 'バックグラウンドサービスが別のアカウントを使っています',
@@ -858,6 +928,13 @@ const ja: ThisComputerConnectionTranslation = {
 };
 
 const zhHans: ThisComputerConnectionTranslation = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `将此计算机连接到${home}？`,
+        body: ({ home }: HomeParams) => `${home}将能够在此计算机上启动会话。终端的Home和其他Home连接将保持不变。`,
+        connect: '连接',
+        keep: '保留当前连接',
+    },
+    setupAlreadyRunning: '设置正在进行。请等待完成。',
     title: {
         daemon_url_mismatch: '后台服务正在使用其他 Home',
         daemon_account_mismatch: '后台服务正在使用其他账户',
@@ -942,6 +1019,13 @@ const zhHans: ThisComputerConnectionTranslation = {
 };
 
 const zhHant: ThisComputerConnectionTranslation = {
+    connectHome: {
+        title: ({ home }: HomeParams) => `將此電腦連線至${home}？`,
+        body: ({ home }: HomeParams) => `${home}將能在此電腦上啟動工作階段。終端機的Home和其他Home連線將保持不變。`,
+        connect: '連線',
+        keep: '保留目前連線',
+    },
+    setupAlreadyRunning: '設定正在進行。請等待完成。',
     title: {
         daemon_url_mismatch: '背景服務正在使用其他 Home',
         daemon_account_mismatch: '背景服務正在使用其他帳號',

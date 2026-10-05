@@ -2,10 +2,12 @@ import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ScmLogEntry } from '@happier-dev/protocol';
+import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
 
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
 import { GitCleanState } from '@/components/sessions/panes/git/GitCleanState';
 import { GitConflictNotice } from '@/components/sessions/panes/git/GitConflictNotice';
+import { GitBranchButton } from '@/components/sessions/panes/git/branches/GitBranchButton';
 import { GitNextActionButton } from '@/components/sessions/panes/git/GitNextActionButton';
 import { GitOutcomeLine, type GitOutcomeFacts } from '@/components/sessions/panes/git/GitOutcomeLine';
 import { GitTimelineSection } from '@/components/sessions/panes/git/GitTimelineSection';
@@ -150,9 +152,13 @@ type FrameState = Readonly<{
 const NOOP = () => {};
 const NOOP_ASYNC = async () => ({ ok: false as const, error: '' });
 
-function GitFrame(props: Readonly<{ state: FrameState }>) {
+function GitFrame(props: Readonly<{ state: FrameState; phone: boolean }>) {
     const { theme } = useUnistyles();
     const { state } = props;
+    // Replay the captured start facts before its static terminal frame. Product outcomes never infer
+    // an old operation's counts from the current tree; this harness supplies the known lab transition.
+    const [operation, setOperation] = React.useState<ScmWriteOperation | null>(() => state.operation?.phase === 'succeeded' && state.facts ? { ...state.operation, phase: 'running' } : state.operation);
+    React.useLayoutEffect(() => setOperation(state.operation), [state.operation]);
     const selectedSet = React.useMemo(() => new Set(state.selected), [state.selected]);
     const selectedFiles = React.useMemo(() => state.files.filter((entry) => selectedSet.has(entry.fullPath)), [selectedSet, state.files]);
     const conflictPaths = state.conflicts ? state.files.filter((entry) => entry.status === 'conflicted').map((entry) => entry.fullPath) : [];
@@ -169,21 +175,26 @@ function GitFrame(props: Readonly<{ state: FrameState }>) {
         canCreatePr: true,
         commitReady,
         remoteActions: state.remote ?? REMOTE,
+        writeOperation: operation,
     });
     const facts = resolveSessionGitPaneHeaderFacts({
         branch: 'v0.3', changedCount: state.files.length, ahead: state.ahead, behind: state.behind, primaryKey: actions.primary.key,
+        operation: state.conflicts ? { kind: 'merge', sourceRef: 'origin/v0.3' } : null,
+        asOf: state.offline ? today(10, 30) : null,
     });
     const line = {
-        leading: <Icon name="git-branch" size={13} color={theme.colors.text.secondary} />,
+        leading: <GitBranchButton sessionId="specimen" snapshot={snapshotOf(state.files)} disabled />,
         segments: facts.map((fact) => {
             switch (fact.kind) {
-                case 'branch': return { text: fact.branch, emphasis: true } as const;
+                case 'branch': return null;
+                case 'asOf': return t('surfaceState.asOf', { time: formatHappierAsOfTime(fact.at) });
                 case 'changed': return t('sessionGitPane.header.changed', { count: formatExactCount(fact.count) });
                 case 'clean': return t('sessionGitPane.flow.header.noChanges');
                 case 'toPush': return t('sessionGitPane.header.toPush', { count: formatExactCount(fact.count) });
                 case 'toPull': return t('sessionGitPane.header.toPull', { count: formatExactCount(fact.count) });
+                case 'operation': return t('sessionGitPane.fidelity.operation', { operation: t('sessionGitPane.flow.conflicts.merge'), source: fact.sourceRef ?? '' });
             }
-        }),
+        }).filter((segment) => segment !== null),
     };
     const running = state.operation && (state.operation.phase === 'running' || state.operation.phase === 'queued')
         && (state.operation.action === 'push' || state.operation.action === 'pull') ? state.operation.action : null;
@@ -226,15 +237,18 @@ function GitFrame(props: Readonly<{ state: FrameState }>) {
                 )}
             />
             <GitOutcomeLine
-                operation={state.operation}
+                operation={operation}
                 facts={state.facts ?? { ahead: state.ahead, behind: state.behind, selectedCount: selectedFiles.length, upstream: state.upstream }}
                 machineName="MacBook Pro"
                 machineReachable={!state.offline}
-                recovery={{ fetch: NOOP, retry: NOOP, refresh: NOOP, showConflicts: NOOP, publish: NOOP }}
+                machineLastSeenAt={state.offline ? today(10, 30) : null}
+                recovery={{ fetch: NOOP, retry: NOOP, refresh: NOOP, showConflicts: NOOP, publish: NOOP, pullWith: NOOP, pullThenPush: NOOP, openTerminal: NOOP, undoCommit: NOOP }}
+                authenticationCommand={state.operation?.provider === 'GitHub' ? 'gh auth login' : null}
                 haptics={false}
             />
             <GitConflictNotice
                 sessionId="specimen"
+                agentName="Claude"
                 operation={state.conflicts ? { kind: 'merge', sourceRef: 'origin/v0.3', unresolvedCount: conflictPaths.length, canContinue: false, canAbort: true } : null}
                 conflictPaths={conflictPaths}
                 busy={false}
@@ -257,6 +271,9 @@ function GitFrame(props: Readonly<{ state: FrameState }>) {
                 ) : (
                     <SessionRightPanelGitCommitTab
                         theme={theme}
+                        phone={props.phone}
+                        agentId="claude"
+                        completedOperationId={state.operation?.phase === 'succeeded' ? state.operation.id : null}
                         sessionId="specimen"
                         sessionPath="/Users/leeroy/happier"
                         backendLabel="Git"
@@ -307,6 +324,11 @@ function GitFrame(props: Readonly<{ state: FrameState }>) {
                                 ahead={state.ahead}
                                 behind={state.behind}
                                 lastCommitAt={state.history[0]?.timestamp ?? null}
+                                lastCommit={state.history[0] ?? null}
+                                onOpenCommit={NOOP}
+                                lastPushedAt={state.operation?.phase === 'succeeded' && state.operation.action === 'push' ? state.operation.at : null}
+                                justCompleted={state.operation?.phase === 'succeeded' && state.operation.action === 'push'}
+                                phone={props.phone}
                                 onCreatePullRequest={state.prOpen ? null : NOOP}
                                 onOpenPullRequest={state.prOpen ? NOOP : null}
                                 pullRequestNumber={state.prOpen ?? null}
@@ -371,7 +393,7 @@ const FRAMES: ReadonlyArray<{ id: string; title: string; state: FrameState }> = 
     },
     {
         id: 'S4', title: 'S4 · push rejected',
-        state: { ...AFTER_COMMIT, landedSha: null, operation: { phase: 'needs_input', action: 'push', id: 'r', at: AT, message: '', outcome: { v: 1, kind: 'needs_input', errorCode: 'REMOTE_NON_FAST_FORWARD', nextActions: [{ kind: 'choose_reconcile' }] } } },
+        state: { ...AFTER_COMMIT, behind: 2, landedSha: null, operation: { phase: 'needs_input', action: 'push', id: 'r', at: AT, message: '', outcome: { v: 1, kind: 'needs_input', errorCode: 'REMOTE_NON_FAST_FORWARD', nextActions: [{ kind: 'choose_reconcile' }] } } },
     },
     {
         id: 'S5', title: 'S5 · can’t sign in to origin',
@@ -388,6 +410,10 @@ const FRAMES: ReadonlyArray<{ id: string; title: string; state: FrameState }> = 
             files: [file('apps/ui/sources/components/settings/modal/SettingsModal.tsx', 'conflicted', 9, 4), file('apps/ui/sources/components/settings/settingsRoutes.ts', 'conflicted', 5, 2), ...ELSEWHERE_FILES.slice(0, 4)] },
     },
     {
+        id: 'SX2', title: 'SX2 · all clean after pushing',
+        state: { ...BASE, files: [], selected: [], message: '', ahead: 0, behind: 0, history: [LANDED, ...HISTORY], operation: { phase: 'succeeded', action: 'push', id: 'clean-push', at: AT, message: '', outcome: { v: 1, kind: 'succeeded', nextActions: [], effect: { kind: 'remote', remote: 'origin', branch: 'v0.3' } } }, facts: { ahead: 3, behind: 0, selectedCount: 0, upstream: 'origin/v0.3' } },
+    },
+    {
         id: 'ST', title: 'ST · clean and up to date',
         state: { ...BASE, files: [], selected: [], message: '', ahead: 0, behind: 0, history: [LANDED, ...HISTORY] },
     },
@@ -400,7 +426,7 @@ export function GitSpecimen(props: Readonly<{ only: string | null; phone: boolea
             {frames.map((frame) => (
                 <View key={frame.id} testID={`git-specimen-${frame.id}`} style={props.phone ? styles.framePhone : styles.frame}>
                     {props.only ? null : <Text style={styles.caption}>{frame.title}</Text>}
-                    <View style={styles.frameBody}><GitFrame state={frame.state} /></View>
+                    <View style={styles.frameBody}><GitFrame state={frame.state} phone={props.phone} /></View>
                 </View>
             ))}
         </View>

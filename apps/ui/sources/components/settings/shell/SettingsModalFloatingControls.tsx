@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Platform, Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
-import { useDestinationFocus } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationFocus, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
@@ -11,6 +11,7 @@ import {
 } from '@/components/settings/navigation/settingsRouteRegistry';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
+import { useSettingsRailVisible } from './settingsRailVisibility';
 
 /**
  * The settings back affordance on tablet/desktop, where the settings modal has no navigator header.
@@ -24,10 +25,12 @@ import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationB
  */
 function useSettingsBackControl(collectionRootPathname: string | undefined) {
     const pathname = usePathname();
+    const hosted = useDestinationInstanceKey() !== null;
+    const railVisible = useSettingsRailVisible();
     const { parentPathname, goToParent: handleBack } = useSettingsParentBack('SettingsModalFloatingControls.back');
     // A list-detail section's detail whose parent is that list gets no back control: the list is
     // already beside it.
-    const visible = shouldShowSettingsParentBackButton({ pathname, hideOnTopLevel: true })
+    const visible = shouldShowSettingsParentBackButton({ pathname, hideOnTopLevel: !hosted || railVisible })
         && parentPathname !== null
         && parentPathname !== collectionRootPathname;
     return { visible, handleBack };

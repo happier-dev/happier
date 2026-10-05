@@ -3,6 +3,8 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Icon } from '@/components/ui/icons/Icon';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ConnectedServiceSetupFlowActions } from '../setup/ConnectedServiceSetupFlowBody';
 import { ConnectedAccountFormSection } from './ConnectedAccountFormSection';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -77,7 +79,7 @@ type ConnectedAccountOAuthFormProps = Readonly<{
  * validates it.
  */
 function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
-    useUnistyles();
+    const { theme } = useUnistyles();
     const styles = stylesheet;
     const [callbackInput, setCallbackInput] = React.useState('');
     const [validationFailed, setValidationFailed] = React.useState(false);
@@ -155,16 +157,10 @@ function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
                         placeholder={t('connectedServicesSettings.oauthPastePlaceholder')}
                         editable={!props.submitting}
                         monospace
+                        trailing={<IconButton testID="connected-account-oauth:paste" iconName="clipboard" variant="plain" size={20}
+                            accessibilityLabel={t('common.paste')} disabled={props.submitting} onPress={() => void paste()} />}
                     />
                 </View>
-                <RoundButton
-                    testID="connected-account-oauth:paste"
-                    size="small"
-                    display="secondary"
-                    title={t('common.paste')}
-                    disabled={props.submitting}
-                    onPress={() => void paste()}
-                />
             </View>
             {shapeOk ? (
                 <Text testID="connected-account-oauth:callback.shape-ok" style={styles.shapeOk}>
@@ -178,6 +174,7 @@ function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
             <RoundButton
                 testID="connected-account-oauth:open"
                 size="small"
+                leading={<Icon name="arrow-square-out" size={14} color={theme.colors.button.primary.tint} />}
                 display={opened ? 'secondary' : 'default'}
                 title={t('connectedServices.oauthPaste.openAuthorizationUrl')}
                 disabled={props.submitting || !props.authorizationUrl}

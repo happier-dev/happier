@@ -153,6 +153,11 @@ const GENERIC_SHAPE: WorkflowProblemShape = {
  */
 export function resolveWorkflowProblemPresentation(error: unknown): WorkflowProblemPresentation {
     const code = error instanceof WorkflowActionError ? error.code : null;
+    const failure = error instanceof WorkflowActionError ? error.failure : null;
+    if (failure?.errorCode === 'legacy_conversion_unsupported' && failure.details.reason === 'channel_reply_handoff') {
+        return present(code, { ...WORKFLOW_PROBLEM_SHAPES.legacy_conversion_unsupported,
+            messageKey: 'workflows.triggers.legacy.channelReplyRefusal' });
+    }
     return code === null ? present(null, GENERIC_SHAPE) : present(code, WORKFLOW_PROBLEM_SHAPES[code]);
 }
 

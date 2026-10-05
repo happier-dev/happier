@@ -2,7 +2,9 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { WorkflowRunStartRequestV1Schema, type WorkflowRunStartResultV1 } from '@happier-dev/protocol';
+import { WorkflowRunStartRequestV1Schema, WorkflowMaterializedLeafV1Schema, type WorkflowRunStartResultV1 } from '@happier-dev/protocol';
+import { createWorkflowAccountRunActionOwner } from '@happier-dev/protocol/actions';
+import { WorkflowRunGetResultV1Schema, WorkflowRunRecipientCensusResponseV1Schema, type RoleArtifactV1 } from '@happier-dev/protocol';
 import { Modal, ModalProvider } from '@/modal';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -11,8 +13,9 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { renderScreen, invokeTestInstanceHandler } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
 import {
     createWorkflowDefinitionFixture,
@@ -21,6 +24,7 @@ import {
 } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { readWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 import { WorkflowRunScreen } from './WorkflowRunScreen';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 
 type WorkflowRunContentProps = React.ComponentProps<
     typeof import('../run/WorkflowRunContent').WorkflowRunContent
@@ -36,6 +40,7 @@ type WorkflowRunContentProps = React.ComponentProps<
  */
 
 let latestContentProps: WorkflowRunContentProps | null = null;
+let restoreRunPopoverGlobals: (() => void) | undefined;
 
 function requireDefined<T>(value: T | undefined, message: string): T {
     if (value === undefined) throw new Error(message);
@@ -56,8 +61,10 @@ function respondToRequest(
 
 const actionTransport = vi.hoisted(() => vi.fn());
 const startResponse = vi.hoisted(() => vi.fn());
+const sourceAccessResponse = vi.hoisted(() => vi.fn());
+const catalogResponse = vi.hoisted(() => vi.fn());
 const routerSpy = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn() }));
-const routeState = vi.hoisted(() => ({ runId: 'run-1' }));
+const routeState = vi.hoisted((): { runId: string; invocationId?: string } => ({ runId: 'run-1' }));
 // Per-Action transport replies. The real detail client still parses every reply.
 const detailActions = vi.hoisted(() => ({
     getRun: vi.fn(),
@@ -79,6 +86,7 @@ const storeState = {
             profileScope: { serverId: 'server-a', accountId: 'account-a' },
             machines: { [machine.id]: machine }, machineListByServerId: {},
             workflowRunsById: {}, workflowRunInvocationsByRunId: {}, workflowRunListWindows: {},
+            artifacts: {},
         });
     },
 };
@@ -121,11 +129,25 @@ vi.mock('@/modal', async () => {
 });
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ router: routerSpy, params: () => ({ runId: routeState.runId }) }).module;
+    return createExpoRouterMock({ router: routerSpy, params: () => ({ ...routeState }) }).module;
 });
 vi.mock('expo-crypto', async () => ({ randomUUID: (await import('node:crypto')).randomUUID }));
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
     createFrontDoorActionExecute: () => actionTransport,
+}));
+// Recipient-envelope HTTP services are outside this Run's Action transport.
+// These tests never open Collaboration or prepare recipient keys.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => ({
+    createSessionDataKeyEnvelopeClient: vi.fn(),
+    readSessionDataKeyEnvelopeCollectionPage: vi.fn(),
+    prepareSessionDataKeyEnvelopesForScope: vi.fn(),
+    prepareSessionDataKeyEnvelopesDetached: vi.fn(),
+}));
+vi.mock('@/sync/api/teams/membershipSessionDataKeyEnvelopesApi', () => ({
+    createMembershipSessionDataKeyEnvelopeClient: vi.fn(),
+    prepareMembershipHistoryEnvelopesForScope: vi.fn(),
+    membershipHistoryPreparationScopeKey: vi.fn(),
+    prepareMembershipHistoryEnvelopesDetached: vi.fn(),
 }));
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     getAppliedActiveServerSnapshot: () => appliedRuntime,
@@ -165,6 +187,7 @@ const ACCEPTED_CONTEXT = {
     machineId: 'machine-1',
     executionTarget: { kind: 'detached_run' as const },
     materializedLeaves: [],
+    frozenChildren: {},
     workspaceTarget: {
         project: { machineId: 'machine-1', directory: '/Users/me/project', checkoutRootPath: '/Users/me/project' },
     },
@@ -180,7 +203,7 @@ function runStartCalls() {
 }
 
 function createRunScreenElement() {
-    return <ModalProvider><WorkflowRunScreen /></ModalProvider>;
+    return <AppPaneProvider><ModalProvider><WorkflowRunScreen /></ModalProvider></AppPaneProvider>;
 }
 
 async function reviewRunAgain(screen: Awaited<ReturnType<typeof renderScreen>>) {
@@ -263,6 +286,7 @@ async function renderRunScreen(overrides: Readonly<{
     historyNextCursor?: string;
     acceptedContext?: unknown;
     invocationListFailure?: Error;
+    canEdit?: boolean;
     wrap?: (screen: React.ReactElement) => React.ReactElement;
 }> = {}) {
     const run = overrides.run ?? createWorkflowRunSummaryFixture({
@@ -274,7 +298,9 @@ async function renderRunScreen(overrides: Readonly<{
     const invocations = overrides.invocations ?? [];
     detailActions.getRun.mockResolvedValue({
         run,
+        callerAccess: { canEdit: overrides.canEdit ?? true },
         definition: overrides.definition ?? DEFINITION,
+        authoredDefinition: overrides.definition ?? DEFINITION,
         acceptedContext: overrides.acceptedContext ?? ACCEPTED_CONTEXT,
         checkpoint: null,
         ...(Object.prototype.hasOwnProperty.call(overrides, 'result') ? { result: overrides.result } : {}),
@@ -307,11 +333,16 @@ beforeEach(() => {
     installShippedNativeFrameScheduler();
     latestContentProps = null;
     routeState.runId = 'run-1';
+    routeState.invocationId = undefined;
     accountScopeHarness.reset();
     storeState.reset();
     Modal.hideAll();
     actionTransport.mockReset();
     startResponse.mockReset();
+    sourceAccessResponse.mockReset();
+    sourceAccessResponse.mockResolvedValue({ ok: false, errorCode: 'artifact_not_found', error: 'artifact_not_found' });
+    catalogResponse.mockReset();
+    catalogResponse.mockResolvedValue({ definitions: [], pluginWorkflows: [] });
     startResponse.mockImplementation(async (input: unknown) => {
         const request = WorkflowRunStartRequestV1Schema.parse(input);
         return { admission: 'created', run: createWorkflowRunSummaryFixture({
@@ -320,9 +351,26 @@ beforeEach(() => {
     });
     actionTransport.mockImplementation(async (action: string, input: Record<string, unknown>, context: {
         signal?: AbortSignal; externalActionTarget?: { machineId: string };
+        serverId?: string; expectedAccountId?: string;
+        executionRunTargetMachineId?: string; onTransportIssued?: () => void;
     }) => {
         let result: unknown;
         switch (action) {
+            case 'artifact.access.grants.list': return sourceAccessResponse(input, context);
+            case 'workflow.definition.list': result = await catalogResponse(input, context); break;
+            case 'execution.run.permission.respond': {
+                const response = await machineRpcSpy({
+                    machineId: context.executionRunTargetMachineId,
+                    serverId: context.serverId,
+                    accountId: context.expectedAccountId,
+                    method: RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND,
+                    payload: input,
+                    signal: context.signal,
+                    onIssued: context.onTransportIssued,
+                });
+                return response && typeof response === 'object' && 'ok' in response && response.ok === false
+                    ? response : { ok: true, result: response };
+            }
             case 'workflow.run.start': result = await startResponse(input); break;
             case 'workflow.run.get': result = await detailActions.getRun(input.runId, context.signal); break;
             case 'workflow.run.invocations.list': result = await detailActions.listInvocations(input, context.signal); break;
@@ -347,9 +395,297 @@ beforeEach(() => {
 
 afterEach(async () => {
     await standardCleanup();
+    restoreRunPopoverGlobals?.();
+    restoreRunPopoverGlobals = undefined;
 });
 
 describe('WorkflowRunScreen', () => {
+
+    it('admits an accepted repeat with frozen child and role after their live sources change or disappear', async () => {
+        const originalId = '11111111-1111-4111-8111-111111111111';
+        const childRef = '22222222-2222-4222-8222-222222222222';
+        routeState.runId = originalId;
+        const roleId = 'accepted_reviewer';
+        const acceptedRole: RoleArtifactV1 = {
+            name: 'Accepted reviewer', instructions: 'Review without modifying files',
+            engine: { agentTargetKey: 'happier.agent.test/test' }, runsAs: { kind: 'session' },
+            workspaceWrites: 'deny', secondOpinion: 'off', enabled: true,
+        };
+        let liveRoles: Readonly<Record<string, RoleArtifactV1>> = { [roleId]: acceptedRole };
+        const child = createWorkflowDefinitionFixture({ defaults: { engine: { role: roleId } } });
+        let liveChild: typeof child | null = child;
+        const definition = createWorkflowDefinitionFixture({ blocks: [
+            { kind: 'workflow', id: 'nested', workflowRef: childRef, input: {} },
+        ] });
+        const stored = new Map<string, { run: ReturnType<typeof createWorkflowRunSummaryFixture>; acceptedEnvelope: string }>();
+        // Only persistent storage, workspace/Agent availability and mutable source reads
+        // are host boundaries; opening, replay, role resolution and admission stay real.
+        const owner = createWorkflowAccountRunActionOwner({
+            resolveAccountId: async () => 'account-a',
+            resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+            normalizeAbsolutePath: (directory) => directory.startsWith('/') ? directory : null,
+            randomBytes: () => { throw new Error('plain_account_needs_no_keys'); },
+            definitions: { get: async () => { throw new Error('inline_root_has_no_saved_source'); } },
+            prepareWorkspace: async () => ({ ok: true, workspaceTarget: ACCEPTED_CONTEXT.workspaceTarget }),
+            resolveMaterializationContext: async () => ({ roleSelection: { settingsRoles: liveRoles }, effects: {
+                readWorkflowDefinition: async () => liveChild === null ? null : { definition: liveChild, sourceKey: childRef },
+                resolveTargetAvailability: async () => true,
+            } }),
+            storage: { execute: async (operation) => {
+                const id = String(operation.runId);
+                if (operation.operation === 'get') {
+                    const entry = stored.get(id);
+                    if (!entry) throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+                    return { ...entry, checkpointEnvelope: null, resultEnvelope: null,
+                        keyCensus: WorkflowRunRecipientCensusResponseV1Schema.parse({
+                            runId: id, ownerAccountId: 'account-a', visibleTeamId: null, encryptionMode: 'plain', access: 'owner',
+                            ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
+                            dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [],
+                        }) };
+                }
+                if (operation.operation === 'admit') {
+                    const run = createWorkflowRunSummaryFixture({ id, ownerAccountId: 'account-a', state: 'queued', origin: { kind: 'direct' } });
+                    stored.set(id, { run, acceptedEnvelope: String(operation.acceptedEnvelope) });
+                    return { kind: 'created', run };
+                }
+                if (operation.operation === 'invocations.list') return { invocations: [] };
+                throw new Error(`unexpected_storage_operation:${operation.operation}`);
+            } },
+        });
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, callerPermissionMode: 'default',
+            externalActionTarget: { kind: 'machine' as const, machineId: 'machine-1',
+                project: { machineId: 'machine-1', directory: '/Users/me/project' } } };
+        await owner.execute({ actionId: 'workflow.run.start', input: WorkflowRunStartRequestV1Schema.parse({
+            runId: originalId, source: { kind: 'inline', definition },
+        }), context });
+        const original = WorkflowRunGetResultV1Schema.parse(await owner.execute({ actionId: 'workflow.run.get', input: { runId: originalId }, context }));
+        expect(original.acceptedContext.materializedLeaves).toEqual(expect.arrayContaining([
+            expect.objectContaining({ sourceKey: childRef, role: expect.objectContaining({ instructions: acceptedRole.instructions, workspaceWrites: 'deny' }) }),
+        ]));
+
+        for (const sourceState of ['changed', 'deleted'] as const) {
+            liveChild = sourceState === 'changed' ? createWorkflowDefinitionFixture({ blocks: [{ ...child.blocks[0], id: 'replacement' }] }) : null;
+            liveRoles = sourceState === 'changed' ? { [roleId]: { ...acceptedRole, instructions: 'New instructions', workspaceWrites: 'allow' } } : {};
+            startResponse.mockImplementation(async (input: unknown) => owner.execute({ actionId: 'workflow.run.start',
+                input: WorkflowRunStartRequestV1Schema.parse(input), context }));
+            const screen = await renderRunScreen({ definition: original.definition, acceptedContext: original.acceptedContext,
+                run: { ...original.run, state: 'succeeded', workflowCustodyState: 'settled' } });
+            const startsBeforeRepeat = runStartCalls().length;
+            await screen.pressByTestIdAsync('workflow-run-run-again');
+            expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+            await screen.pressByTestIdAsync('workflow-run-inputs-run');
+            expect(runStartCalls()).toHaveLength(startsBeforeRepeat + 1);
+            const request = WorkflowRunStartRequestV1Schema.parse(runStartCalls().at(-1)?.[1]);
+            expect(request.source).toMatchObject({ kind: 'inline', replay: { runId: originalId } });
+            const repeat = WorkflowRunGetResultV1Schema.parse(await owner.execute({ actionId: 'workflow.run.get', input: { runId: request.runId }, context }));
+            expect(repeat.acceptedContext.frozenChildren).toEqual(original.acceptedContext.frozenChildren);
+            expect(repeat.acceptedContext.materializedLeaves).toEqual(original.acceptedContext.materializedLeaves);
+            expect(routerSpy.push).toHaveBeenCalledWith(expect.objectContaining({ params: { runId: request.runId } }));
+            await screen.unmount();
+        }
+    });
+
+    it('reviews a new Run with one explicit engine replacement after a step loses its agent', async () => {
+        restoreRunPopoverGlobals = withPopoverWebGlobals({ frameScheduler: globalThis.requestAnimationFrame });
+        routeState.invocationId = 'analyze-row';
+        const root = createWorkflowInvocationIndexFixture({ id: 'root', lifecycle: 'failed' });
+        const step = createWorkflowInvocationIndexFixture({ id: 'analyze-row', parentRecordId: 'root', lifecycle: 'failed' });
+        detailActions.getInvocation.mockResolvedValue({ invocation: { index: step, parentRevision: 1,
+            progress: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'analyze', scope: [] },
+                attempt: '0', logicalInvocationRecordId: step.id,
+                blockKind: 'step', reason: { code: 'target_unavailable' } } } });
+        const acceptedLeaf = WorkflowMaterializedLeafV1Schema.parse({
+                sourceKey: '$root', blockId: 'analyze', kind: 'step', selection: {},
+                authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'detached_run' },
+        });
+        const screen = await renderRunScreen({ run: createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' }),
+            invocations: [root, step], acceptedContext: { ...ACCEPTED_CONTEXT, materializedLeaves: [acceptedLeaf] } });
+        await act(async () => latestContentProps?.onSelectInvocation('analyze-row'));
+        await act(async () => {});
+        expect(latestContentProps?.selectedInvocationProgress).toMatchObject({ blockKind: 'step', reason: { code: 'target_unavailable' } });
+        expect(latestContentProps?.onRunWithAnotherAgent).toEqual(expect.any(Function));
+        await screen.pressByTestIdAsync('workflow-run-run-another-agent');
+        expect(runStartCalls()).toHaveLength(0);
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('workflow-run-another-agent-chip');
+        act(() => invokeTestInstanceHandler(screen.findByProps({ testID: 'workflow-run-another-agent-field' }), 'onChange', {
+            agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-6.1-sol',
+        }));
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+        act(() => invokeTestInstanceHandler(screen.findByProps({ testID: 'workflow-run-another-agent-field' }), 'onChange', {
+            agentTargetKey: 'backend:unresolved-acp:configured:unresolved-acp',
+        }));
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+        act(() => invokeTestInstanceHandler(screen.findByProps({ testID: 'workflow-run-another-agent-field' }), 'onChange', {
+            agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-6.1-sol',
+        }));
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(runStartCalls()).toHaveLength(1);
+        const request = WorkflowRunStartRequestV1Schema.parse(runStartCalls()[0]?.[1]);
+        expect(request.source).toMatchObject({ kind: 'inline', replay: { runId: 'run-1', agentOverride: {
+            sourceKey: '$root', blockId: 'analyze', engine: { agentTarget: {
+                kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            }, modelSelection: { ref: { modelId: 'gpt-6.1-sol' } } },
+        } } });
+        expect(request.executionTarget).toEqual(ACCEPTED_CONTEXT.executionTarget);
+        expect(detailActions.retryInvocation).not.toHaveBeenCalled();
+        expect(acceptedLeaf.selection).toEqual({});
+        expect(request.runId).not.toBe('run-1');
+    });
+
+    const sourceArtifactId = '1d7ade5a-0ab4-4fca-b38d-e20261c5beaf';
+    function sourceGrantReply(access: 'owner' | 'edit' | 'admin' | 'view', artifactId = sourceArtifactId) {
+        return { ok: true, result: { artifactId, ownerAccountId: 'account-owner', access, grants: [] } };
+    }
+    function sourceArtifact() {
+        return { id: sourceArtifactId, title: 'Source', isDecrypted: true as const,
+            headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    }
+
+    it.each(['owner', 'edit', 'admin'] as const)('uses current source %s access for Edit independently of Run control access', async (access) => {
+        sourceAccessResponse.mockResolvedValue(sourceGrantReply(access));
+        await renderRunScreen({
+            run: createWorkflowRunSummaryFixture({ sourceArtifactId }),
+            canEdit: false,
+        });
+        expect(latestContentProps?.hasSource).toBe(true);
+        expect(latestContentProps?.sourceAction?.kind).toBe('edit');
+        act(() => latestContentProps?.sourceAction?.onPress());
+        expect(routerSpy.push).toHaveBeenCalledWith(`/workflows/${sourceArtifactId}`);
+        expect(sourceAccessResponse).toHaveBeenCalledWith({ artifactId: sourceArtifactId }, expect.objectContaining({
+            surface: 'ui', serverId: 'server-a', expectedAccountId: 'account-a',
+        }));
+    });
+
+    it('opens a view-only source even when the Run itself can be controlled', async () => {
+        sourceAccessResponse.mockResolvedValue(sourceGrantReply('view'));
+        await renderRunScreen({ run: createWorkflowRunSummaryFixture({ sourceArtifactId }) });
+        expect(latestContentProps?.sourceAction?.kind).toBe('open');
+        act(() => latestContentProps?.sourceAction?.onPress());
+        expect(routerSpy.push).toHaveBeenCalledWith(`/workflows/${sourceArtifactId}`);
+    });
+
+    it('keeps a deleted source distinct from a sourceless Run', async () => {
+        await renderRunScreen({ run: createWorkflowRunSummaryFixture({ sourceArtifactId }) });
+        expect(latestContentProps?.hasSource).toBe(true);
+        expect(latestContentProps?.sourceAction).toBeNull();
+    });
+
+    it.each(['saved', 'automation'] as const)('retains the frozen %s source identity when its summary no longer has an Artifact', async (kind) => {
+        await renderRunScreen({ acceptedContext: { ...ACCEPTED_CONTEXT, source: {
+            kind, definitionId: sourceArtifactId, revision: { headerVersion: 1, bodyVersion: 1 }, savedBy: null,
+            ...(kind === 'automation' ? { automationId: 'automation-1' } : {}),
+        } } });
+        expect(latestContentProps?.hasSource).toBe(true);
+        expect(latestContentProps?.sourceAction).toBeNull();
+        expect(sourceAccessResponse).toHaveBeenCalledWith({ artifactId: sourceArtifactId }, expect.anything());
+    });
+
+    it('offers Save as workflow only as the sourceless Run action and seeds an unsaved draft', async () => {
+        await renderRunScreen();
+        expect(latestContentProps?.hasSource).toBe(false);
+        expect(latestContentProps?.sourceAction).toBeNull();
+        await act(async () => latestContentProps?.onSaveAsWorkflow?.());
+        expect(routerSpy.push).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/workflows/new' }));
+        expect(sourceAccessResponse).not.toHaveBeenCalled();
+        expect(actionTransport.mock.calls.some(([action]) => action === 'workflow.definition.create')).toBe(false);
+    });
+
+    it.each(['builtin:review-and-converge', 'plugin:com.example/workflow'])('opens catalog source %s through the existing source route', async (ref) => {
+        catalogResponse.mockResolvedValue({ definitions: [], pluginWorkflows: [{
+            workflow: 'plugin:com.example/workflow', pluginId: 'com.example', version: '1.0.0',
+            title: 'Example workflow', definition: DEFINITION,
+        }] });
+        await renderRunScreen({ acceptedContext: {
+            ...ACCEPTED_CONTEXT, source: { kind: 'catalog', ref, version: 1 },
+        } });
+        expect(latestContentProps?.hasSource).toBe(true);
+        expect(latestContentProps?.sourceAction?.kind).toBe('open');
+        act(() => latestContentProps?.sourceAction?.onPress());
+        expect(routerSpy.push).toHaveBeenCalledWith(`/workflows/${encodeURIComponent(ref)}`);
+        expect(sourceAccessResponse).not.toHaveBeenCalled();
+    });
+
+    it.each(['builtin:removed', 'plugin:com.example/removed'])('hides the action for unavailable catalog source %s', async (ref) => {
+        await renderRunScreen({ acceptedContext: {
+            ...ACCEPTED_CONTEXT, source: { kind: 'catalog', ref, version: 1 },
+        } });
+        expect(latestContentProps?.hasSource).toBe(true);
+        expect(latestContentProps?.sourceAction).toBeNull();
+    });
+
+    it('invalidates source actions on source updates/deletion and rejects retained callbacks', async () => {
+        const artifact = sourceArtifact();
+        getStorage().setState({ artifacts: { [sourceArtifactId]: artifact } });
+        sourceAccessResponse.mockResolvedValue(sourceGrantReply('edit'));
+        await renderRunScreen({ run: createWorkflowRunSummaryFixture({ sourceArtifactId }) });
+        const edit = latestContentProps?.sourceAction;
+        expect(edit?.kind).toBe('edit');
+        sourceAccessResponse.mockResolvedValue(sourceGrantReply('view'));
+        await act(async () => getStorage().setState({ artifacts: {
+            [sourceArtifactId]: { ...artifact, updatedAt: 2, seq: 2 },
+        } }));
+        act(() => edit?.onPress());
+        expect(routerSpy.push).not.toHaveBeenCalled();
+        expect(latestContentProps?.sourceAction?.kind).toBe('open');
+        const open = latestContentProps?.sourceAction;
+        sourceAccessResponse.mockResolvedValue({ ok: false, errorCode: 'artifact_not_found', error: 'artifact_not_found' });
+        await act(async () => getStorage().setState({ artifacts: {} }));
+        act(() => open?.onPress());
+        expect(latestContentProps?.sourceAction).toBeNull();
+        expect(latestContentProps?.hasSource).toBe(true);
+        expect(routerSpy.push).not.toHaveBeenCalled();
+    });
+
+    it('fails source actions closed on a mismatched Artifact reply', async () => {
+        sourceAccessResponse.mockResolvedValue(sourceGrantReply('owner', 'another-artifact'));
+        await renderRunScreen({ run: createWorkflowRunSummaryFixture({ sourceArtifactId }) });
+        expect(latestContentProps?.sourceAction).toBeNull();
+    });
+
+    it('ignores older source access responses after a source update confirms view access', async () => {
+        const older = createDeferred<ReturnType<typeof sourceGrantReply>>();
+        const artifact = sourceArtifact();
+        getStorage().setState({ artifacts: { [sourceArtifactId]: artifact } });
+        sourceAccessResponse.mockReturnValueOnce(older.promise).mockResolvedValue(sourceGrantReply('view'));
+        await renderRunScreen({ run: createWorkflowRunSummaryFixture({ sourceArtifactId }) });
+        expect(latestContentProps?.sourceAction).toBeNull();
+        await act(async () => getStorage().setState({ artifacts: {
+            [sourceArtifactId]: { ...artifact, updatedAt: 2, seq: 2 },
+        } }));
+        expect(latestContentProps?.sourceAction?.kind).toBe('open');
+        await act(async () => older.resolve(sourceGrantReply('owner')));
+        expect(latestContentProps?.sourceAction?.kind).toBe('open');
+    });
+
+    it('rejects late source access after account retirement', async () => {
+        const access = createDeferred<ReturnType<typeof sourceGrantReply>>();
+        sourceAccessResponse.mockReturnValue(access.promise);
+        const screen = await renderRunScreen({ run: createWorkflowRunSummaryFixture({ sourceArtifactId }) });
+        expect(sourceAccessResponse).toHaveBeenCalled();
+        expect(latestContentProps?.sourceAction).toBeNull();
+        // Install the replacement Account's pending read before the scope
+        // notification starts it, so it cannot acknowledge Account A's fixture.
+        detailActions.getRun.mockReturnValue(new Promise(() => {}));
+        act(() => accountScopeHarness.switchTo({ serverId: 'server-b', accountId: 'account-b' }));
+        await screen.update(createRunScreenElement());
+        await act(async () => access.resolve(sourceGrantReply('owner')));
+        expect(latestContentProps?.sourceAction ?? null).toBeNull();
+        expect(screen.findAllHostsByTestId('workflow-run-edit-workflow')).toHaveLength(0);
+        expect(routerSpy.push).not.toHaveBeenCalled();
+    });
+
+    it('rejects a retained source callback immediately when its Account lifetime retires', async () => {
+        sourceAccessResponse.mockResolvedValue(sourceGrantReply('owner'));
+        await renderRunScreen({ run: createWorkflowRunSummaryFixture({ sourceArtifactId }) });
+        const edit = latestContentProps?.sourceAction;
+        expect(edit?.kind).toBe('edit');
+        act(() => retireActiveServerAccountScopeLifetime());
+        act(() => edit?.onPress());
+        expect(routerSpy.push).not.toHaveBeenCalled();
+        expect(latestContentProps?.sourceAction).toBeNull();
+    });
+
     it('uses exact terminal queries beyond page one and keeps the bounded authoritative result visible', async () => {
         const failed = createWorkflowInvocationIndexFixture({
             id: 'failed-off-page', sequence: '90', lifecycle: 'failed',
@@ -390,7 +726,9 @@ describe('WorkflowRunScreen', () => {
         const run = createWorkflowRunSummaryFixture({ id: 'run-1', state: 'succeeded' });
         detailActions.getRun.mockResolvedValue({
             run,
+            callerAccess: { canEdit: true },
             definition: DEFINITION,
+            authoredDefinition: DEFINITION,
             acceptedContext: ACCEPTED_CONTEXT,
             checkpoint: null,
             result: 'Authoritative result preview',
@@ -403,7 +741,7 @@ describe('WorkflowRunScreen', () => {
         ));
 
         const { WorkflowRunScreen } = await import('./WorkflowRunScreen');
-        await renderScreen(React.createElement(WorkflowRunScreen));
+        await renderScreen(createRunScreenElement());
         await act(async () => {});
 
         expect(latestContentProps?.firstFailedInvocationResolution).toBe('loading');
@@ -499,7 +837,9 @@ describe('WorkflowRunScreen', () => {
         });
         detailActions.getRun.mockResolvedValue({
             run: runB,
+            callerAccess: { canEdit: true },
             definition: DEFINITION,
+            authoredDefinition: DEFINITION,
             acceptedContext: ACCEPTED_CONTEXT,
             checkpoint: null,
         });
@@ -1012,7 +1352,8 @@ describe('WorkflowRunScreen', () => {
             id: 'run-2', state: 'running', revision: 5, origin: { kind: 'direct' }, availability: { cancel: true },
         });
         detailActions.getRun.mockResolvedValue({
-            run: runB, definition: DEFINITION, acceptedContext: ACCEPTED_CONTEXT, checkpoint: null,
+            run: runB, definition: DEFINITION, authoredDefinition: DEFINITION, acceptedContext: ACCEPTED_CONTEXT, checkpoint: null,
+            callerAccess: { canEdit: true },
         });
         detailActions.listInvocations.mockResolvedValue(invocationPage([]));
         await screen.update(createRunScreenElement());
@@ -1104,7 +1445,7 @@ describe('WorkflowRunScreen', () => {
         expect(storeState.state.workflowRunInvocationsByRunId['run-1']?.factsById['analyze-row']?.contentRevision).toBe('2');
     });
 
-    it('sends structured question answers through the same exact detached-run request response RPC', async () => {
+    it('sends structured question answers through the discoverable Action and exact detached-run request writer', async () => {
         await renderSelectedPermissionRequests();
 
         expect(latestContentProps?.onRespondToRequest).toBeTypeOf('function');
@@ -1112,6 +1453,14 @@ describe('WorkflowRunScreen', () => {
             requestId: 'permission-1',
             answers: { branch: ['dev'] },
         })?.catch(() => {}); });
+
+        expect(actionTransport).toHaveBeenCalledWith('execution.run.permission.respond', {
+            runId: 'exec-1', requestId: 'permission-1', answers: { branch: ['dev'] },
+        }, expect.objectContaining({
+            surface: 'ui', serverId: 'server-a', expectedAccountId: 'account-a',
+            executionRunTargetMachineId: 'machine-1', signal: expect.any(AbortSignal),
+            onTransportIssued: expect.any(Function),
+        }));
 
         expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
@@ -1122,6 +1471,19 @@ describe('WorkflowRunScreen', () => {
                 answers: { branch: ['dev'] },
             },
         }));
+    });
+
+    it('leaves a queued Action approval request answerable when no detached response was issued', async () => {
+        await renderSelectedPermissionRequests();
+        const transport = actionTransport.getMockImplementation()!;
+        actionTransport.mockImplementation(async (action, input, context) => action === 'execution.run.permission.respond'
+            ? { ok: true, result: { kind: 'approval_request_created', artifactId: 'approval-1', actionId: action } }
+            : transport(action, input, context));
+
+        await act(async () => { await respondToRequest({ requestId: 'permission-1', approved: true })?.catch(() => {}); });
+
+        expect(machineRpcSpy).not.toHaveBeenCalled();
+        expect([...(latestContentProps?.pendingRequestIds ?? [])]).toEqual([]);
     });
 
     it('reconciles a not-found response and suppresses the opposite answer while canonical content still has the request', async () => {
@@ -1192,9 +1554,9 @@ describe('WorkflowRunScreen', () => {
     });
 
     it('keeps an unchanged invalid response withdrawn after canonical content confirms the request is still open', async () => {
-        machineRpcSpy.mockResolvedValueOnce({
-            ok: false,
-            errorCode: 'execution_run_invalid_action_input',
+        machineRpcSpy.mockImplementationOnce(async (params) => {
+            params.onIssued?.();
+            return { ok: false, errorCode: 'execution_run_invalid_action_input' };
         });
         await renderSelectedPermissionRequests();
 
@@ -1230,7 +1592,9 @@ describe('WorkflowRunScreen', () => {
         const runB = createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running', machineId: 'machine-1' });
         detailActions.getRun.mockResolvedValue({
             run: runB,
+            callerAccess: { canEdit: true },
             definition: DEFINITION,
+            authoredDefinition: DEFINITION,
             acceptedContext: ACCEPTED_CONTEXT,
             checkpoint: null,
         });
@@ -1277,7 +1641,9 @@ describe('WorkflowRunScreen', () => {
         });
         detailActions.getRun.mockResolvedValue({
             run,
+            callerAccess: { canEdit: true },
             definition: DEFINITION,
+            authoredDefinition: DEFINITION,
             acceptedContext: ACCEPTED_CONTEXT,
             checkpoint: null,
         });
@@ -1369,7 +1735,9 @@ describe('WorkflowRunScreen', () => {
         const runB = createWorkflowRunSummaryFixture({ id: 'run-2', state: 'running', origin: { kind: 'direct' } });
         detailActions.getRun.mockResolvedValue({
             run: runB,
+            callerAccess: { canEdit: true },
             definition: DEFINITION,
+            authoredDefinition: DEFINITION,
             acceptedContext: ACCEPTED_CONTEXT,
             checkpoint: null,
         });

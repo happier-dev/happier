@@ -14,6 +14,7 @@ import type { LocalDaemonStatusData } from './useLocalDaemonControl';
 import { createThisComputerSetupPromptContinuation } from '@/components/systemTasks/useThisComputerSetupTask';
 import type { SystemTaskAuthRequestApproval } from '@/components/systemTasks/approveSystemTaskAuthRequestPrompt';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
+import { readThisComputerSetupScope } from '@/components/systemTasks/thisComputerSetup/thisComputerSetupScope';
 
 /**
  * S-10 — the state every surface describing this computer shares, per system-task runner: the
@@ -27,7 +28,6 @@ export type LocalDaemonSharedState<TStatus> = Readonly<{
     status: TStatus | null;
     setup: Readonly<{
         taskId: string | null;
-        starting: boolean;
         rereading: boolean;
         errorMessage: string | null;
         scope: Readonly<{ serverId: string | null; serverUrl: string; accountId: string | null }> | null;
@@ -53,7 +53,7 @@ function resolveStore<TStatus>(runner: SystemTaskRunner): Store<TStatus> {
     const existing = storesByRunner.get(runner);
     if (existing) return existing as Store<TStatus>;
     const created: Store<unknown> = {
-        state: { status: null, setup: { taskId: null, starting: false, rereading: false, errorMessage: null, scope: null },
+        state: { status: null, setup: { taskId: null, rereading: false, errorMessage: null, scope: null },
             cliUpdate: { taskId: null, starting: false, errorMessage: null, rereading: false } },
         listeners: new Set(),
     };
@@ -85,13 +85,15 @@ export function publishLocalDaemonStatus<TStatus>(runner: SystemTaskRunner, stat
     update<TStatus>(runner, (state) => (state.status === status ? state : { ...state, status }));
 }
 
-/** One explicit repair/CLI-choice operation, including delayed launch and post-result inspection. */
-export async function startLocalComputerSetup<TStatus>(
+/** Observe the runner's admitted setup; its outcome and scoped readback outlive Settings. */
+export function adoptLocalComputerSetup<TStatus>(
     runner: SystemTaskRunner,
+    taskId: string,
     spec: SystemTaskSpec,
     approval: SystemTaskAuthRequestApproval,
     parseStatus: (result: SystemTaskResult) => TStatus | null,
-): Promise<string | null> {
+): void {
+    if (readLocalDaemonSharedState(runner).setup.taskId === taskId) return;
     const params = spec.params;
     const scope = { serverId: approval.serverId ?? null, serverUrl: approval.expectedRelayUrl,
         accountId: params !== null && typeof params === 'object' && !Array.isArray(params)
@@ -102,25 +104,9 @@ export async function startLocalComputerSetup<TStatus>(
         serverIdentityId: params !== null && typeof params === 'object' && !Array.isArray(params)
             && 'activeServerIdentityId' in params && typeof params.activeServerIdentityId === 'string' ? params.activeServerIdentityId : null,
     };
-    const current = readLocalDaemonSharedState(runner).setup;
-    if (current.starting || current.rereading || (current.taskId && runner.getSnapshot(current.taskId)?.result === null)) {
-        return current.scope?.serverId === scope.serverId && current.scope.serverUrl === scope.serverUrl
-            && current.scope.accountId === scope.accountId ? current.taskId : null;
-    }
     const setSetup = (patch: Partial<LocalDaemonSharedState<TStatus>['setup']>) =>
         update<TStatus>(runner, (state) => ({ ...state, setup: { ...state.setup, ...patch } }));
-    setSetup({ taskId: null, starting: true, errorMessage: null, scope });
-    let taskId: string;
-    try {
-        taskId = await runner.start(spec);
-        runner.registerPromptContinuation?.(taskId, createThisComputerSetupPromptContinuation(approval, spec));
-        setSetup({ taskId, starting: false });
-    } catch (error) {
-        setSetup({ starting: false, errorMessage: isSystemTaskBridgeUnavailableError(error)
-            ? t('settings.systemTaskBridgeUnavailable')
-            : (readSystemTaskStartErrorMessage(error) ?? t('settings.systemTaskStartFailed')) });
-        return null;
-    }
+    setSetup({ taskId, rereading: false, errorMessage: null, scope });
     const setRun = (patch: Partial<LocalDaemonSharedState<TStatus>['setup']>) =>
         update<TStatus>(runner, (state) => state.setup.taskId === taskId
             ? { ...state, setup: { ...state.setup, ...patch } } : state);
@@ -143,7 +129,29 @@ export async function startLocalComputerSetup<TStatus>(
     }).finally(() => {
         setRun({ rereading: false });
     });
-    return taskId;
+}
+
+/** Admission belongs to the runner, including Home/checklist starts and pending native launch. */
+export async function startLocalComputerSetup<TStatus>(
+    runner: SystemTaskRunner,
+    spec: SystemTaskSpec,
+    approval: SystemTaskAuthRequestApproval,
+    parseStatus: (result: SystemTaskResult) => TStatus | null,
+): Promise<string | null> {
+    try {
+        const taskId = await runner.start(spec, createThisComputerSetupPromptContinuation(approval, spec));
+        adoptLocalComputerSetup(runner, taskId, runner.getTaskSpec?.(taskId) ?? spec, approval, parseStatus);
+        return taskId;
+    } catch (error) {
+        const scope = readThisComputerSetupScope(spec);
+        if (!runner.getActiveSetupTask()) update<TStatus>(runner, (state) => ({ ...state, setup: {
+            taskId: null, rereading: false,
+            scope: { serverId: approval.serverId ?? null, serverUrl: approval.expectedRelayUrl, accountId: scope?.expectedAccountId ?? null },
+            errorMessage: isSystemTaskBridgeUnavailableError(error) ? t('settings.systemTaskBridgeUnavailable')
+                : (readSystemTaskStartErrorMessage(error) ?? t('settings.systemTaskStartFailed')),
+        } }));
+        return null;
+    }
 }
 
 /**

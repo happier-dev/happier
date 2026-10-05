@@ -1,5 +1,6 @@
 import {
     AutomationTriggerIdSchema,
+    sameStrictJsonValue,
     type AutomationTriggerId,
     type AutomationTriggerDefinition,
     type AutomationTriggerDefinitionInput,
@@ -42,6 +43,89 @@ export type WorkflowTriggerDraft = Readonly<{
 }>;
 
 export const EMPTY_WORKFLOW_TRIGGER_DRAFT: WorkflowTriggerDraft = { adds: [], updates: {}, removes: [] };
+
+/** Local row identity shared by history snapshots; only Save updates the persisted id. */
+export type WorkflowTriggerSnapshotIdentity = { clientId: string; triggerId?: AutomationTriggerId };
+export type WorkflowTriggerSnapshot = Readonly<{
+    rows: readonly Readonly<{
+        identity: WorkflowTriggerSnapshotIdentity;
+        /** Event projections do not expose the private configuration needed to recreate them. */
+        trigger: AutomationTriggerDefinitionInput | null;
+        enabled: boolean;
+    }>[];
+    project: WorkflowProjectTargetV1 | null;
+    inputs: Readonly<Record<string, JsonValue>>;
+}>;
+
+export class WorkflowTriggerSnapshotRestoreError extends Error {
+    readonly code = 'workflow_trigger_restore_requires_setup';
+
+    constructor() {
+        super('workflow_trigger_restore_requires_setup');
+        this.name = 'WorkflowTriggerSnapshotRestoreError';
+    }
+}
+
+function readSavedTriggerDefinition(saved: WorkflowTriggerSetV1['triggers'][number]): AutomationTriggerDefinitionInput | null {
+    switch (saved.kind) {
+        case 'schedule': return { kind: saved.kind, schedule: saved.schedule, enabled: saved.enabled };
+        case 'sessionLifecycle': return { kind: saved.kind, sourceSessionId: saved.sourceSessionId, events: saved.events,
+            policy: saved.policy, enabled: saved.enabled };
+        case 'runLifecycle': return { kind: saved.kind, source: saved.source, condition: saved.condition, enabled: saved.enabled };
+        case 'prComment':
+        case 'ciFailed': return { kind: saved.kind, pullRequest: saved.pullRequest, enabled: saved.enabled };
+        case 'pluginEvent': return null;
+    }
+}
+
+/** Capture desired rows and context, rather than the delta that a Save acknowledges. */
+export function captureWorkflowTriggerSnapshot(
+    set: WorkflowTriggerSetV1 | null,
+    draft: WorkflowTriggerDraft,
+    identify: (clientId: string, triggerId?: AutomationTriggerId) => WorkflowTriggerSnapshotIdentity,
+): WorkflowTriggerSnapshot {
+    const rows: WorkflowTriggerSnapshot['rows'][number][] = [];
+    for (const saved of set?.triggers ?? []) {
+        if (draft.removes.includes(saved.id)) continue;
+        const update = draft.updates[saved.id];
+        const enabled = update?.enabled ?? saved.enabled;
+        const trigger = update?.trigger ? { ...update.trigger, enabled } : readSavedTriggerDefinition(saved);
+        rows.push({ identity: identify(`saved:${saved.id}`, saved.id), trigger: trigger ? { ...trigger, enabled } : null, enabled });
+    }
+    for (const add of draft.adds) rows.push({ identity: identify(add.clientId), trigger: add.trigger, enabled: add.trigger.enabled });
+    // Before a set exists, Where remains the editor's default; history must not turn it into an override.
+    return { rows, project: draft.context?.project ?? set?.project ?? null, inputs: draft.context?.inputs ?? set?.context?.inputs ?? {} };
+}
+
+/** Rebase a history snapshot onto the current saved set after any successful writes. */
+export function restoreWorkflowTriggerSnapshot(set: WorkflowTriggerSetV1 | null, snapshot: WorkflowTriggerSnapshot): WorkflowTriggerDraft {
+    const adds: WorkflowTriggerDraftAdd[] = [];
+    const updates: Record<string, WorkflowTriggerDraftUpdate> = {};
+    const retained = new Set<AutomationTriggerId>();
+    for (const row of snapshot.rows) {
+        const saved = set?.triggers.find((candidate) => candidate.id === row.identity.triggerId);
+        if (!saved) {
+            if (!row.trigger) throw new WorkflowTriggerSnapshotRestoreError();
+            adds.push({ clientId: row.identity.clientId, trigger: row.trigger });
+            continue;
+        }
+        retained.add(saved.id);
+        const update: { trigger?: AutomationTriggerDefinition; enabled?: boolean } = {};
+        if (row.enabled !== saved.enabled) update.enabled = row.enabled;
+        if (row.trigger) {
+            const { enabled: _enabled, ...trigger } = row.trigger;
+            const savedInput = readSavedTriggerDefinition(saved);
+            const { enabled: _savedEnabled, ...savedDefinition } = savedInput ?? { enabled: saved.enabled };
+            if (!sameStrictJsonValue(trigger, savedDefinition)) update.trigger = trigger;
+        }
+        if (Object.keys(update).length) updates[saved.id] = update;
+    }
+    const context: { project?: WorkflowProjectTargetV1; inputs?: Readonly<Record<string, JsonValue>> } = {};
+    if (snapshot.project && !sameStrictJsonValue(snapshot.project, set?.project)) context.project = snapshot.project;
+    if (!sameStrictJsonValue(snapshot.inputs, set?.context?.inputs ?? {})) context.inputs = snapshot.inputs;
+    return { adds, updates, removes: (set?.triggers ?? []).filter((saved) => !retained.has(saved.id)).map((saved) => saved.id),
+        ...(Object.keys(context).length ? { context } : {}) };
+}
 
 export function isWorkflowTriggerDraftDirty(draft: WorkflowTriggerDraft): boolean {
     return draft.adds.length > 0 || draft.removes.length > 0 || Object.keys(draft.updates).length > 0
@@ -149,6 +233,7 @@ export type WorkflowTriggerWriter = Readonly<{
 
 export type WorkflowTriggerSaveResult =
     | Readonly<{ kind: 'saved'; set: WorkflowTriggerSetV1 | null }>
+    | Readonly<{ kind: 'stale'; set: WorkflowTriggerSetV1 | null }>
     | Readonly<{ kind: 'failed'; set: WorkflowTriggerSetV1 | null; remaining: WorkflowTriggerDraft; error: unknown }>;
 
 /**
@@ -162,17 +247,22 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
     set: WorkflowTriggerSetV1 | null;
     draft: WorkflowTriggerDraft;
     writer: WorkflowTriggerWriter;
+    isCurrent?: () => boolean;
+    onAcknowledged?: (edit: WorkflowTriggerDraftEdit, triggerId: AutomationTriggerId | undefined, set: WorkflowTriggerSetV1 | null) => void;
 }>): Promise<WorkflowTriggerSaveResult> {
     let set = params.set;
     let remaining = params.draft;
     try {
         for (const triggerId of params.draft.removes) {
+            if (params.isCurrent?.() === false) return { kind: 'stale', set };
             if (set !== null) {
                 set = (await params.writer.remove({ automationId: set.automationId, triggerId })).set;
             }
             remaining = { ...remaining, removes: remaining.removes.filter((id) => id !== triggerId) };
+            params.onAcknowledged?.({ kind: 'remove', triggerId }, undefined, set);
         }
         for (const [triggerId, update] of Object.entries(params.draft.updates)) {
+            if (params.isCurrent?.() === false) return { kind: 'stale', set };
             if (set !== null && (update.trigger !== undefined || update.enabled !== undefined)) {
                 set = (await params.writer.update({
                     automationId: set.automationId,
@@ -186,10 +276,12 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
             }
             const { [triggerId]: _applied, ...updates } = remaining.updates;
             remaining = { ...remaining, updates };
+            params.onAcknowledged?.({ kind: 'update', triggerId: AutomationTriggerIdSchema.parse(triggerId), ...update }, undefined, set);
         }
         // The set's own context, for every trigger at once (no trigger id).
         const context = params.draft.context;
         if (context !== undefined && set !== null) {
+            if (params.isCurrent?.() === false) return { kind: 'stale', set };
             set = (await params.writer.update({
                 automationId: set.automationId,
                 expectedRevision: set.revision,
@@ -200,23 +292,28 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
             })).set;
             const { context: _applied, ...rest } = remaining;
             remaining = rest;
+            params.onAcknowledged?.({ kind: 'setContext', context }, undefined, set);
         }
         for (const add of params.draft.adds) {
+            if (params.isCurrent?.() === false) return { kind: 'stale', set };
             // The first trigger creates the set on its Runs on (the editor's Where unless changed).
             const project = set?.project ?? context?.project ?? params.project;
             if (project === null || project === undefined) {
                 throw Object.assign(new Error('trigger_project_required'), { code: 'trigger_project_required' });
             }
-            set = (await params.writer.add({
+            const result = await params.writer.add({
                 workflow: params.workflow,
                 project,
                 trigger: add.trigger,
                 ...(set === null && context?.inputs !== undefined ? { inputs: { ...context.inputs } } : {}),
-            })).set;
+            });
+            set = result.set;
+            params.onAcknowledged?.({ kind: 'add', ...add }, result.triggerId === undefined ? undefined : AutomationTriggerIdSchema.parse(result.triggerId), set);
             remaining = { ...remaining, adds: remaining.adds.filter((item) => item.clientId !== add.clientId) };
             if (remaining.context !== undefined && set !== null) {
                 const { context: _seeded, ...rest } = remaining;
                 remaining = rest;
+                if (context) params.onAcknowledged?.({ kind: 'setContext', context }, undefined, set);
             }
         }
         return { kind: 'saved', set };

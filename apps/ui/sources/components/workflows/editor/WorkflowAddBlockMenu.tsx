@@ -4,17 +4,21 @@ import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import type { WorkflowBlockKind, WorkflowLeafBlockSeed } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import type { WorkflowStarterExampleV1 } from '@happier-dev/protocol';
+import { WorkflowExamplesPopover } from '../library/WorkflowExamplesPopover';
 
 import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { SelectionListOption, SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
 
-import { listWorkflowStepActionSpecs } from '@/components/workflows/presentation/workflowActionCatalog';
+import { useWorkflowActionCatalog } from '@/components/workflows/presentation/useWorkflowActionCatalog';
+import type { AuthoringComposerScope } from '@/components/sessions/authoring/ScopedAuthoringComposer';
 import {
     listBuiltinWorkflowReferenceOptions,
-    useWorkflowLibraryReferenceOptions,
+    useWorkflowReferenceLibrary,
     type WorkflowReferenceOption,
 } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
@@ -32,8 +36,10 @@ export type WorkflowAddBlockRequest =
  */
 export function WorkflowAddBlockMenu(props: Readonly<{
     onAdd: (request: WorkflowAddBlockRequest) => void;
+    onUseExample?: (example: WorkflowStarterExampleV1) => void;
     /** Names the scope the new block joins, for the accessible label. */
     scopeLabel: string;
+    composerScope?: AuthoringComposerScope;
     /** This workflow's own reference, offered dimmed with its reason (it cannot run itself). */
     currentWorkflowRef?: string | null;
     /**
@@ -49,6 +55,7 @@ export function WorkflowAddBlockMenu(props: Readonly<{
     const { theme } = useUnistyles();
     const anchorRef = React.useRef<View>(null);
     const [open, setOpen] = React.useState(false);
+    const [examplesOpen, setExamplesOpen] = React.useState(false);
     const close = React.useCallback(() => setOpen(false), []);
 
     if (props.variant === 'inserter') {
@@ -76,6 +83,7 @@ export function WorkflowAddBlockMenu(props: Readonly<{
                 </HappierPressable>
                 {open ? (
                     <WorkflowAddBlockMenuPopover
+                        composerScope={props.composerScope}
                         anchorRef={anchorRef}
                         onAdd={props.onAdd}
                         onClose={close}
@@ -108,28 +116,37 @@ export function WorkflowAddBlockMenu(props: Readonly<{
                     <Text style={workflowEditorStyles.addLabel}>{t('workflows.editor.add')}</Text>
                 </HappierPressable>
             </View>
+            {props.onUseExample === undefined ? null : <RoundButton testID={`${props.testID}-examples`} size="small" display="inverted"
+                title={t('workflows.examples.title')} onPress={() => setExamplesOpen(true)} />}
             {open ? (
                 <WorkflowAddBlockMenuPopover
+                    composerScope={props.composerScope}
                     anchorRef={anchorRef}
                     onAdd={props.onAdd}
+                    {...(props.onUseExample === undefined ? {} : { onExamples: () => { setOpen(false); setExamplesOpen(true); } })}
                     onClose={close}
                     {...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef })}
                     {...(props.testID === undefined ? {} : { testID: props.testID })}
                 />
             ) : null}
+            {examplesOpen ? <WorkflowExamplesPopover anchorRef={anchorRef} onRequestClose={() => setExamplesOpen(false)} onUse={props.onUseExample} /> : null}
         </View>
     );
 }
 
 /** The open menu: mounted only while open, so its catalog and library reads happen on demand. */
 function WorkflowAddBlockMenuPopover(props: Readonly<{
+    composerScope?: AuthoringComposerScope;
     anchorRef: React.RefObject<View | null>;
     onAdd: (request: WorkflowAddBlockRequest) => void;
+    onExamples?: () => void;
     onClose: () => void;
     currentWorkflowRef?: string | null;
     testID?: string;
 }>): React.ReactElement {
-    const libraryOptions = useWorkflowLibraryReferenceOptions();
+    const library = useWorkflowReferenceLibrary();
+    const libraryOptions = library.options;
+    const catalog = useWorkflowActionCatalog(props.composerScope);
     const { onAdd, onClose } = props;
     const rootStep = React.useMemo((): SelectionListStep => {
         const add = (request: WorkflowAddBlockRequest) => () => {
@@ -165,6 +182,13 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
                     title: t('workflows.page.blocks.libraryGroup'),
                     options: libraryOptions.map(workflowOption),
                 }]),
+                ...(library.hasMore ? [{ kind: 'static' as const, id: 'more-workflows', options: [{
+                    id: optionId('workflow-more'), label: t(library.loadingMore ? 'common.loading' : 'common.more'),
+                    disabled: library.loadingMore, onSelect: library.loadMore,
+                }] }] : []),
+                ...(library.status === 'failed' ? [{ kind: 'static' as const, id: 'retry-workflows', options: [{
+                    id: optionId('workflow-retry'), label: t('common.retry'), onSelect: library.retry,
+                }] }] : []),
             ],
         };
         const actionsStep: SelectionListStep = {
@@ -174,7 +198,7 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             sections: [{
                 kind: 'static',
                 id: 'actions',
-                options: listWorkflowStepActionSpecs().map((spec) => ({
+                options: catalog.specs.map((spec) => ({
                     id: optionId(`action:${spec.id}`),
                     label: spec.title,
                     subtitle: spec.description ?? t('workflows.page.blocks.noAgentTurn'),
@@ -205,9 +229,13 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
                         { id: optionId('if'), label: t('workflows.editor.addIf'), onSelect: add({ kind: 'if' }) },
                     ],
                 },
+                ...(props.onExamples === undefined ? [] : [{ kind: 'static' as const, id: 'examples', options: [
+                    { id: optionId('example'), label: t('workflows.examples.title'), onSelect: props.onExamples },
+                ] }]),
             ],
         };
-    }, [libraryOptions, onAdd, onClose, props.currentWorkflowRef, props.testID]);
+    }, [libraryOptions, library.hasMore, library.loadingMore, library.loadMore, library.retry, library.status,
+        catalog.specs, onAdd, onClose, props.currentWorkflowRef, props.testID, props.onExamples]);
 
     return (
         <AgentInputSelectionListPopover

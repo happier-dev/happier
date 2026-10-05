@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -54,8 +54,7 @@ export function ConnectedServiceSetupFlowBody(props: Readonly<{
     return (
         <View style={styles.body} testID="connected-service-setup:flow">
             {methods.length > 1 && activeMethodId ? (
-                // Narrow panels scroll the ways sideways rather than cutting a label.
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.methods}>
+                <View style={styles.methods}>
                     <SegmentedTabBar
                         role="radiogroup"
                         testIDPrefix="connected-service-setup:method"
@@ -63,15 +62,14 @@ export function ConnectedServiceSetupFlowBody(props: Readonly<{
                         segmentSizing="content"
                         tabs={methods.map((method) => ({
                             id: method.id,
-                            label: method.recommended
-                                ? t('connectedServicesSettings.setupRecommendedMethod', { method: method.title })
-                                : method.title,
+                            label: method.title,
+                            badge: method.recommended ? t('connectedServicesSettings.methodRecommended') : undefined,
                         }))}
                         activeTabId={activeMethodId}
                         disabled={props.methodsDisabled}
                         onSelectTab={(id) => props.onSelectMethod?.(id)}
                     />
-                </ScrollView>
+                </View>
             ) : null}
             {props.state === 'preparing' || !props.flow ? (
                 <SurfaceStateCard
@@ -116,7 +114,7 @@ export function ConnectedServiceSetupFlowActions(props: Readonly<{
                 <RoundButton
                     testID="connected-account-setup:cancel"
                     size="small"
-                    display="secondary"
+                    display="inverted"
                     title={t('common.cancel')}
                     onPress={props.onCancel}
                 />

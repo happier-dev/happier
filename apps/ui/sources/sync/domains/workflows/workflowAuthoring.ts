@@ -13,6 +13,7 @@ import {
 import type { JsonValue } from '@happier-dev/protocol';
 import type { WorkflowReferenceScope } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { workflowBlockReferenceLabel } from './workflowBlockLabel';
+export { bindWorkflowSessionConversation, resolveWorkflowSessionBinding } from './workflowAuthoringSessionBinding';
 import { parseWorkflowInputTextDraft } from './workflowInputText';
 
 import {
@@ -153,12 +154,12 @@ export function resolveWorkflowStepFieldInheritance(
   return Object.hasOwn(execution, field) ? 'override' : 'inherited';
 }
 
-/** The value a step actually runs with: its own override, else the workflow default. */
+/** Value-only authoring fields. Roles and execution placement are bound by run admission, not a view. */
 export function resolveEffectiveWorkflowStepExecution(
   draft: Readonly<Pick<WorkflowEditorDraft, 'defaults'>>,
   step: WorkflowStep,
 ): WorkflowStepExecutionSelection {
-  return resolveWorkflowStepSelectionV1({ defaults: draft.defaults, step: step.execution }).selection;
+  return resolveWorkflowStepSelectionV1({ defaults: draft.defaults, step: step.execution, purpose: 'authoring' }).selection;
 }
 
 /**

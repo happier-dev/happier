@@ -14,6 +14,7 @@ import { retargetPendingTerminalConnectToServerUrl } from '@/sync/domains/pendin
 import { readServerAuthStatus, type ServerAuthStatus } from './useServerAuthStatusByServerId';
 import type { ActiveServerSwitchResult } from '@/sync/domains/server/activeServerSwitch';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { offerThisComputerConnectionToHome } from '@/components/serverProfiles/offerThisComputerConnectionToHome';
 
 export function useServerSettingsServerProfileActions(params: Readonly<{
     authStatusByServerId: Readonly<Record<string, ServerAuthStatus>>;
@@ -38,6 +39,8 @@ export function useServerSettingsServerProfileActions(params: Readonly<{
         retargetPendingTerminalConnectToServerUrl(profile.serverUrl);
         if (authStatus === 'signedOut') {
             params.onAfterSignedOutSwitch();
+        } else {
+            await offerThisComputerConnectionToHome(profile);
         }
         params.setRevision((r) => r + 1);
     }, [params]);

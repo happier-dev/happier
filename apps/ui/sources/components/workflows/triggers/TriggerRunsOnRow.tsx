@@ -1,7 +1,6 @@
 import * as React from 'react';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 
-import { Item } from '@/components/ui/lists/Item';
 import { WorkflowProjectTargetControl } from '@/components/workflows/editor/WorkflowProjectTargetControl';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
@@ -10,8 +9,8 @@ import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 
 /**
  * Runs on (04 §5.4, INT §3.1 #9; 07 S4): one machine and folder per trigger set — the set's
- * Automation assignment — chosen through the Where owner's own control. One row, one field select,
- * its consequence as the description; never per trigger.
+ * Automation assignment — chosen through the Where owner's own field. One row, one field select
+ * with the where-summary as its value, its consequence as the description; never per trigger.
  */
 export function TriggerRunsOnRow(props: Readonly<{
     testID: string;
@@ -22,22 +21,15 @@ export function TriggerRunsOnRow(props: Readonly<{
     const machines = useAllMachines();
     const machine = props.target === null ? null : machines.find((candidate) => candidate.id === props.target?.machineId) ?? null;
     return (
-        <Item
-            testID={props.testID}
+        <WorkflowProjectTargetControl
+            presentation="field"
             title={t('workflows.triggers.editor.runsOn')}
             subtitle={props.description}
-            mode="info"
-            accessoryLayout="stacked"
-            rightElement={(
-                <WorkflowProjectTargetControl
-                    presentation="field"
-                    target={props.target}
-                    machineName={props.target === null ? null : getMachineDisplayName(machine) ?? t('machine.unnamedMachine')}
-                    machines={machines}
-                    onChange={(next) => { if (isWorkflowProjectTarget(next)) props.onChange(next); }}
-                    testIDPrefix={props.testID}
-                />
-            )}
+            target={props.target}
+            machineName={props.target === null ? null : getMachineDisplayName(machine) ?? t('machine.unnamedMachine')}
+            machines={machines}
+            onChange={(next) => { if (isWorkflowProjectTarget(next)) props.onChange(next); }}
+            testIDPrefix={props.testID}
         />
     );
 }

@@ -49,9 +49,9 @@ import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import {
   createTransferRecipientKeyPair,
   parseTransferRecipientPublicKeyBase64,
-} from '@/machines/transfer/transferChunkEncryption';
-import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
-import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+} from '@happier-dev/transfers/node';
+import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { createVoiceCredentialResolver } from '@/daemon/voice/credentials/resolver';
 import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
@@ -72,12 +72,12 @@ import {
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import {
   getActiveAccountSettingsSnapshot,
-  getActiveAccountSettingsSnapshotLifetimeToken,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
 import type { RegisteredSpeechProviderRuntime } from '@/plugins/runtime/lifecycle/contributions/targetVoiceSpeech';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
+import { readVoiceSpeechSettingsSnapshot } from './voiceSpeechSettings';
 
 type VoiceSpeechTargetRef = Readonly<{ pluginId: string; localId: string }>;
 type UploadMetadata = Readonly<{
@@ -107,8 +107,9 @@ export type MachineVoiceSpeechRpcRegistration = Readonly<{ dispose(): Promise<vo
 export type VoiceSpeechRuntimeLease = Readonly<{
   runtime: RegisteredSpeechProviderRuntime;
   contribution: Extract<VoiceProviderContribution, { kind: 'speech' }>;
-  readSettings(): Readonly<{
+  readSettings(capturePurpose?: 'conversation' | 'dictation'): Readonly<{
     settings: unknown;
+    recognitionLanguage?: string | null;
     /** Canonical Account Settings revision for this exact daemon snapshot. */
     settingsVersion?: number;
     resolveCredentials(
@@ -140,35 +141,6 @@ type RawCredentialDependencies = Readonly<{
 
 function credentialUnavailable(): Error & { code: 'credential_unavailable' } {
   return Object.assign(new Error('credential_unavailable'), { code: 'credential_unavailable' as const });
-}
-
-function isSpeechSettingsSnapshotCurrent(input: Readonly<{
-  snapshot: ActiveAccountSettingsSnapshot;
-  snapshotLifetimeToken: number;
-  readSnapshot: () => ActiveAccountSettingsSnapshot | null;
-  providerId: string;
-  schemaVersion: number;
-  config: unknown;
-}>): boolean {
-  const current = input.readSnapshot();
-  if (!current || getActiveAccountSettingsSnapshotLifetimeToken() !== input.snapshotLifetimeToken) {
-    return false;
-  }
-  if (input.snapshot.scopeKey === undefined || current.scopeKey === undefined) {
-    return current === input.snapshot;
-  }
-  if (current.scopeKey !== input.snapshot.scopeKey) return false;
-
-  const root = current.settings.voiceSettingsV1;
-  if (!root || typeof root !== 'object' || Array.isArray(root)) return false;
-  const providers = (root as Readonly<Record<string, unknown>>).providers;
-  if (!providers || typeof providers !== 'object' || Array.isArray(providers)) return false;
-  const envelope = VoiceProviderSettingsEnvelopeV1Schema.safeParse(
-    (providers as Readonly<Record<string, unknown>>)[input.providerId],
-  );
-  return envelope.success
-    && envelope.data.schemaVersion === input.schemaVersion
-    && isDeepStrictEqual(envelope.data.config, input.config);
 }
 
 type SpeechCredentialAuthority = ReturnType<typeof resolveAccountSettingsVoiceCredentialSource>;
@@ -439,38 +411,19 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       return Object.freeze({
         runtime: speech.runtime,
         contribution: speech.contribution,
-        readSettings() {
-          const snapshot = readAccountSettingsSnapshot();
-          const root = snapshot?.settings.voiceSettingsV1;
-          if (!root || typeof root !== 'object' || Array.isArray(root)) {
-            throw Object.assign(new Error('provider_settings_invalid'), { code: 'provider_settings_invalid' });
-          }
-          const providers = (root as Readonly<Record<string, unknown>>).providers;
-          if (!providers || typeof providers !== 'object' || Array.isArray(providers)) {
-            throw Object.assign(new Error('provider_settings_invalid'), { code: 'provider_settings_invalid' });
-          }
-          const providerId = buildQualifiedPluginContributionKey(target);
-          const envelope = VoiceProviderSettingsEnvelopeV1Schema.safeParse(
-            (providers as Readonly<Record<string, unknown>>)[providerId],
-          );
-          if (!envelope.success || envelope.data.schemaVersion !== speech.contribution.settings.schemaVersion) {
-            throw Object.assign(new Error('provider_settings_invalid'), { code: 'provider_settings_invalid' });
-          }
-          const snapshotLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
-          const isCurrent = () => (
-            speech.isCurrent()
-            && isSpeechSettingsSnapshotCurrent({
-              snapshot,
-              snapshotLifetimeToken,
-              readSnapshot: readAccountSettingsSnapshot,
-              providerId,
-              schemaVersion: speech.contribution.settings.schemaVersion,
-              config: envelope.data.config,
-            })
-          );
+        readSettings(capturePurpose?: 'conversation' | 'dictation') {
+          const captured = readVoiceSpeechSettingsSnapshot({
+            providerId: buildQualifiedPluginContributionKey(target),
+            contribution: speech.contribution,
+            readSnapshot: readAccountSettingsSnapshot,
+            isRuntimeCurrent: speech.isCurrent,
+            capturePurpose,
+          });
+          const { snapshot, isCurrent } = captured;
           return Object.freeze({
-            settings: envelope.data.config,
-            settingsVersion: snapshot.settingsVersion,
+            settings: captured.settings,
+            ...(captured.recognitionLanguage !== undefined ? { recognitionLanguage: captured.recognitionLanguage } : {}),
+            settingsVersion: captured.settingsVersion,
             resolveCredentials(
               providerSettings: Readonly<Record<string, unknown>>,
               signal: AbortSignal,
@@ -609,15 +562,16 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     }
     return Object.freeze({ requestId, text: result.text });
   };
-  const createSpeechOperationContext = (lease: VoiceSpeechRuntimeLease, signal: AbortSignal) => {
+  const createSpeechOperationContext = (lease: VoiceSpeechRuntimeLease, signal: AbortSignal, capturePurpose?: 'conversation' | 'dictation') => {
     try {
-      const settingsLease = lease.readSettings();
+      const settingsLease = lease.readSettings(capturePurpose);
       if (!settingsLease.isCurrent()) {
         throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
       }
       const correspondence = resolveVoiceSpeechSettingsCorrespondence({
         contribution: lease.contribution,
         settings: settingsLease.settings,
+        ...(settingsLease.recognitionLanguage !== undefined ? { recognitionLanguage: settingsLease.recognitionLanguage } : {}),
       });
       const endpointPolicy = resolveVoiceSpeechEndpointPolicy({
         settings: correspondence.settings,
@@ -893,7 +847,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       const result = await runBounded(async (signal) => {
         const bytes = new Uint8Array(await readFile(uploaded!.path));
         assertOperationMayPublish(lease!, signal);
-        const operation = createSpeechOperationContext(lease!, signal);
+        const operation = createSpeechOperationContext(lease!, signal, parsed.data.capturePurpose);
         if (!operation.correspondence.transcribe) {
           throw Object.assign(new Error('provider_settings_invalid'), { code: 'provider_settings_invalid' });
         }

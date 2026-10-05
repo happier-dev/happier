@@ -22,10 +22,26 @@ function mount(values: WorkflowRunComposerProps['values'] = {}) {
 }
 
 describe('workflow composer accessibility', () => {
-    it('associates the required repair with the actual main input and an alert', async () => {
+    it('associates the required repair with the actual main input without an untouched alert', async () => {
         const screen = await mount();
-        expect(screen.findByTestId('workflow-run-inputs-reason')?.props.accessibilityRole).toBe('alert');
+        // 07 §3: untouched fields never show errors. The readiness footnote names
+        // what is missing quietly; it is not an alert before any interaction.
+        const reason = screen.findByTestId('workflow-run-inputs-reason');
+        expect(reason?.props.accessibilityRole).toBeUndefined();
+        expect(screen.findByTestId('workflow-run-inputs-reason-text')?.props.children).toBe('workflows.start.addToStart');
         expect(screen.findByTestId('new-session-composer-input')?.props.accessibilityHint).toBeTruthy();
+    });
+    it('names a built-in input by its presentation, never by its raw key', async () => {
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[{ name: 'request', valueType: 'string', required: true }]}
+            inputPresentation={{ request: { title: 'What should the panel plan?' } }}
+            values={{}} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        const input = screen.findByTestId('new-session-composer-input');
+        expect(input?.props.placeholder).toBe('What should the panel plan?');
+        expect(input?.props.accessibilityLabel).toBe('What should the panel plan?');
+    });
+    it('closes through its presenter rather than a separate Cancel row', async () => {
+        const screen = await mount();
+        expect(screen.findByTestId('workflow-run-inputs-cancel')).toBeNull();
     });
     it('explains a disabled Start on the action itself', async () => {
         const screen = await mount();

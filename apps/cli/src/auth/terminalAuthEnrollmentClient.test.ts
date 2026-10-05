@@ -64,6 +64,48 @@ function readyFeatures(params: Readonly<{
 }
 
 describe('terminal auth enrollment client', () => {
+  it.each([
+    [{ status: 'error', reason: 'network' }, 'HOME_FEATURES_NETWORK'],
+    [{ status: 'error', reason: 'timeout' }, 'HOME_FEATURES_TIMEOUT'],
+    [{ status: 'error', reason: 'response_status', httpStatus: 503 }, 'HOME_FEATURES_HTTP_ERROR'],
+    [{ status: 'unsupported', reason: 'endpoint_missing' }, 'HOME_FEATURES_ENDPOINT_MISSING'],
+  ] as const)('preserves the typed feature refusal for %j', (snapshot, code) => {
+    let failure: unknown;
+    try {
+      verifyTerminalAuthEnrollmentRuntime({
+        target: STRICT_TARGET,
+        runtime: {
+          runtimeOrigin: 'http://127.0.0.1:48123',
+          carrier: 'iroh',
+          authenticatedCredentialDestination: { kind: 'iroh', endpointId: 'a'.repeat(64) },
+        },
+        snapshot,
+      });
+    } catch (error) { failure = error; }
+    expect(failure).toMatchObject({ code });
+  });
+
+  it('distinguishes an unverified destination from a mismatched Home authority', () => {
+    const runtime = {
+      runtimeOrigin: 'http://127.0.0.1:48123',
+      carrier: 'iroh' as const,
+      authenticatedCredentialDestination: null,
+    };
+    let failure: unknown;
+    try {
+      verifyTerminalAuthEnrollmentRuntime({ target: STRICT_TARGET, runtime, snapshot: readyFeatures() });
+    } catch (error) { failure = error; }
+    expect(failure).toMatchObject({ code: 'HOME_CREDENTIAL_DESTINATION_UNVERIFIED' });
+    try {
+      verifyTerminalAuthEnrollmentRuntime({
+        target: STRICT_TARGET,
+        runtime: { ...runtime, authenticatedCredentialDestination: { kind: 'iroh', endpointId: 'b'.repeat(64) } },
+        snapshot: readyFeatures(),
+      });
+    } catch (error) { failure = error; }
+    expect(failure).toMatchObject({ code: 'HOME_AUTHORITY_MISMATCH' });
+  });
+
   it('distinguishes an unreadable feature response from an absent Home identity', async () => {
     const snapshot = await fetchServerFeaturesSnapshot({
       serverUrl: 'https://home.example.test',
@@ -85,6 +127,41 @@ describe('terminal auth enrollment client', () => {
     try { verify(snapshot); } catch (error) { unreadableError = error; }
     expect(unreadableError).toMatchObject({ code: 'HOME_FEATURES_UNREADABLE' });
     expect(verify.bind(null, readyFeatures({ identity: '' }))).toThrow('Unable to verify the selected Home identity');
+  });
+
+  it('verifies a Home whose live-stream relay does not advertise optional limits', async () => {
+    const snapshot = await fetchServerFeaturesSnapshot({
+      serverUrl: 'https://optional-relay-caps.example.test',
+      fetchImpl: async () => new Response(JSON.stringify({
+        features: {},
+        capabilities: {
+          serverIdentity: { serverIdentityId: DESCRIPTOR.homeServerIdentityId },
+          machines: { liveStream: { serverRouted: { caps: {} } } },
+        },
+      })),
+    });
+    const verified = verifyTerminalAuthEnrollmentRuntime({
+      target: {
+        profileId: null,
+        homeServerIdentityId: null,
+        descriptor: null,
+        canonicalAuthUrl: 'https://optional-relay-caps.example.test',
+        applicationUrl: 'https://optional-relay-caps.example.test',
+        webappUrl: 'https://optional-relay-caps.example.test',
+        credentialDestination: null,
+        preferredTransport: 'https',
+        authority: 'manual_url',
+      },
+      runtime: {
+        runtimeOrigin: 'https://optional-relay-caps.example.test',
+        carrier: 'https',
+        authenticatedCredentialDestination: {
+          kind: 'https', applicationUrl: 'https://optional-relay-caps.example.test',
+        },
+      },
+      snapshot,
+    });
+    expect(verified.homeServerIdentityId).toBe(DESCRIPTOR.homeServerIdentityId);
   });
 
   it('sends request, status, and claim only through the explicit acquired runtime origin', async () => {

@@ -20,7 +20,7 @@ import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEdit
  */
 
 export type WorkflowBlockAction = Readonly<{
-    id: 'moveUp' | 'moveDown' | 'moveIn' | 'moveOut' | 'remove';
+    id: 'duplicate' | 'moveUp' | 'moveDown' | 'moveIn' | 'moveOut' | 'remove';
     label: string;
     destructive?: boolean;
     onSelect: () => void;

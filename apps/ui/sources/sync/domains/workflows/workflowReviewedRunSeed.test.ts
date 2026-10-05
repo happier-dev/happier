@@ -37,11 +37,13 @@ function createWorkflowRunSummaryFixture(overrides: Partial<ReturnType<typeof Wo
 }
 
 const ACCEPTED_CONTEXT: WorkflowRunAcceptedContextV1 = {
+    startedBy: 'user',
     source: { kind: 'inline' },
     inputs: { topic: 'release' },
     machineId: 'machine-1',
     executionTarget: { kind: 'detached_run' },
     materializedLeaves: [],
+    frozenChildren: {},
     workspaceTarget: { project: { machineId: 'machine-1', directory: '/Users/me/project', checkoutRootPath: '/Users/me/project' } },
     origin: { kind: 'direct' },
 };

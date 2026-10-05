@@ -141,13 +141,12 @@ describe('settingsRouteRegistry', () => {
         )).toBe('/settings/teams/home-1/team-1/authentication/github-apps/registration-1');
     });
 
-    it('registers model-management and native plugin-panel routes', () => {
+    it('registers model-management and plugin-settings routes', () => {
         const names = getSettingsStackScreenDefinitions(translate as never).map((definition) => definition.name);
         expect(names).toContain('providers');
         expect(names).not.toContain('providers/[connectionId]/models');
         expect(names).toContain('agents');
         expect(names).not.toContain('agents/[agentId]/models');
-        expect(names).toContain('plugins/panels');
         expect(names).toContain('plugins/webhooks');
         expect(names).toContain('plugins/[pluginId]/[pageId]');
     });

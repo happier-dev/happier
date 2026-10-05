@@ -1,6 +1,5 @@
 import * as React from 'react';
-import type { SessionTriggerAddRequestV1, SessionTriggerUpdateRequestV1, SessionTriggerListResultV1Schema, WorkflowTriggerSetV1 } from '@happier-dev/protocol';
-import type { z } from 'zod';
+import type { SessionTriggerAddRequestV1, SessionTriggerUpdateRequestV1, SessionTriggerPullRequestLinksV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol';
 
 import { getStorage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
@@ -23,7 +22,7 @@ export type SessionTriggersRead = Readonly<{
     lastRunAtByAutomationId: Readonly<Record<string, number | null>>;
     /** The session's Machine, used for native capability observations and Action options. */
     machineId: string | null;
-    pullRequestLinks: z.output<typeof SessionTriggerListResultV1Schema>['pullRequestLinks'];
+    pullRequestLinks: SessionTriggerPullRequestLinksV1 | Readonly<{ status: 'loading' }>;
     retry: () => void;
     add: (request: Omit<SessionTriggerAddRequestV1, 'sessionId'>) => Promise<WorkflowTriggerWriteResult>;
     update: (request: Omit<SessionTriggerUpdateRequestV1, 'sessionId'>) => Promise<WorkflowTriggerWriteResult>;
@@ -58,7 +57,7 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
     );
     const [attempt, setAttempt] = React.useState(0);
     const [links, setLinks] = React.useState<Readonly<{ scopeKey: string | null; value: SessionTriggersRead['pullRequestLinks'] }>>(
-        () => ({ scopeKey: linkScopeKey, value: [] }),
+        () => ({ scopeKey: linkScopeKey, value: { status: 'loading' } }),
     );
     const options = React.useCallback(() => {
         const machineId = readMachineControlTargetForSession(sessionId)?.machineId;
@@ -117,7 +116,7 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
     const owned = state.sessionId === sessionId;
     return {
         machineId: readMachineControlTargetForSession(sessionId)?.machineId ?? null,
-        pullRequestLinks: linkScopeKey !== null && links.scopeKey === linkScopeKey ? links.value : [],
+        pullRequestLinks: linkScopeKey !== null && links.scopeKey === linkScopeKey ? links.value : { status: 'loading' },
         status: owned ? state.status : 'loading',
         sets,
         lastRunAtByAutomationId,

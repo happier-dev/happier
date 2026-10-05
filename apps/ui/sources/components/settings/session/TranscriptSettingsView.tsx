@@ -35,9 +35,12 @@ import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHead
 import { SettingRow, SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
 import { TRANSCRIPT_SETTINGS } from '@/components/settings/session/transcriptSettings';
 import { ThinkingDisplayPreview, ToolStylePreview, TranscriptLayoutPreview } from '@/components/settings/session/SessionSettingPreviews';
+import {
+    resolveThinkingDisplayChoice, resolveThinkingDisplayChoiceDelta, type ThinkingDisplayChoice,
+} from '@/components/settings/session/thinkingDisplayChoice';
+import { useApplySettings } from '@/sync/store/settingsWriters';
 
 type TranscriptGroupingMode = 'linear' | 'turns';
-type ThinkingOptionId = 'inline_summary' | 'inline_full' | 'tool' | 'hidden';
 type ToolCallsGroupStrategy = 'consecutive_tools' | 'all_tools_in_turn';
 type ToolTapAction = 'expand' | 'open';
 type TranscriptBulkCopyFormat = 'markdown_labeled' | 'plain';
@@ -60,12 +63,20 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const [transcriptToolCallsGroupShowBackground, setTranscriptToolCallsGroupShowBackground] = useSettingMutable('transcriptToolCallsGroupShowBackground');
     const [transcriptMessageTimestampDisplayMode, setTranscriptMessageTimestampDisplayMode] = useSettingMutable('transcriptMessageTimestampDisplayMode');
     const [transcriptMessageSelectionEnabled, setTranscriptMessageSelectionEnabled] = useSettingMutable('transcriptMessageSelectionEnabled');
+    const [transcriptMessageCopyActionEnabled, setTranscriptMessageCopyActionEnabled] = useSettingMutable('transcriptMessageCopyActionEnabled');
+    const [transcriptMessageForkActionEnabled, setTranscriptMessageForkActionEnabled] = useSettingMutable('transcriptMessageForkActionEnabled');
+    const [transcriptMessageRollbackActionEnabled, setTranscriptMessageRollbackActionEnabled] = useSettingMutable('transcriptMessageRollbackActionEnabled');
+    const [transcriptMessagePinActionEnabled, setTranscriptMessagePinActionEnabled] = useSettingMutable('transcriptMessagePinActionEnabled');
+    const [transcriptMessageSavePromptActionEnabled, setTranscriptMessageSavePromptActionEnabled] = useSettingMutable('transcriptMessageSavePromptActionEnabled');
+    const [transcriptMessageMakeRepeatableActionEnabled, setTranscriptMessageMakeRepeatableActionEnabled] = useSettingMutable('transcriptMessageMakeRepeatableActionEnabled');
+    const [transcriptMessagePluginActionsEnabled, setTranscriptMessagePluginActionsEnabled] = useSettingMutable('transcriptMessagePluginActionsEnabled');
     const [transcriptMessageSendToSessionEnabled, setTranscriptMessageSendToSessionEnabled] = useSettingMutable('transcriptMessageSendToSessionEnabled');
     const [transcriptMessageSendToSessionTemplate, setTranscriptMessageSendToSessionTemplate] = useSettingMutable('transcriptMessageSendToSessionTemplate');
     const [transcriptBulkCopyFormat, setTranscriptBulkCopyFormat] = useSettingMutable('transcriptBulkCopyFormat');
 
-    const [sessionThinkingDisplayMode, setSessionThinkingDisplayMode] = useSettingMutable('sessionThinkingDisplayMode');
-    const [sessionThinkingInlinePresentation, setSessionThinkingInlinePresentation] = useSettingMutable('sessionThinkingInlinePresentation');
+    const [sessionThinkingDisplayMode] = useSettingMutable('sessionThinkingDisplayMode');
+    const [sessionThinkingInlinePresentation] = useSettingMutable('sessionThinkingInlinePresentation');
+    const applySettings = useApplySettings();
     const [sessionThinkingInlineChrome, setSessionThinkingInlineChrome] = useSettingMutable('sessionThinkingInlineChrome');
 
     const [toolViewTimelineChromeMode, setToolViewTimelineChromeMode] = useSettingMutable('toolViewTimelineChromeMode');
@@ -183,34 +194,11 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const advancedRoute = '/(app)/settings/session/transcript/advanced';
     const toolOverridesRoute = '/(app)/settings/session/tool-rendering';
 
-    const normalizedThinkingSelectedId: ThinkingOptionId =
-        sessionThinkingDisplayMode === 'tool'
-            ? 'tool'
-            : sessionThinkingDisplayMode === 'hidden'
-                ? 'hidden'
-                : sessionThinkingInlinePresentation === 'full'
-                    ? 'inline_full'
-                    : 'inline_summary';
+    const normalizedThinkingSelectedId = resolveThinkingDisplayChoice({ sessionThinkingDisplayMode, sessionThinkingInlinePresentation });
+    // One write for the whole choice: the two stored fields never land in different revisions.
+    const selectThinkingDisplay = (option: ThinkingDisplayChoice) => applySettings(resolveThinkingDisplayChoiceDelta(option));
 
-    const selectThinkingDisplay = (option: ThinkingOptionId) => {
-        switch (option) {
-            case 'inline_summary':
-                setSessionThinkingDisplayMode('inline' as any);
-                setSessionThinkingInlinePresentation('summary' as any);
-                break;
-            case 'inline_full':
-                setSessionThinkingDisplayMode('inline' as any);
-                setSessionThinkingInlinePresentation('full' as any);
-                break;
-            case 'tool':
-                setSessionThinkingDisplayMode('tool' as any);
-                break;
-            case 'hidden':
-                setSessionThinkingDisplayMode('hidden' as any);
-                break;
-        }
-    };
-    const thinkingDisplayOptions: Array<{ id: ThinkingOptionId; title: string; subtitle: string }> = [
+    const thinkingDisplayOptions: Array<{ id: ThinkingDisplayChoice; title: string; subtitle: string }> = [
         { id: 'inline_summary', title: t('settingsSessionPages.transcript.thinkingSummary'), subtitle: t('settingsSession.thinking.displayMode.inlineSummarySubtitle') },
         { id: 'inline_full', title: t('settingsSessionPages.transcript.thinkingFull'), subtitle: t('settingsSession.thinking.displayMode.inlineSubtitle') },
         { id: 'tool', title: t('settingsSession.thinking.displayMode.toolTitle'), subtitle: t('settingsSession.thinking.displayMode.toolSubtitle') },
@@ -287,7 +275,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
                             accessoryLayout="stacked"
                             showChevron={false}
                             rightElement={(
-                                <SelectionTiles<ThinkingOptionId>
+                                <SelectionTiles<ThinkingDisplayChoice>
                                     variant="visual"
                                     accessibilityLabel={t(TRANSCRIPT_SETTINGS.settings.displayMode.titleKey)}
                                     testIdPrefix="settings-session-thinking-display"
@@ -510,6 +498,27 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
             </SettingSection>
 
             <ItemGroup title={t('settingsSession.transcript.messageActions.groupTitle')} description={t('settingsSession.transcript.messageActions.groupFooter')}>
+                <SettingRow testID="settings-transcript-copy-enabled" setting={TRANSCRIPT_SETTINGS.settings.copyEnabled}
+                    rightElement={<Switch value={transcriptMessageCopyActionEnabled !== false} onValueChange={setTranscriptMessageCopyActionEnabled} />}
+                    showChevron={false} onPress={() => setTranscriptMessageCopyActionEnabled(transcriptMessageCopyActionEnabled === false)} />
+                <SettingRow testID="settings-transcript-fork-enabled" setting={TRANSCRIPT_SETTINGS.settings.forkEnabled}
+                    rightElement={<Switch value={transcriptMessageForkActionEnabled !== false} onValueChange={setTranscriptMessageForkActionEnabled} />}
+                    showChevron={false} onPress={() => setTranscriptMessageForkActionEnabled(transcriptMessageForkActionEnabled === false)} />
+                <SettingRow testID="settings-transcript-rollback-enabled" setting={TRANSCRIPT_SETTINGS.settings.rollbackEnabled}
+                    rightElement={<Switch value={transcriptMessageRollbackActionEnabled !== false} onValueChange={setTranscriptMessageRollbackActionEnabled} />}
+                    showChevron={false} onPress={() => setTranscriptMessageRollbackActionEnabled(transcriptMessageRollbackActionEnabled === false)} />
+                <SettingRow testID="settings-transcript-pin-enabled" setting={TRANSCRIPT_SETTINGS.settings.pinEnabled}
+                    rightElement={<Switch value={transcriptMessagePinActionEnabled !== false} onValueChange={setTranscriptMessagePinActionEnabled} />}
+                    showChevron={false} onPress={() => setTranscriptMessagePinActionEnabled(transcriptMessagePinActionEnabled === false)} />
+                <SettingRow testID="settings-transcript-savePrompt-enabled" setting={TRANSCRIPT_SETTINGS.settings.savePromptEnabled}
+                    rightElement={<Switch value={transcriptMessageSavePromptActionEnabled !== false} onValueChange={setTranscriptMessageSavePromptActionEnabled} />}
+                    showChevron={false} onPress={() => setTranscriptMessageSavePromptActionEnabled(transcriptMessageSavePromptActionEnabled === false)} />
+                <SettingRow testID="settings-transcript-plugins-enabled" setting={TRANSCRIPT_SETTINGS.settings.pluginsEnabled}
+                    rightElement={<Switch value={transcriptMessagePluginActionsEnabled !== false} onValueChange={setTranscriptMessagePluginActionsEnabled} />}
+                    showChevron={false} onPress={() => setTranscriptMessagePluginActionsEnabled(transcriptMessagePluginActionsEnabled === false)} />
+                <SettingRow testID="settings-transcript-makeRepeatable-enabled" setting={TRANSCRIPT_SETTINGS.settings.makeRepeatableEnabled}
+                    rightElement={<Switch value={transcriptMessageMakeRepeatableActionEnabled !== false} onValueChange={setTranscriptMessageMakeRepeatableActionEnabled} />}
+                    showChevron={false} onPress={() => setTranscriptMessageMakeRepeatableActionEnabled(transcriptMessageMakeRepeatableActionEnabled === false)} />
                 <SettingRow
                     testID="settings-session-transcript-message-selection-enabled"
                     setting={TRANSCRIPT_SETTINGS.settings.selectionEnabled}

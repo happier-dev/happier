@@ -6,7 +6,9 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { storage } from '@/sync/domains/state/storageStore';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { createWorkBoardV1, normalizeSessionListFilterV1 } from '@happier-dev/protocol';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createWorkBoardV1, getBuiltinWorkflowCatalogV1, normalizeSessionListFilterV1 } from '@happier-dev/protocol';
+import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { useBoardMembership } from '@/components/boards/model/useBoardContent';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { WorkflowsRunsRoute } from '@/app/(app)/workflows/runs/index';
@@ -22,6 +24,7 @@ function TestAuth({ children }: React.PropsWithChildren) {
 
 const executeMock = vi.hoisted(() => vi.fn());
 const routerPush = vi.hoisted(() => vi.fn());
+const routeState = vi.hoisted(() => ({ params: {} as Record<string, string> }));
 
 // The Action front door is the transport boundary; the list clients, parsers, Run store and
 // projections below it stay real.
@@ -31,7 +34,7 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ pathname: '/workflows', router: { push: routerPush } }).module;
+    return createExpoRouterMock({ pathname: '/workflows', params: () => routeState.params, router: { push: routerPush } }).module;
 });
 
 vi.mock('react-native-unistyles', async () => {
@@ -94,7 +97,9 @@ function answerLists() {
 
 let previousStorageState = storage.getState();
 beforeEach(async () => {
+    routeState.params = {};
     previousStorageState = storage.getState();
+    await loadSyncSingletonForTests();
     const runtime = await import('@/sync/domains/server/serverRuntime');
     appliedSnapshot = runtime.getActiveServerSnapshot;
     const profile = await runtime.upsertAndActivateServer({ serverUrl: 'http://unified-column.test', name: 'Column Home' });
@@ -146,6 +151,16 @@ describe('WorkflowsColumn', () => {
         expect(routerPush).toHaveBeenCalledWith('/workflows/runs/run-waiting');
     });
 
+    it('reveals Account triggers from an old link even while the retained column shows Runs', async () => {
+        answerLists();
+        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        await screen.pressByTestIdAsync('workflows-column:view:runs');
+        routeState.params = { trigger: 'legacy-manual' };
+        // The router mock has no navigation subscription; changing a presentation prop delivers its new params.
+        await screen.update(<WorkflowsColumn surface="page" />);
+        expect(screen.findByTestId('workflows-column:group:builtin')).not.toBeNull();
+        expect(screen.findAllHostsByTestId('sessions-list-keyboard-frame')).toHaveLength(0);
+    });
     it('lets the Runs view open a run through the shared Sessions list', async () => {
         answerLists();
         const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
@@ -174,6 +189,21 @@ describe('WorkflowsColumn', () => {
         expect(screen.findAllHostsByTestId('session-list-search-input')).toHaveLength(0);
         await screen.pressByTestIdAsync('workflows-column:view:runs');
         expect(screen.findByTestId('session-list-search-input')?.props.value).toBe('release');
+    });
+
+    it('lists the built-ins as the column\'s own navigation rows, leaving their controls to the built-in page', async () => {
+        answerLists();
+        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+        expect(screen.findByTestId('workflows-column:group:builtin')).toBeTruthy();
+        for (const entry of getBuiltinWorkflowCatalogV1()) {
+            // One row anatomy in the column: no inline Run now / Choose a session… beside the row.
+            expect(screen.findAllHostsByTestId(`workflow-builtins:${entry.id}:run`)).toHaveLength(0);
+            expect(screen.findAllHostsByTestId(`workflow-builtins:${entry.id}:session`)).toHaveLength(0);
+            await screen.pressByTestIdAsync(`workflows-column:builtin:${entry.id}`);
+            expect(routerPush).toHaveBeenLastCalledWith(createWorkflowDefinitionRoute(entry.id));
+        }
     });
 
 });

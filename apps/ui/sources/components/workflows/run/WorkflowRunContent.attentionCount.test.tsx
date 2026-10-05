@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { WorkflowRunContent } from './WorkflowRunContent';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -55,7 +56,9 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
         onChangeView: () => {},
         ...overrides,
     };
-    return renderScreen(React.createElement(WorkflowRunContent, props));
+    return renderScreen(React.createElement(WorkflowRunContent, props), {
+        wrapper: ({ children }) => <AppPaneProvider>{children}</AppPaneProvider>,
+    });
 }
 
 describe('attention partial count truth', () => {

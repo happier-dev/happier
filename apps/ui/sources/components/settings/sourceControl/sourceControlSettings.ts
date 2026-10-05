@@ -1,9 +1,19 @@
 import { defineSettingsPage, settingsHosts } from '@/components/settings/catalog/settingDeclarations';
+import { scmDiffSummarySettingBinding, SCM_DIFF_SUMMARY_SETTING_KEYS } from '@/settings/scmDiffSummary/settings';
 
 /** The searchable settings of the `sourceControl` page. Rows render their labels from these declarations. */
 export const SOURCE_CONTROL_SETTINGS = defineSettingsPage({
     pageId: 'sourceControl',
     sections: {
+        walkthroughs: {
+            titleKey: 'walkthroughSettings.title',
+            settings: {
+                explainChanges: { storage: { scope: 'account', key: 'scm.diffSummary.enabled', access: 'read_write' }, titleKey: 'walkthroughSettings.enabled', descriptionKey: 'walkthroughSettings.enabledDescription' },
+                summaryModel: { storage: scmDiffSummarySettingBinding(SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride), titleKey: 'walkthroughSettings.model', descriptionKey: 'walkthroughSettings.modelDescription' },
+                prepareAfterTurn: { storage: scmDiffSummarySettingBinding(SCM_DIFF_SUMMARY_SETTING_KEYS.prefetch), titleKey: 'walkthroughSettings.prefetch', descriptionKey: 'walkthroughSettings.prefetchDescription' },
+                savedWalkthroughs: { titleKey: 'walkthroughSettings.saved', descriptionKey: 'walkthroughSettings.savedDescription' },
+            },
+        },
         commits: {
             titleKey: 'settingsSourceControl.page.commits.title',
             settings: {

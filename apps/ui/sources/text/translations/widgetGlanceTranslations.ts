@@ -11,6 +11,7 @@ type WidgetGlanceTranslation = Readonly<{
     notRunning: string;
     nothingRunning: string;
     servicesLoading: string;
+    servicesReadFailed: string;
     noMachine: string;
     changedCount: (params: Readonly<{ count: number }>) => string;
     moreFiles: (params: Readonly<{ count: number }>) => string;
@@ -32,6 +33,7 @@ export const widgetGlanceTranslations = {
         notRunning: 'Not running',
         nothingRunning: 'Nothing running. Services this session starts show up here.',
         servicesLoading: 'Loading local services',
+        servicesReadFailed: 'Couldn’t read local services. Try again.',
         noMachine: 'This session has no machine to ask.',
         changedCount: ({ count }) => `${count} changed`,
         moreFiles: ({ count }) => (count === 1 ? '1 more file' : `${count} more files`),
@@ -51,6 +53,7 @@ export const widgetGlanceTranslations = {
         notRunning: 'No s’executa',
         nothingRunning: 'No s’executa res. Els serveis que iniciï aquesta sessió apareixeran aquí.',
         servicesLoading: 'Carregant els serveis locals',
+        servicesReadFailed: 'No s’han pogut llegir els serveis locals. Torna-ho a provar.',
         noMachine: 'Aquesta sessió no té cap màquina a qui preguntar.',
         changedCount: ({ count }) => `${count} canviats`,
         moreFiles: ({ count }) => (count === 1 ? '1 fitxer més' : `${count} fitxers més`),
@@ -70,6 +73,7 @@ export const widgetGlanceTranslations = {
         notRunning: 'Läuft nicht',
         nothingRunning: 'Nichts läuft. Dienste, die diese Sitzung startet, erscheinen hier.',
         servicesLoading: 'Lokale Dienste werden geladen',
+        servicesReadFailed: 'Lokale Dienste konnten nicht gelesen werden. Versuche es erneut.',
         noMachine: 'Diese Sitzung hat keine Maschine, die gefragt werden kann.',
         changedCount: ({ count }) => `${count} geändert`,
         moreFiles: ({ count }) => (count === 1 ? '1 weitere Datei' : `${count} weitere Dateien`),
@@ -89,6 +93,7 @@ export const widgetGlanceTranslations = {
         notRunning: 'Sin ejecutar',
         nothingRunning: 'No hay nada en ejecución. Aquí aparecen los servicios que inicie esta sesión.',
         servicesLoading: 'Cargando servicios locales',
+        servicesReadFailed: 'No se pudieron leer los servicios locales. Inténtalo de nuevo.',
         noMachine: 'Esta sesión no tiene una máquina a la que preguntar.',
         changedCount: ({ count }) => `${count} cambiados`,
         moreFiles: ({ count }) => (count === 1 ? '1 archivo más' : `${count} archivos más`),
@@ -108,6 +113,7 @@ export const widgetGlanceTranslations = {
         notRunning: 'Arrêté',
         nothingRunning: 'Rien ne tourne. Les services lancés par cette session apparaîtront ici.',
         servicesLoading: 'Chargement des services locaux',
+        servicesReadFailed: 'Impossible de lire les services locaux. Réessayez.',
         noMachine: 'Cette session n’a pas de machine à interroger.',
         changedCount: ({ count }) => `${count} modifiés`,
         moreFiles: ({ count }) => (count === 1 ? '1 autre fichier' : `${count} autres fichiers`),
@@ -127,6 +133,7 @@ export const widgetGlanceTranslations = {
         notRunning: 'Non in esecuzione',
         nothingRunning: 'Niente in esecuzione. Qui compaiono i servizi avviati da questa sessione.',
         servicesLoading: 'Caricamento dei servizi locali',
+        servicesReadFailed: 'Impossibile leggere i servizi locali. Riprova.',
         noMachine: 'Questa sessione non ha una macchina da interrogare.',
         changedCount: ({ count }) => `${count} modificati`,
         moreFiles: ({ count }) => (count === 1 ? '1 altro file' : `altri ${count} file`),
@@ -146,6 +153,7 @@ export const widgetGlanceTranslations = {
         notRunning: '停止中',
         nothingRunning: '実行中のものはありません。このセッションが起動したサービスがここに表示されます。',
         servicesLoading: 'ローカルサービスを読み込んでいます',
+        servicesReadFailed: 'ローカルサービスを読み込めませんでした。もう一度お試しください。',
         noMachine: 'このセッションには問い合わせるマシンがありません。',
         changedCount: ({ count }) => `${count} 件変更`,
         moreFiles: ({ count }) => `ほか ${count} ファイル`,
@@ -165,6 +173,7 @@ export const widgetGlanceTranslations = {
         notRunning: 'Nie działa',
         nothingRunning: 'Nic nie działa. Tu pojawią się usługi uruchomione w tej sesji.',
         servicesLoading: 'Wczytywanie usług lokalnych',
+        servicesReadFailed: 'Nie udało się odczytać usług lokalnych. Spróbuj ponownie.',
         noMachine: 'Ta sesja nie ma maszyny, którą można zapytać.',
         changedCount: ({ count }) => `${count} zmienionych`,
         moreFiles: ({ count }) => `jeszcze ${count} plików`,
@@ -184,6 +193,7 @@ export const widgetGlanceTranslations = {
         notRunning: 'Parado',
         nothingRunning: 'Nada em execução. Os serviços iniciados por esta sessão aparecem aqui.',
         servicesLoading: 'Carregando serviços locais',
+        servicesReadFailed: 'Não foi possível ler os serviços locais. Tente novamente.',
         noMachine: 'Esta sessão não tem uma máquina para consultar.',
         changedCount: ({ count }) => `${count} alterados`,
         moreFiles: ({ count }) => (count === 1 ? 'mais 1 arquivo' : `mais ${count} arquivos`),
@@ -203,6 +213,7 @@ export const widgetGlanceTranslations = {
         notRunning: 'Не запущен',
         nothingRunning: 'Ничего не запущено. Здесь появятся сервисы, запущенные этой сессией.',
         servicesLoading: 'Загрузка локальных сервисов',
+        servicesReadFailed: 'Не удалось прочитать локальные сервисы. Попробуйте ещё раз.',
         noMachine: 'У этой сессии нет машины для запроса.',
         changedCount: ({ count }) => `изменено: ${count}`,
         moreFiles: ({ count }) => `ещё файлов: ${count}`,
@@ -222,6 +233,7 @@ export const widgetGlanceTranslations = {
         notRunning: '未运行',
         nothingRunning: '没有正在运行的服务。此会话启动的服务会显示在这里。',
         servicesLoading: '正在加载本地服务',
+        servicesReadFailed: '无法读取本地服务。请重试。',
         noMachine: '此会话没有可查询的机器。',
         changedCount: ({ count }) => `${count} 个已更改`,
         moreFiles: ({ count }) => `还有 ${count} 个文件`,
@@ -241,6 +253,7 @@ export const widgetGlanceTranslations = {
         notRunning: '未執行',
         nothingRunning: '沒有正在執行的服務。此工作階段啟動的服務會顯示在這裡。',
         servicesLoading: '正在載入本機服務',
+        servicesReadFailed: '無法讀取本機服務。請再試一次。',
         noMachine: '此工作階段沒有可查詢的機器。',
         changedCount: ({ count }) => `${count} 個已變更`,
         moreFiles: ({ count }) => `還有 ${count} 個檔案`,

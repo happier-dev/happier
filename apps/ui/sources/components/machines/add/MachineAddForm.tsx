@@ -28,7 +28,7 @@ import {
     MachineWatchLine,
 } from './MachineAddPanes';
 import { useMachineAddFlow } from './useMachineAddFlow';
-import { useRouter } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ThisComputerAgentsPane } from '@/components/machines/agents/ThisComputerAgentsPane';
 import { machineCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { useMachine } from '@/sync/domains/state/storage';

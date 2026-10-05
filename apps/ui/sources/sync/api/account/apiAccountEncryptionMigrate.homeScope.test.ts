@@ -8,7 +8,7 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
-import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { fetchArtifacts } from '@/sync/api/artifacts/apiArtifacts';
 import { AccountEncryptionMigrateRequestSchema, migrateAccountEncryptionMode } from './apiAccountEncryptionMigrate';
 import { captureAccountSettingsRequest } from './accountSettingsRequest';
@@ -30,7 +30,7 @@ const migration = AccountEncryptionMigrateRequestSchema.parse({
     pets: { action: 'assert_empty' },
 });
 const success = { success: true, mode: 'plain', accountVersion: 4, settingsVersion: 1 };
-const http = vi.fn<typeof fetch>();
+const http = vi.fn<RuntimeFetch>();
 let sequence = 0;
 
 async function activateHome(name: string) {

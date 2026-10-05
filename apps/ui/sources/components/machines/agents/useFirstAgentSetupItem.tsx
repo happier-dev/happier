@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useRouter } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { useMachineAgents } from '@/agents/machineAgents/useMachineAgents';
 import { useHomeSetupDismissals } from '@/components/hub/layout/useHomeSetupDismissals';

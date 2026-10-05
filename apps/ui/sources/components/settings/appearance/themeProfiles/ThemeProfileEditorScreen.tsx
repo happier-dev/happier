@@ -18,7 +18,7 @@ import { useApplyThemeSelection } from '@/components/settings/appearance/useAppl
 import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { Modal } from '@/modal';
-import { useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { storage, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
 import { createThemeProfileDraft, resetThemeProfileDraftMode, resetThemeProfileDraftToken, updateThemeProfileDraftColor } from '@/theme/profiles/createThemeProfileDraft';
@@ -65,6 +65,7 @@ const groupTitleKeys = {
     syntax: 'settingsAppearance.themeProfiles.groups.syntax',
     versionControl: 'settingsAppearance.themeProfiles.groups.versionControl',
     diff: 'settingsAppearance.themeProfiles.groups.diff',
+    find: 'settingsAppearance.themeProfiles.groups.find',
     permission: 'settingsAppearance.themeProfiles.groups.permission',
     overlay: 'settingsAppearance.themeProfiles.groups.overlay',
 } as const;
@@ -104,7 +105,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const router = useRouter();
     const params = useLocalSearchParams();
     const reduceMotion = useReducedMotionPreference();
-    const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
+    const [themePreference] = useLocalSettingMutable('themePreference');
     const [themeProfiles, setThemeProfiles] = useLocalSettingMutable('themeProfiles');
     const profileId = getProfileIdParam(params.profileId);
     const isNewProfile = profileId === createNewProfileRouteId;
@@ -251,24 +252,23 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const saveAndActivate = React.useCallback(async () => {
         if (!draft || readonly || saveDisabled) return;
         committedRef.current = true;
-        const nextThemeProfiles = setActiveThemeProfileForMode(upsertThemeProfile(themeProfiles, draft), assetAppearance, draft.id);
         await activateThemeProfileFromSettingsScreen({
             profileId: draft.id,
             profileMode: assetAppearance,
-            themePreference,
-            themeProfiles: nextThemeProfiles,
-            setThemeProfiles,
+            readLocalSettings: () => storage.getState().localSettings,
+            profile: draft,
+            writeLocalSettings: delta => storage.getState().applyLocalSettings(delta),
             forceAnimate: true,
             reduceMotion,
         });
-    }, [assetAppearance, draft, readonly, reduceMotion, saveDisabled, setThemeProfiles, themePreference, themeProfiles]);
+    }, [assetAppearance, draft, readonly, reduceMotion, saveDisabled]);
 
     const applyThemeSelection = useApplyThemeSelection();
     const deactivate = React.useCallback(async () => {
         committedRef.current = true;
         if (!draft) return;
         // Returning a mode to its default goes through the one theme-selection owner.
-        applyThemeSelection(themePreference, clearActiveThemeProfileReferences(themeProfiles, draft.id));
+        await applyThemeSelection(themePreference, clearActiveThemeProfileReferences(themeProfiles, draft.id));
         router.back();
     }, [applyThemeSelection, draft, router, themePreference, themeProfiles]);
 
@@ -291,7 +291,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         const nextThemeProfiles = removeThemeProfile(themeProfiles, draft.id);
         if (assignedSlots.length > 0) {
             // The canonical selection owner stores and applies the fallback (theme, status bar, transition).
-            applyThemeSelection(themePreference, nextThemeProfiles);
+            await applyThemeSelection(themePreference, nextThemeProfiles);
         } else {
             setThemeProfiles(nextThemeProfiles);
         }

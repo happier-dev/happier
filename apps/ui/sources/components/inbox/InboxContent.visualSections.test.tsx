@@ -234,12 +234,13 @@ describe('InboxContent grouped by work root (ORC R-10, lab inbox-I1)', () => {
             .findAll((node) => typeof node.props.testID === 'string' && node.props.selected === true)
             .map((node) => String(node.props.testID))));
 
-        const runRoute = createInboxItemRoute({ kind: 'workflow_run', id: 'library-run' });
+        const runRoute = createInboxItemRoute({ kind: 'workflow_run', serverId: 'server-a', id: 'library-run' });
         expect(runRoute.pathname).toBe('/inbox');
-        const run = await renderScreen(<InboxContent model={createModel()} focusedItem={readInboxItemFocus(runRoute.params.item)} />);
+        const model = createModel();
+        const run = await renderScreen(<InboxContent model={{ ...model, workflowAttention: { ...model.workflowAttention, serverId: 'server-a' } }} focusedItem={readInboxItemFocus(runRoute.params.item)} />);
         expect(selectedRows(run.tree as never)).toEqual(['inbox.run.library-run']);
 
-        const sessionRoute = createInboxItemRoute({ kind: 'session', id: 'stalled-worker' });
+        const sessionRoute = createInboxItemRoute({ kind: 'session', serverId: 'server-a', id: 'stalled-worker' });
         const session = await renderScreen(<InboxContent model={createModel()} focusedItem={readInboxItemFocus([sessionRoute.params.item])} />);
         expect(selectedRows(session.tree as never)).toEqual(['inbox.stalled.stalled-worker']);
 

@@ -1,3 +1,7 @@
+import { promptPickerTranslations } from './promptPickerTranslations';
+import { pendingNavigationTranslations } from './pendingNavigationTranslations';
+import { fileContentSearchTranslations } from './fileContentSearchTranslations';
+import { voiceSettingsPagesTranslations } from './voiceSettingsPagesTranslations';
 import { folderlessSessionTranslations } from './folderlessSessionTranslations';
 import { sessionMessageAccountActorTranslations } from './sessionMessageAccountActorTranslations';
 import { sessionAccessTranslations } from './sessionAccessTranslations';
@@ -33,6 +37,7 @@ import { pluginSettingsPresentationTranslations } from './pluginSettingsPresenta
 import { sessionRemotePermissionGrantTranslations } from './sessionRemotePermissionGrantTranslations';
 import { sessionAgentActivityTranslations } from './sessionAgentActivityTranslations';
 import { sessionWorkTranslations } from './sessionWorkTranslations';
+import { entityDragDropTranslations } from './entityDragDropTranslations';
 import { agentStartTranslations } from './agentStartTranslations';
 import { goalControlTranslations } from './goalControlTranslations';
 import { inboxWorkTranslations } from './inboxWorkTranslations';
@@ -43,6 +48,7 @@ import { sessionGitPullRequestTranslations } from './sessionGitPullRequestTransl
 import { sessionConversationSurfaceTranslations } from './sessionConversationSurfaceTranslations';
 import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
 import { turnChangesTranslations } from './turnChangesTranslations';
+import { committedMessageActionTranslations } from './committedMessageActionTranslations';
 import { scmComparisonTranslations } from './scmComparisonTranslations';
 import { walkthroughTranslations } from './walkthroughTranslations';
 import { walkthroughStartTranslations } from './walkthroughStartTranslations';
@@ -83,6 +89,8 @@ import { actionConfirmationTranslations } from './actionConfirmationTranslations
 import { detailPageTranslations } from './detailPageTranslations';
 import { rolesTranslations } from './rolesTranslations';
 import { boardsTranslations } from './boardsTranslations';
+import { findTranslations } from './findTranslations';
+import { transcriptFindTranslations } from './transcriptFindTranslations';
 import { artifactsBrowserTranslations } from './artifactsBrowserTranslations';
 import { workStatusTranslations } from './workStatusTranslations';
 import { shareSheetTranslations } from './shareSheetTranslations';
@@ -104,11 +112,16 @@ import { personalHomeSettingsTranslations } from './personalHomeSettingsTranslat
 import { homeDeviceApprovalTranslations } from './homeDeviceApprovalTranslations';
 import { settingsOverviewTranslations } from './settingsOverviewTranslations';
 import { homeSetupTranslations } from './homeSetupTranslations';
+import { personalizeTranslations } from './personalizeTranslations';
 import { connectedServicesSetupTranslations } from './connectedServicesSetupTranslations';
 import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
+import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
+import { voicePresenceTranslations } from './voicePresenceTranslations';
+import { voiceMomentsTranslations } from './voiceMomentsTranslations';
 import { homeIndexTranslations } from './homeIndexTranslations';
 import { addFlowsTranslations } from './addFlowsTranslations';
 import { machineAddTranslations } from './machineAddTranslations';
@@ -276,6 +289,7 @@ const newSessionMcpTranslationExtension = {
 } as const;
 
 const settingsAppearanceTranslationExtension = {
+  glassControls: glassAppearanceTranslations['zh-Hans'],
   switchToDarkTheme: '切换到深色主题',
   switchToLightTheme: '切换到浅色主题',
   themeToggle: {
@@ -437,6 +451,7 @@ const settingsAppearanceTranslationExtension = {
       syntax: '语法',
       versionControl: '版本控制',
       diff: '差异',
+      find: '查找匹配项',
       permission: '权限',
       overlay: '叠加层',
     },
@@ -794,11 +809,16 @@ export const zhHans = {
     homeDeviceApproval: homeDeviceApprovalTranslations['zh-Hans'],
     settingsOverview: settingsOverviewTranslations['zh-Hans'],
     homeSetup: homeSetupTranslations['zh-Hans'],
+    personalize: personalizeTranslations['zh-Hans'],
     connectedServicesSetup: connectedServicesSetupTranslations['zh-Hans'],
     homeWidgets: homeWidgetTranslations['zh-Hans'],
     widgetFrame: widgetFrameTranslations['zh-Hans'],
+    inputPicker: inputPickerTranslations['zh-Hans'],
     widgetAdd: widgetAddTranslations['zh-Hans'],
+    widgetDefinition: widgetDefinitionTranslations['zh-Hans'],
     widgetGlances: widgetGlanceTranslations['zh-Hans'],
+    voicePresence: voicePresenceTranslations['zh-Hans'],
+    voiceMoments: voiceMomentsTranslations['zh-Hans'],
     homeIndex: homeIndexTranslations['zh-Hans'],
     addFlows: addFlowsTranslations['zh-Hans'],
     machineAdd: machineAddTranslations['zh-Hans'],
@@ -814,6 +834,8 @@ export const zhHans = {
     detailPages: detailPageTranslations['zh-Hans'],
     roles: rolesTranslations['zh-Hans'],
     boards: boardsTranslations.zhHans,
+    find: findTranslations.zhHans,
+    transcriptFind: transcriptFindTranslations['zh-Hans'],
     workStatus: workStatusTranslations.zhHans,
     shareSheet: shareSheetTranslations['zh-Hans'],
     surfaceState: surfaceStateTranslations['zh-Hans'],
@@ -827,6 +849,7 @@ export const zhHans = {
     },
     workspaceSync: workspaceSyncTranslations['zh-Hans'],
     sessionDrafts: sessionDraftTranslations.zhHans,
+    pendingNavigation: pendingNavigationTranslations.zhHans,
     sessionDirectoryRecovery: sessionDirectoryRecoveryTranslations['zh-Hans'],
     transferRecovery: {
         title: '完成暂存上传',
@@ -841,6 +864,7 @@ export const zhHans = {
     sessionBoard: sessionBoardTranslations['zh-Hans'],
     sessionAgentActivity: sessionAgentActivityTranslations.zhHans,
     sessionWork: sessionWorkTranslations.zhHans,
+    entityDragDrop: entityDragDropTranslations.zhHans,
     agentStart: agentStartTranslations.zhHans,
     goalControl: goalControlTranslations.zhHans,
     sessionGitPane: sessionGitPaneTranslations.zhHans,
@@ -850,6 +874,7 @@ export const zhHans = {
     sessionConversation: sessionConversationSurfaceTranslations.zhHans,
     ...changedFileEvidenceTranslations['zh-Hans'],
     ...turnChangesTranslations['zh-Hans'],
+    ...committedMessageActionTranslations['zh-Hans'],
     ...scmComparisonTranslations['zh-Hans'],
     ...walkthroughTranslations['zh-Hans'],
     ...walkthroughStartTranslations['zh-Hans'],
@@ -922,13 +947,19 @@ export const zhHans = {
         setShortcutInvalidMessage: '输入至少一个非修饰键，可以选择使用 Mod、Ctrl、Shift 或 Alt。',
         resetCommandAccessibility: ({ command }: { command: string }) => `Reset ${command} shortcut`,
         commands: {
+            findOpen: transcriptFindTranslations['zh-Hans'].findOpen,
+            findNext: transcriptFindTranslations['zh-Hans'].findNext,
+            findPrevious: transcriptFindTranslations['zh-Hans'].findPrevious,
             ...workspaceTabKeyboardTranslations,
             ...terminalWorkspaceKeyboardTranslations,
             composerAbortConfirm: '确认中止',
             composerFocus: '聚焦输入框',
+            composerPromptsOpen: promptPickerTranslations['zh-Hans'].open,
+            voiceToggle: '开始或结束语音会话',
             composerSendImmediate: '立即发送',
             composerSendPending: '发送到待处理队列',
             commandPaletteOpen: '打开搜索',
+            searchTextInFiles: fileContentSearchTranslations["zh-Hans"].textInFiles,
             browserAddressFocus: '聚焦浏览器地址栏',
             browserBack: '浏览器后退',
             browserForward: '浏览器前进',
@@ -937,6 +968,7 @@ export const zhHans = {
             shortcutsHelpOpen: '打开快捷键帮助',
             sessionNew: '创建新会话',
             sessionMruNext: '下一个最近会话',
+            sessionPendingNext: '下一个待处理请求',
             sessionMruPrevious: '上一个最近会话',
             sessionVisibleNext: '下一个可见会话',
             sessionVisiblePrevious: '上一个可见会话',
@@ -1105,6 +1137,7 @@ export const zhHans = {
     stopWaiting: "停止等待",
     loadError: "加载审批失败。",
     decisionError: "更新审批失败。",
+    decisionAuthorityError: "此登录方式无法批准请求。请使用账户恢复密钥登录此 Home，或在已登录账户的另一台设备上批准。",
     unsafeDetailsTitle: "这些详情无法安全显示",
     unsafeDetailsBody: "Happier 无法完全按照发送的内容显示此请求，因此无法批准。请拒绝该请求，或请求方重新发送。",
     approveUnavailableHint: "在这些详情无法安全显示期间，无法批准。",
@@ -1736,7 +1769,10 @@ export const zhHans = {
   },
 
   common: {
+        decrease: "减少",
+        increase: "增加",
     // Simple string constants
+    search: '搜索',
     add: "添加",
     edit: "编辑",
     change: "更改",
@@ -1749,6 +1785,10 @@ export const zhHans = {
     decline: "拒绝",
     submit: "提交",
     close: "关闭",
+    minimizeWindow: "最小化窗口",
+    maximizeWindow: "最大化窗口",
+    restoreWindow: "还原窗口",
+    closeWindow: "关闭窗口",
     dismissKeyboard: '收起键盘',
     open: "打开",
     authenticate: "认证",
@@ -1867,6 +1907,7 @@ export const zhHans = {
     pluginUi: {
       loading: "正在加载",
       empty: "暂无可显示内容",
+      collectionEmpty: '无',
       error: "出错了",
       moreActions: "更多操作",
     },
@@ -2632,7 +2673,7 @@ export const zhHans = {
     systemTaskStartFailed: "无法启动系统任务。",
     appearance: "外观",
     appearanceSubtitle: "自定义应用外观",
-    voiceAssistant: "语音助手",
+    voiceAssistant: "语音",
     voiceAssistantSubtitle: "与你的智能体对话，并向输入框口述文字。",
     memorySearch: "本地记忆搜索",
     memorySearchSubtitle: "在设备本地搜索过往对话",
@@ -7162,6 +7203,7 @@ export const zhHans = {
   },
 
     universalSearch: {
+        content: fileContentSearchTranslations["zh-Hans"],
         scopeFilterLabel: 'Home',
         commitsUpdateRequired: '请更新此机器上的 Happier 以搜索提交。',
     moreResultsAvailable: '还有更多结果。请缩小搜索范围。',
@@ -7176,7 +7218,7 @@ export const zhHans = {
   },
 
   commandPalette: {
-    placeholder: "输入命令或搜索...",
+    placeholder: fileContentSearchTranslations["zh-Hans"].placeholder,
     noCommandsFound: "未找到命令",
     activationFailed: "无法完成该命令。",
         shortcutsHelpTitle: '键盘快捷键',
@@ -7259,9 +7301,10 @@ export const zhHans = {
     thinking: "正在思考…",
     speaking: "正在说话",
     microphonePermissionRequired: "需要麦克风权限",
+    microphoneBlocked: "麦克风被阻止",
     interrupted: "已打断",
     active: "语音助手已启用",
-    connectionError: "连接错误",
+    connectionError: "无法连接",
     label: "语音助手",
     tapToEnd: "点击结束",
     startDictation: "开始听写",
@@ -7913,6 +7956,7 @@ export const zhHans = {
   },
 
   agentInput: {
+      promptPicker: promptPickerTranslations['zh-Hans'],
       chipPicker: {
           selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}。已选择。`,
       },
@@ -10486,9 +10530,9 @@ settingsSession: {
       },
       messageActions: {
         groupTitle: '消息操作',
-        groupFooter: '配置转录中的消息选择和转发操作。',
+        groupFooter: '选择每条消息下显示哪些操作。关闭的操作会从操作行和长按菜单中移除。',
         selectionEnabled: {
-          title: '启用消息选择',
+          title: '选择',
           subtitle: '在消息下方显示选择图标，以便批量复制或转发',
         },
         sendToSessionEnabled: {
@@ -10810,6 +10854,7 @@ settingsSession: {
     consoleSubtitle: "在标准的 Windows 控制台窗口中打开会话。",
   },
   settingsVoice: {
+    ...voiceSettingsPagesTranslations['zh-Hans'],
     ...voiceDiagnosticsTranslations['zh-Hans'],
     intents: {
       dictation: { title: '听写', subtitle: '将一次口述转换为输入框中的文本。' },
@@ -10823,7 +10868,7 @@ settingsSession: {
       sectionFooter: '查看或删除无目标和全局语音对话的转录。',
       pageDescription: '来自全局语音以及在会话之外开始的对话的转写。',
       entryTitle: '语音历史',
-      entrySubtitle: '搜索、导出或清除已保存的独立语音转录。',
+      entrySubtitle: "搜索、导出或清除过去的语音对话。",
       searchTitle: '搜索已加载的历史',
       searchFooter: '搜索仅使用已在此设备上解密的语音消息。',
       searchPlaceholder: '搜索转录或提供商',
@@ -10839,15 +10884,15 @@ settingsSession: {
       loadOlderFooter: '更早的消息会保留在服务器上，直到你加载或清除它们。',
       loadingOlder: '正在加载更早的消息…',
       loadOlderFailed: '无法加载更早的语音历史。',
-      exportTitle: '导出语音历史',
+      exportTitle: "导出语音历史",
       exportSubtitle: '加载剩余历史并保存为 JSON。',
       exporting: '正在准备导出…',
       exportSucceeded: '语音历史导出已准备好。',
       exportFailed: '无法导出语音历史。',
-      clearTitle: '清除语音历史',
+      clearTitle: "清除语音历史",
       clearSubtitle: '删除此账户的全部独立语音历史。',
       clearing: '正在清除语音历史…',
-      clearConfirmTitle: '清除语音历史？',
+      clearConfirmTitle: "清除语音历史？",
       clearConfirmBody: '这会永久删除此账户的全部独立语音历史，且无法撤销。',
       clearConfirmAction: '清除历史',
       clearSucceeded: '语音历史已清除。',
@@ -10899,17 +10944,17 @@ settingsSession: {
       "配置语音功能。您可以完全关闭语音、使用 Happier Voice（需要订阅），或使用您自己的 ElevenLabs 账号。",
     mode: {
       off: "关闭",
-      offSubtitle: "关闭所有语音功能",
-      happier: "Happier Voice",
+      offSubtitle: "语音会话已关闭。听写仍可使用。",
+      happier: "Happier",
       happierSubtitle: "使用 Happier Voice（需要订阅）",
       local: "本地 OSS 语音",
       localSubtitle: "使用本地 OpenAI 兼容的 STT/TTS 端点",
-      byo: "使用我的 ElevenLabs",
+      byo: "我的 ElevenLabs 账户",
       byoSubtitle: "使用您自己的 ElevenLabs API 密钥和代理",
       openaiRealtime: "OpenAI Realtime",
       openaiRealtimeSubtitle: "使用已保存的 API 密钥或显式选择的 OpenAI 账户",
-      grokRealtime: "Grok Voice · BYOK",
-      grokRealtimeSubtitle: "使用您自己的 xAI API 密钥进行实时语音",
+      grokRealtime: "Grok Voice",
+      grokRealtimeSubtitle: "使用你的 xAI API 密钥",
     },
     realtimeProviders: {
       ...voiceProviderPrivacyTranslations['zh-Hans'],
@@ -10933,6 +10978,13 @@ settingsSession: {
       activityFeedEnabledSubtitle: "使用语音时显示最近的语音事件",
       activityFeedAutoExpandOnStart: "开始时自动展开",
       activityFeedAutoExpandOnStartSubtitle: "语音开始时自动展开活动流",
+      presenceContainer: {
+          title: "语音位置",
+          subtitle: "选择语音在此设备上的显示位置。",
+          topBar: "顶部栏",
+          island: "浮岛",
+          orb: "悬浮球",
+      },
       orbEnabled: "悬浮语音球",
       orbEnabledSubtitle: "在此设备上显示可拖动的语音伙伴。关闭后仍可从侧栏和输入框使用语音。",
       scopeTitle: "默认语音范围",
@@ -10985,7 +11037,7 @@ settingsSession: {
       },
     },
     byo: {
-      title: "使用我的 ElevenLabs",
+      title: "我的 ElevenLabs 账户",
 	      agentReuseDialog: {
 	        title: "已存在 Happier 代理",
 	        messageWithId: ({ name, id }: { name: string; id: string }) =>
@@ -11376,8 +11428,8 @@ settingsSession: {
         },
 
         provider: {
-          title: "本地神经（测试版）",
-          subtitle: "Web 上使用 daemon 支持的 STT，在受支持环境下可选用原生 Sherpa 流式包。",
+          title: "Happier 语音模型",
+          subtitle: "在你的电脑上运行，音频留在你这里。",
           detail: "Sherpa 引擎",
         },},
       executionMachine: {
@@ -11386,7 +11438,7 @@ settingsSession: {
         title: "执行机器",
         fallbackSubtitle: "选择用于本地语音的机器。",
         autoTitle: "自动",
-        autoSubtitle: "根据最近的活动选择可用机器。",
+        autoSubtitle: "为此账户选择一次机器并继续使用它。如果机器离线，请明确选择另一台。",
         onlineLabel: "在线",
         offlineLabel: "离线",
         unknownMachineLabel: "未知机器",
@@ -11401,14 +11453,14 @@ settingsSession: {
         },
         handsFree: {
           title: "免提",
-          enableTitle: "启用免提",
-          silenceTitle: "静默超时（毫秒）",
-          minSpeechTitle: "最短语音（毫秒）",
+          enableTitle: "免提",
+          silenceTitle: "回答前的停顿",
+          minSpeechTitle: "忽略短于此时长的声音",
         },
         customBackendIdSubtitle: "输入自定义后端 ID。",
         searchBackendsPlaceholder: "搜索后端",
         searchModelsPlaceholder: "搜索模型",
-        machineAutoSubtitle: "根据最近使用情况自动选择机器。",
+        machineAutoSubtitle: "为此账户选择一次机器并继续使用它。如果机器离线，请明确选择另一台。",
         rootSessionPolicy: {
           title: "根会话策略",
           fallbackSubtitle: "请选择策略。",
@@ -11443,10 +11495,10 @@ settingsSession: {
           fallbackSubtitle: "选择语音代理运行的位置。",
           stayInVoiceHomeTitle: "停留在 voice home",
           stayInVoiceHomeEnabledSubtitle:
-            "让代理保持在 voice home 机器上运行。",
-          stayInVoiceHomeDisabledSubtitle: "允许代理跟随会话机器。",
+            "让代理留在语音主目录文件夹。",
+          stayInVoiceHomeDisabledSubtitle: "允许代理使用会话的项目文件夹。",
           allowTeleportTitle: "允许传送",
-          teleportEnabledSubtitle: "需要时允许将代理迁移到其他机器。",
+          teleportEnabledSubtitle: "允许代理切换到工作会话的项目文件夹。",
           teleportDisabledSubtitle: "已禁用传送。",
         },
         machineRecovery: {
@@ -11560,9 +11612,9 @@ settingsSession: {
       mediatorVerbosityShort: "简短",
       mediatorVerbosityBalanced: "均衡",
       mediatorIdleTtl: "中介空闲 TTL",
-      mediatorIdleTtlSubtitle: "空闲后自动停止（60–3600 秒）",
-      mediatorIdleTtlDescription: "请输入 60 到 3600 之间的数字。",
-      mediatorIdleTtlInvalid: "请输入 60 到 3600 之间的数字。",
+      mediatorIdleTtlSubtitle: "空闲后自动停止（60–21600 秒）",
+      mediatorIdleTtlDescription: "请输入 60 到 21600 之间的数字。",
+      mediatorIdleTtlInvalid: "请输入 60 到 21600 之间的数字。",
       mediatorChatModelSource: "中介模型来源（聊天）",
       mediatorChatModelSourceSubtitle: "使用会话模型，或自定义快速模型",
       mediatorChatModelSourceSession: "会话模型",
@@ -11613,9 +11665,9 @@ settingsSession: {
       sttModelSubtitle: "转写请求中发送的模型名称",
       sttModelTitle: "STT 模型",
       sttModelDescription: "发送给 STT 服务器的模型名称（OpenAI 兼容字段）。",
-      deviceStt: "设备 STT（实验）",
+      deviceStt: "此设备的语音识别",
       deviceSttSubtitle:
-        "使用设备端语音识别，而不是 OpenAI 兼容端点",
+        "快速且免费。你的设备或浏览器可能会把音频发送给其厂商进行识别。",
       sttProvider: "STT 提供方",
       neuralStt: {
         title: "设备端 STT",
@@ -11816,9 +11868,9 @@ settingsSession: {
     },
     languageTitle: "语言",
     languageDescription:
-      "选择您希望语音助手交互使用的语言。此设置将在您的所有设备间同步。",
-    preferredLanguage: "首选语言",
-    preferredLanguageSubtitle: "语音助手响应使用的语言",
+      "选择语音服务支持的语言。部分服务使用同一种语言进行识别和回复。",
+    preferredLanguage: "回复语言",
+    preferredLanguageSubtitle: "服务支持时使用的首选回复语言",
     language: {
       searchPlaceholder: "搜索语言...",
       title: "语言",
@@ -11837,6 +11889,7 @@ settingsSession: {
   },
 
   settingsAccount: {
+      ...accountEncryptionRecoveryTranslations['zh-Hans'],
     providerCatalogUnavailable: '无法检查可用的登录连接。',
     security: "登录与安全",
     securityPageDescription: "此 Home 的登录方式、恢复、会话和加密。",
@@ -12099,7 +12152,10 @@ settingsSession: {
     },
     defaultTitle: "新功能",
     onboardingShowcase: {
-        details: PRODUCT_STORY_DETAILS_ENGLISH,
+        details: {
+            ...PRODUCT_STORY_DETAILS_ENGLISH,
+            voice: { ...PRODUCT_STORY_DETAILS_ENGLISH.voice, body: "询问会话情况并讨论下一步修改。权限请求仍需你点按批准。" },
+        },
                 "title": "欢迎使用 Happier",
                 "subtitle": "你的 AI 代理，覆盖每一个工作场景。",
                 "cards": {
@@ -12112,7 +12168,7 @@ settingsSession: {
                         "existingTitle": "已有会话，已经在那里",
                         "existingBody": "任何在你机器上运行的 Claude、Codex 或 OpenCode 会话，都可以在 Happier 中实时打开。",
                         "voiceTitle": "可以一起头脑风暴的语音助手",
-                        "voiceBody": "询问代理正在做什么，批准权限请求，并发送消息。全程免手动。",
+                        "voiceBody": "询问代理的工作情况并通过语音发送消息。权限请求需要点按批准。",
                         "reviewTitle": "审查 diff 并留下评论",
                         "reviewBody": "在文件或 diff 的具体行上做标记，选择要发送的备注，并直接交给代理。",
                         "subagentsTitle": "跨 provider 的 subagents",
@@ -12174,7 +12230,7 @@ settingsSession: {
                     "voiceAssistant": {
                         "title": "一个可以交谈的同事",
                         "wideTitle": "语音助手：一个可以交谈的同事",
-                        "body": "语音助手会监控所有正在运行的会话。一起头脑风暴下一步修改、批准权限，还有更多，全程免手动。",
+                        "body": "询问会话情况并讨论下一步修改。权限请求仍需你点按批准。",
                         "alt": "语音助手的抽象占位图。"
                     },
                     "reviewComments": {
@@ -14380,6 +14436,24 @@ settingsSession: {
     browseActivityUnknown: "未知",
         browseSearchPlaceholder: "搜索已加载的会话…",
         browseSearchAgentPlaceholder: ({ agent }: { agent: string }) => `搜索 ${agent} 会话…`,
+        browseTitles: "标题",
+        browseConversations: "对话",
+        browseSearchTarget: "搜索范围",
+        browseContentPlaceholder: "搜索对话文本…",
+        browseContentSearchPrompt: "输入短语，然后搜索对话。",
+        browseContentSubmit: "搜索",
+        browseContentUpdateRequired: ({ machine }: { machine: string }) => `请更新 ${machine} 上的 Happier 以搜索对话。`,
+        browseContentPartial: "部分对话无法搜索。",
+        browseContentNotSearchable: "无法搜索",
+        browseContentStopped: "搜索已停止。结果不完整。",
+        browseContentPaletteSearch: ({ query }: { query: string }) => `在 Claude Code 和 Codex 对话中搜索“${query}”`,
+        browseContentOnMachine: ({ machine }: { machine: string }) => `${machine} 上的对话`,
+        browseContentOpen: "在 Happier 中打开",
+        browseContentShow: "在外部会话中显示",
+        browseContentPreviewOpens: ({ query }: { query: string }) => `在此消息处打开对话，并查找“${query}”。`,
+        browseContentPreviewEmpty: "匹配的消息会显示在这里。",
+        browseContentMore: "搜索更多对话",
+        browseContentBack: "返回搜索",
         browseNoSearchResults: "当前没有已加载的会话匹配此搜索。",
     browseIndexing: "正在为外部会话建立索引…",
     browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `已索引 ${scanned}/${total} 个会话`,
@@ -14456,3 +14530,5 @@ settingsSession: {
         },
   },} as const;
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
+import { accountEncryptionRecoveryTranslations } from './accountEncryptionRecoveryTranslations';
+import { glassAppearanceTranslations } from './glassAppearanceTranslations';

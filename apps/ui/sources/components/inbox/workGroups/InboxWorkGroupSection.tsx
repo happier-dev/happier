@@ -124,7 +124,7 @@ export const InboxWorkGroupSection = React.memo(function InboxWorkGroupSection(p
                     presentation={props.presentation}
                     navigate={props.navigate}
                     onBeforeNavigate={props.onBeforeNavigate}
-                    focused={isFocusedInboxWorkItem(item, props.focusedItem ?? null)}
+                    focused={isFocusedInboxWorkItem(item, props.focusedItem ?? null, props.model.workflowAttention.serverId)}
                 />
             ))}
             {props.extra}

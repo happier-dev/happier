@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { MeterBar } from '@/components/ui/lists/MeterBar';
-import { Text } from '@/components/ui/text/Text';
+import { ToolFindText } from '@/components/tools/renderers/core/ToolFindText';
 import { t } from '@/text';
 import {
     resolveWorkflowMeterTone,
@@ -14,6 +14,7 @@ import type { SessionWorkflowRunStatusV1 } from '@happier-dev/protocol';
 
 import { WorkflowStatusIcon } from './workflowStatusIcon';
 import { Icon } from '@/components/ui/icons/Icon';
+import { toolTextBlock } from '@/components/tools/renderers/core/toolDisplayTextTypes';
 
 /**
  * Run header shared by the transcript card (UIW4) and popover run panel (UIW3): workflow icon,
@@ -31,7 +32,22 @@ export type WorkflowRunHeaderProps = Readonly<{
     summaryLine?: string;
     /** Present only when the header is acting as a collapsible control. */
     expanded?: boolean;
+    messageId?: string;
 }>;
+
+function resolveSummary(props: WorkflowRunHeaderProps): string | undefined {
+    return props.summaryLine ?? (props.totalAgents > 0
+        ? t('tools.workflowActivityView.agentFraction', { complete: props.completedAgents, total: props.totalAgents })
+        : undefined);
+}
+
+export function projectWorkflowRunHeaderDisplayText(props: WorkflowRunHeaderProps) {
+    return [
+        ...toolTextBlock('tool-workflow-title', props.title),
+        ...toolTextBlock('tool-workflow-status', props.statusLabel),
+        ...toolTextBlock('tool-workflow-summary', resolveSummary(props)),
+    ];
+}
 
 export const WorkflowRunHeader = React.memo<WorkflowRunHeaderProps>((props) => {
     const { theme } = useUnistyles();
@@ -42,14 +58,10 @@ export const WorkflowRunHeader = React.memo<WorkflowRunHeaderProps>((props) => {
         <View style={styles.container}>
             <View style={styles.headerRow}>
                 <Icon name="graph" size={16} color={theme.colors.text.secondary} />
-                <Text style={styles.title} numberOfLines={1}>
-                    {props.title}
-                </Text>
+                <ToolFindText messageId={props.messageId} blockId="tool-workflow-title" text={props.title} style={styles.title} numberOfLines={1} />
                 <View style={styles.statusBadge}>
                     <WorkflowStatusIcon status={props.status} size={14} />
-                    <Text style={styles.statusLabel} numberOfLines={1}>
-                        {props.statusLabel}
-                    </Text>
+                    <ToolFindText messageId={props.messageId} blockId="tool-workflow-status" text={props.statusLabel} style={styles.statusLabel} numberOfLines={1} />
                 </View>
                 {typeof props.expanded === 'boolean' ? (
                     <Icon
@@ -65,19 +77,11 @@ export const WorkflowRunHeader = React.memo<WorkflowRunHeaderProps>((props) => {
                     fillFraction={fraction}
                     height={4}
                     caption={
-                        <Text style={styles.summary} numberOfLines={1}>
-                            {props.summaryLine
-                                ?? t('tools.workflowActivityView.agentFraction', {
-                                    complete: props.completedAgents,
-                                    total: props.totalAgents,
-                                })}
-                        </Text>
+                        <ToolFindText messageId={props.messageId} blockId="tool-workflow-summary" text={resolveSummary(props) ?? ''} style={styles.summary} numberOfLines={1} />
                     }
                 />
             ) : props.summaryLine ? (
-                <Text style={styles.summary} numberOfLines={1}>
-                    {props.summaryLine}
-                </Text>
+                <ToolFindText messageId={props.messageId} blockId="tool-workflow-summary" text={props.summaryLine} style={styles.summary} numberOfLines={1} />
             ) : null}
         </View>
     );

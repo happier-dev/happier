@@ -23,7 +23,8 @@ import { MachineAdministrationTargetSelector } from '@/components/settings/machi
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkTile, PageHeaderMenu, PageHeaderStateSwitch, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu, PageHeaderStateSwitch, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
@@ -261,6 +262,7 @@ const ProfileDetail = React.memo(function ProfileDetail(props: Readonly<{
             kind: 'launch-profile.v1',
             artifactId,
             name: profile.name,
+            subtitle: `${t('roles.settings.launchProfileTitle')} · ${t(isBuiltInLaunchProfile(profile) ? 'profiles.builtIn' : 'profiles.custom')}`,
             linkPath: profileRoute(profile.id),
             onSendCopy: () => { void sendLaunchProfileCopy(artifactId); },
         });
@@ -419,9 +421,9 @@ const ProfileDetailHeader = React.memo(function ProfileDetailHeader(props: Reado
             description={props.builtIn ? t('profilesPage.builtInDetailDescription') : t('profilesPage.detailDescription')}
             meta={props.isDraft ? undefined : meta}
             leading={(
-                <PageHeaderMarkTile>
+                <PageHeaderMarkSlot>
                     <ProfileCompatibilityIcon profile={legacy} backendEntries={model.resolvedBackendEntries} size={28} />
-                </PageHeaderMarkTile>
+                </PageHeaderMarkSlot>
             )}
             actions={(
                 <View style={styles.actions}>

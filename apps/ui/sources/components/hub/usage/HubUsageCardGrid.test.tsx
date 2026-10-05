@@ -33,14 +33,16 @@ describe('HubUsageCardGrid identity privacy', () => {
         expect(entry.legacyServiceId).toBe('novel-service');
     });
 
-    it('keeps each card reading time separate from the aggregate summary', async () => {
+    it('leaves freshness to the Usage section header instead of repeating it on each card', async () => {
         const entries = [
             { key: 'claude/work', fetchedAt: 1_000, serviceLabel: 'Claude', profileLabel: 'Work', planLabel: null, meters: [] },
             { key: 'claude/personal', fetchedAt: 5_000, serviceLabel: 'Claude', profileLabel: 'Personal', planLabel: null, meters: [] },
         ] satisfies UsageSummaryEntry[];
         const screen = await renderScreen(<HubUsageCardGrid entries={entries} />);
         const { SurfaceAsOfLabel } = await import('@/components/ui/surfaces/SurfaceAsOfLabel');
-        expect(screen.findAllByType(SurfaceAsOfLabel).map((label) => label.props.at)).toEqual([1_000, 5_000]);
+        expect(screen.findAllByType(SurfaceAsOfLabel)).toHaveLength(0);
+        expect(screen.findByTestId('hub-usage.claude/work')).toBeTruthy();
+        expect(screen.findByTestId('hub-usage.claude/personal')).toBeTruthy();
     });
 
     it('updates mounted cards from the device setting, masking emails and ids while preserving account names and meters', async () => {

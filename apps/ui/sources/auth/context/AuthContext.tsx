@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { getCurrentAuth, setCurrentAuth } from './currentAuth';
+export { getCurrentAuth, setCurrentAuth } from './currentAuth';
 import { readCredentialAuthorityKind, type CredentialAuthorityKind } from './credentialAuthority';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { loadLocalSettings } from '@/sync/domains/state/persistence';
@@ -62,7 +64,7 @@ export type AuthCredentialPersistenceOptions = Readonly<{
         expectedCredentials?: AuthCredentials;
     }>;
 
-interface AuthContextType {
+export interface AuthContextType {
     isAuthenticated: boolean;
     credentials: AuthCredentials | null;
     credentialAuthorityKind: CredentialAuthorityKind;
@@ -456,10 +458,15 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         });
     }, [refreshFromActiveServer]);
 
-    // Secondary Home projections own their credentials and lifecycle. They must
-    // remain reconcilable even when the focused Home is signed out or expired;
-    // the concurrent runtime localizes auth failures per Home. Keep one global
-    // start/stop lifecycle tied to the provider rather than focused auth state.
+    return (
+        <AuthContext.Provider value={value}>
+            {children}
+        </AuthContext.Provider>
+    );
+}
+
+/** Mount after supplied-Home admission, independently of the focused Home's auth. */
+export function ConcurrentSessionCacheRuntime({ children }: { children: ReactNode }) {
     useEffect(() => {
         startConcurrentSessionCacheSync();
         return () => {
@@ -467,11 +474,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         };
     }, []);
 
-    return (
-        <AuthContext.Provider value={value}>
-            {children}
-        </AuthContext.Provider>
-    );
+    return <>{children}</>;
 }
 
 export function useOptionalAuth(): AuthContextType | null {
@@ -484,15 +487,4 @@ export function useAuth() {
         throw new Error('useAuth must be used within an AuthProvider');
     }
     return context;
-}
-
-// Helper to get current auth state for non-React contexts
-let currentAuthState: AuthContextType | null = null;
-
-export function setCurrentAuth(auth: AuthContextType | null) {
-    currentAuthState = auth;
-}
-
-export function getCurrentAuth(): AuthContextType | null {
-    return currentAuthState;
 }

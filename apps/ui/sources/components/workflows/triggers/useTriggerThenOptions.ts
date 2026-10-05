@@ -6,6 +6,7 @@ import {
     useWorkflowLibraryReferenceOptions,
 } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
+export { useWorkflowReferenceDefinition as useTriggerWorkflowDefinition } from '@/components/workflows/presentation/useWorkflowReferenceDefinition';
 
 import { NOTIFY_ME_ACTION_ID } from './sessionTriggerForm';
 import type { TriggerWorkflowOption } from './TriggerPopover';
@@ -18,11 +19,12 @@ const KEEP_GOING_REF = 'builtin:keep-going';
  * library), from the existing reference owners: the built-in catalog the Run-a-workflow step lists
  * and the Account's definition list. Rows read a workflow's name through the same resolver.
  */
-export function useTriggerThenOptions(): Readonly<{
+export function useTriggerThenOptions(options?: Readonly<{ libraryEnabled?: boolean }>): Readonly<{
     workflowOptions: readonly TriggerWorkflowOption[];
     resolveWorkflowTitle: (ref: string) => string | null;
 }> {
-    const libraryOptions = useWorkflowLibraryReferenceOptions();
+    const libraryEnabled = options?.libraryEnabled ?? true;
+    const libraryOptions = useWorkflowLibraryReferenceOptions({ enabled: libraryEnabled });
     const workflowOptions = React.useMemo((): readonly TriggerWorkflowOption[] => [
         ...listBuiltinWorkflowReferenceOptions()
             .filter((option) => option.ref !== KEEP_GOING_REF)

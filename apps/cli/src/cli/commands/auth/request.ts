@@ -53,20 +53,9 @@ export async function handleAuthRequest(args: string[], signal?: AbortSignal): P
   const target = selectedTarget.descriptor
     ? selectedTarget
     : await resolveCliHomeTarget({ kind: 'https_url', url: configuration.apiServerUrl });
-  const acquired = target.descriptor
-    ? await acquireTerminalAuthEnrollmentRuntime(target.descriptor, target.preferredTransport, signal)
-    : {
-        ok: true as const,
-        runtime: {
-          runtimeOrigin: target.applicationUrl,
-          carrier: 'https' as const,
-          authenticatedCredentialDestination: {
-            kind: 'https' as const,
-            applicationUrl: target.applicationUrl,
-          },
-        },
-        close: async () => {},
-      };
+  const acquired = await acquireTerminalAuthEnrollmentRuntime(
+    target.descriptor ?? target, target.preferredTransport, signal,
+  );
   if (!acquired.ok) throw new Error('Unable to acquire the selected Home enrollment carrier');
   try {
     const featuresSnapshot = await fetchServerFeaturesSnapshot({ serverUrl: acquired.runtime.runtimeOrigin, ...(signal ? { signal } : {}) });

@@ -28,6 +28,8 @@ export function WorkflowBlockHeading(props: Readonly<{
     /** The first issue on this block, when it needs repair. */
     issue?: string | null;
     actions: readonly WorkflowBlockAction[];
+    /** Contributed Agent brand or the Action, Workflow or person glyph, never a backing tile. */
+    kindMark?: React.ReactNode;
     /** The heading line's fixed slot for a reader's facts (a state word, an occurrence selector). */
     accessory?: React.ReactNode;
     onSelect: () => void;
@@ -56,6 +58,10 @@ export function WorkflowBlockHeading(props: Readonly<{
                     workflowPressFeedbackStyle(state, theme.colors.border.focus),
                 ]}
             >
+                {props.kindMark === undefined ? null : <View testID={`${props.testID}-kind-mark`}
+                    accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                    {props.kindMark}
+                </View>}
                 <Text numberOfLines={2} style={workflowEditorStyles.headingName}>{props.displayName}</Text>
             </HappierPressable>
             <View style={workflowEditorStyles.headingActions}>

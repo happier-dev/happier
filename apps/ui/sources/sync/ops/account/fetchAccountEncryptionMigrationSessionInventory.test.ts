@@ -13,6 +13,7 @@ function buildSessionRow(params: Readonly<{
     id: string;
     layout?: 0 | 1;
     owner?: boolean;
+    encryptionMode?: 'plain' | 'e2ee';
 }>) {
     const layout = params.layout ?? 1;
     const owner = params.owner ?? true;
@@ -24,7 +25,7 @@ function buildSessionRow(params: Readonly<{
         active: false,
         activeAt: 1,
         archivedAt: null,
-        encryptionMode: 'plain',
+        encryptionMode: params.encryptionMode ?? 'plain',
         metadata: 'shared-metadata',
         metadataVersion: 7,
         ...(layout === 1
@@ -58,6 +59,27 @@ function jsonResponse(body: unknown): Response {
 }
 
 describe('fetchAccountEncryptionMigrationSessionInventory', () => {
+    it('observes retained Session modes before layout and ownership filtering, including archived Sessions', async () => {
+        const modes: Array<Readonly<{ sessionId: string; encryptionMode: 'plain' | 'e2ee' }>> = [];
+        const request = async (path: string) => jsonResponse({
+            sessions: path.startsWith('/v2/sessions/archived')
+                ? [buildSessionRow({ id: 'archived-encrypted', layout: 0, encryptionMode: 'e2ee' })]
+                : [buildSessionRow({ id: 'plain-owner' }),
+                    buildSessionRow({ id: 'encrypted-recipient', layout: 0, owner: false, encryptionMode: 'e2ee' })],
+            hasNext: false, nextCursor: null,
+        });
+
+        const migrationRows = await fetchAccountEncryptionMigrationSessionInventory({
+            token: 'token', request, scope, onSession: (session) => modes.push(session),
+        });
+
+        expect(migrationRows.map((row) => row.id)).toEqual(['plain-owner']);
+        expect(modes).toEqual([
+            { sessionId: 'plain-owner', encryptionMode: 'plain' },
+            { sessionId: 'encrypted-recipient', encryptionMode: 'e2ee' },
+            { sessionId: 'archived-encrypted', encryptionMode: 'e2ee' },
+        ]);
+    });
     it('exhausts active and archived pages and keeps only owned layout-1 rows', async () => {
         const request = vi.fn(async (path: string) => {
             if (path === '/v2/sessions?limit=200') {

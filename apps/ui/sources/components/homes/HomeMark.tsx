@@ -3,7 +3,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { isDefaultAccountServiceUrl } from '@/components/settings/account/AccountServiceMark';
 import { Icon } from '@/components/ui/icons/Icon';
-import { PageHeaderMarkTile } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 
 const ROW_GLYPH_PX = 20;
@@ -31,8 +31,8 @@ export const HomeMark = React.memo(function HomeMark(props: Readonly<{
         : <Icon name={props.glyph ?? 'house'} size={size} color={theme.colors.text.secondary} />;
     if (props.size === 'list') return glyph;
     return (
-        <PageHeaderMarkTile testID={props.testID} size={page ? 'page' : 'row'} appearance="glyph">
+        <PageHeaderMarkSlot testID={props.testID} size={page ? 'page' : 'row'}>
             {glyph}
-        </PageHeaderMarkTile>
+        </PageHeaderMarkSlot>
     );
 });

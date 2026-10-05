@@ -58,6 +58,16 @@ describe('describeWorkflowInvocationLifecycle', () => {
         expect(seen.size).toBe(WORKFLOW_INVOCATION_LIFECYCLES_V1.length);
     });
 
+    it('names a held Wait-for-you step "Waiting for you", keeping "Waiting for your review" for review holds', () => {
+        expect(describeWorkflowInvocationLifecycle('waiting_for_review', { blockKind: 'wait' })).toMatchObject({
+            label: 'workflows.review.waitTitle', variant: 'warning', attention: true,
+        });
+        expect(describeWorkflowInvocationLifecycle('waiting_for_review', { blockKind: 'step' }).label)
+            .toBe('workflows.invocationState.waiting_for_review');
+        expect(describeWorkflowInvocationLifecycle('completed', { blockKind: 'wait' }).label)
+            .toBe('workflows.invocationState.completed');
+    });
+
     it('agrees with the server attention predicate rather than inventing a second one', () => {
         const attention = WORKFLOW_INVOCATION_LIFECYCLES_V1
             .filter((lifecycle) => describeWorkflowInvocationLifecycle(lifecycle).attention);

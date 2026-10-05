@@ -5,11 +5,15 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { AccountServiceMark } from '@/components/settings/account/AccountServiceMark';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon } from '@/components/ui/icons/Icon';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { SetupPathPanel, type SetupPath } from '@/components/ui/setupBlocks/SetupPathPanel';
 import { canSetUpServerHomeHere } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { t } from '@/text';
+import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 import { DirectHomePathPane } from '../journeys/alreadyUse/DirectHomePathPane';
 import { HomeSignInPane } from '../journeys/alreadyUse/HomeSignInPane';
@@ -91,6 +95,7 @@ export function HomeAddForm(props: Readonly<{
     onAddressChange?: (address: string) => void;
 }>) {
     const { theme } = useUnistyles();
+    const phone = useViewportClass() === 'compact';
     const service = useJourneyAccountService();
     const flow = useAddHomeFlow({
         serviceStatus: service.entry.status,
@@ -106,6 +111,20 @@ export function HomeAddForm(props: Readonly<{
         ...pathPresentation(service, availability.id, theme.colors.text.secondary),
     })), [flow.paths, service, theme.colors.text.secondary]);
     const active = addHomePathOfPane(flow.pane.pane);
+    const phonePaths = phone && props.layout === 'page' ? (
+        <ListPresentationProvider value="page">
+            <View accessibilityRole="radiogroup">
+                <ItemGroup>
+                    {paths.map((path) => (
+                        <Item key={path.id} testID={`${props.testID}.path.${path.id}`} title={path.title}
+                            subtitle={path.subtitle} subtitleLines={0} icon={path.glyph}
+                            accessibilityRole="radio" webRole="radio" selected={active === path.id}
+                            onPress={() => flow.choosePath(path.id)} />
+                    ))}
+                </ItemGroup>
+            </View>
+        </ListPresentationProvider>
+    ) : null;
 
     const signedIn = React.useCallback(async () => {
         if (flow.pane.pane !== 'home_sign_in') return onClose();
@@ -185,7 +204,7 @@ export function HomeAddForm(props: Readonly<{
 
     return (
         <View testID={props.testID} style={styles.page}>
-            <SelectionTiles<AddHomePath>
+            {phone ? phonePaths : <SelectionTiles<AddHomePath>
                 testIdPrefix={`${props.testID}.path`}
                 accessibilityLabel={t('addFlows.addHome')}
                 density="compact"
@@ -193,7 +212,7 @@ export function HomeAddForm(props: Readonly<{
                 options={paths.map((path) => ({ id: path.id, title: path.title, subtitle: path.subtitle, mark: path.glyph }))}
                 value={active}
                 onChange={(next) => { if (next) flow.choosePath(next); }}
-            />
+            />}
             <View style={styles.pane}>{pane}</View>
         </View>
     );

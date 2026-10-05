@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { normalizeWorkflowIngress, type WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { normalizeWorkflowIngress, type SessionTriggerPullRequestLinksV1, type WorkflowTriggerSetV1 } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
+import { getStorage } from '@/sync/domains/state/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -87,9 +88,9 @@ function triggerSet(triggers: ReturnType<typeof lifecycleTrigger>[]): WorkflowTr
     } as unknown as WorkflowTriggerSetV1;
 }
 
-function answer(sets: readonly WorkflowTriggerSetV1[]) {
+function answer(sets: readonly WorkflowTriggerSetV1[], pullRequestLinks: SessionTriggerPullRequestLinksV1 = []) {
     executeMock.mockImplementation(async (actionId: string) => {
-        if (actionId === 'session.trigger.list') return { ok: true, result: { sets, pullRequestLinks: [] } };
+        if (actionId === 'session.trigger.list') return { ok: true, result: { sessionId: 'session-1', sets, pullRequestLinks } };
         if (actionId === 'session.trigger.update') return { ok: true, result: { set: sets[0], triggerId: 'trig-1' } };
         return { ok: false, error: 'unexpected', errorCode: 'unexpected' };
     });
@@ -99,7 +100,12 @@ async function settle() {
     await act(async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); });
 }
 
+const previousProfileScope = getStorage().getState().profileScope;
+beforeEach(() => {
+    getStorage().setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
+});
 afterEach(() => {
+    getStorage().setState({ profileScope: previousProfileScope });
     routeParams.current = {};
     executeMock.mockReset();
     automationWrites.pause.mockReset();
@@ -107,6 +113,14 @@ afterEach(() => {
 });
 
 describe('the Work tab Triggers section', () => {
+    it('keeps ordinary rows usable and shows a separate PR-link retry state', async () => {
+        answer([triggerSet([lifecycleTrigger('trig-1', true)])], { status: 'unavailable', code: 'target_unavailable' });
+        const screen = await renderScreen(<SessionWorkViewWithTriggers sessionId="session-1" scopeId="scope-1" />);
+        await settle();
+        expect(screen.findByTestId('session-work-trigger:set-1:trig-1-switch')?.props.value).toBe(true);
+        expect(screen.findByTestId('session-work-triggers-failed')).toBeNull();
+        expect(screen.findByTestId('session-work-trigger-links-unavailable')).not.toBeNull();
+    });
     it('turns one trigger on or off through session.trigger.update, never by pausing its Automation', async () => {
         // trig-1 is off at trigger level inside an enabled set; trig-2 shares the set.
         answer([triggerSet([lifecycleTrigger('trig-1', false), lifecycleTrigger('trig-2', true)])]);
@@ -141,7 +155,7 @@ describe('the Work tab Triggers section', () => {
     it('opens "When this turn finishes…" bound to that turn and adds it through session.trigger.add', async () => {
         answer([]);
         executeMock.mockImplementation(async (actionId: string) => {
-            if (actionId === 'session.trigger.list') return { ok: true, result: { sets: [], pullRequestLinks: [] } };
+            if (actionId === 'session.trigger.list') return { ok: true, result: { sessionId: 'session-1', sets: [], pullRequestLinks: [] } };
             if (actionId === 'session.trigger.add') return { ok: true, result: { set: triggerSet([lifecycleTrigger('trig-new', true)]), triggerId: 'trig-new' } };
             return { ok: false, error: 'unexpected', errorCode: 'unexpected' };
         });
@@ -164,4 +178,3 @@ describe('the Work tab Triggers section', () => {
         });
     });
 });
-

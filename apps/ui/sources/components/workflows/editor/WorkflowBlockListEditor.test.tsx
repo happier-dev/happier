@@ -36,6 +36,7 @@ const MACHINE_COMPOSER_SCOPE = {
 vi.mock('@/components/sessions/agentInput', async () => {
     const { createAgentInputModuleMock } = await import('@/dev/testkit');
     return createAgentInputModuleMock({
+        renderExtraActionChips: true,
         resolveTestID: (props) => {
             const composerRef = props.composerRef as { blockId?: string } | undefined;
             return composerRef?.blockId === undefined ? undefined : `composer:${composerRef.blockId}`;
@@ -133,6 +134,7 @@ async function renderList(harness: Harness, options: Readonly<{
     onChange?: (next: unknown) => void;
     onSelect?: (id: string | null) => void;
     selectedBlockId?: string | null;
+    highlightedBlockIds?: readonly string[];
     presentation?: Record<string, unknown>;
     resolveActionFieldOptions?: (field: { optionsSourceId?: string; options?: unknown }) => ReadonlyArray<{ value: string; label: string }>;
 }>) {
@@ -146,6 +148,7 @@ async function renderList(harness: Harness, options: Readonly<{
         composerScope: MACHINE_COMPOSER_SCOPE,
         composerCustody: harness.createWorkflowAuthoringComposerCustody(options.draft.draftId),
         selectedBlockId: options.selectedBlockId ?? null,
+        highlightedBlockIds: options.highlightedBlockIds,
         validation: harness.validateWorkflowEditorDraft(options.draft),
         onChange: options.onChange ?? (() => {}),
         onSelect: options.onSelect ?? (() => {}),
@@ -153,6 +156,89 @@ async function renderList(harness: Harness, options: Readonly<{
     });
     return renderScreen(element);
 }
+
+it('duplicates a nested block with fresh identities and keeps its internal references inside the copy', async () => {
+    const harness = await loadHarness();
+    const draft = buildDraft(harness, [{ kind: 'parallel', id: 'group', failurePolicy: 'fail_stop', branches: [
+        { id: 'branch', blocks: [
+            { kind: 'step', id: 'producer', document: { text: 'Produce', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+            { kind: 'step', id: 'consumer', document: { text: 'Consume', references: [], attachments: [] },
+                input: [{ kind: 'result', producer: { blockId: 'producer', scope: { kind: 'current' } }, path: [] }],
+                execution: { conversation: { kind: 'from_step', producer: { blockId: 'producer', scope: { kind: 'current' } } },
+                    workspace: { kind: 'from_step', producer: { blockId: 'producer', scope: { kind: 'current' } } } }, result: { kind: 'text' } },
+        ] },
+    ] }]);
+    const changed = vi.fn();
+    const selected = vi.fn();
+    const screen = await renderList(harness, { draft, onChange: changed, onSelect: selected });
+    await screen.pressByTestIdAsync('workflow-editor-parallel-group-actions');
+    expect(screen.findByTestId('workflow-editor-parallel-group-actions-duplicate')).not.toBeNull();
+    await screen.pressByTestIdAsync('workflow-editor-parallel-group-actions-duplicate');
+    const next = changed.mock.calls.at(-1)?.[0] as typeof draft;
+    expect(next.blocks).toHaveLength(2);
+    expect(next.blocks[0]).toBe(draft.blocks[0]);
+    const copy = next.blocks[1];
+    if (copy?.kind !== 'parallel') throw new Error('Expected parallel copy');
+    expect(copy.id).not.toBe('group');
+    expect(copy.branches[0]?.id).not.toBe('branch');
+    const [producer, consumer] = copy.branches[0]!.blocks;
+    expect(producer?.id).not.toBe('producer');
+    expect(consumer).toMatchObject({ input: [{ producer: { blockId: producer!.id } }],
+        execution: { conversation: { kind: 'from_step', producer: { blockId: producer!.id } }, workspace: { kind: 'from_step', producer: { blockId: producer!.id } } } });
+    expect(selected).toHaveBeenCalledWith(copy.id);
+});
+
+it('puts Step options in the step composer as one chip that names only what differs (07 S7; DESIGN-1 B1)', async () => {
+    const harness = await loadHarness();
+    const base = buildDraft(harness, [
+        { kind: 'step', id: 'engine', document: { text: 'Engine', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+        { kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] }, input: [], result: { kind: 'text' }, pauseForReview: true },
+    ]);
+    // An engine change is the engine chip's to show, never Step options' words.
+    const draft = harness.setWorkflowStepExecutionField(base, 'engine', 'agentTarget', AGENT_TARGET);
+    const opened = vi.fn();
+    const element = React.createElement(harness.WorkflowBlockListEditor, {
+        draft,
+        list: { kind: 'root' },
+        blocks: draft.blocks,
+        depth: 0,
+        composerScope: MACHINE_COMPOSER_SCOPE,
+        composerCustody: harness.createWorkflowAuthoringComposerCustody(draft.draftId),
+        selectedBlockId: null,
+        validation: harness.validateWorkflowEditorDraft(draft),
+        onChange: () => {},
+        onSelect: () => {},
+        onCustomize: opened,
+    });
+    const screen = await renderScreen(element);
+
+    const composer = screen.findByTestId('composer:engine');
+    const chip = composer?.findAll((node) => node.props?.testID === 'workflow-editor-step-engine-customize')[0];
+    expect(chip, 'the Step options chip sits in the composer chip row').toBeDefined();
+    // The engine chip leads the same row (04 §4.3).
+    expect(composer?.findAll((node) => node.props?.testID === 'workflow-editor-step-engine-engine')[0], 'engine chip').toBeDefined();
+    expect(screen.findByTestId('workflow-editor-step-engine-inheritance')?.props.children).toBe('workflows.page.blocks.workflowDefaults');
+    expect(screen.findByTestId('workflow-editor-step-review-inheritance')?.props.children).toBe('workflows.page.inspector.reviewsBeforeContinuing');
+    expect(screen.getTextContent()).not.toContain('workflows.a11y.overridden');
+    await screen.pressByTestIdAsync('workflow-editor-step-engine-customize');
+    expect(opened).toHaveBeenCalledWith('engine', expect.anything());
+    // One footer line: what it returns, with no loose "Input" row while it has none.
+    expect(screen.findByTestId('workflow-editor-step-engine-returns')?.props.children).toBe('workflows.page.blocks.returnsText');
+    expect(screen.getTextContent()).not.toContain('workflows.input.label');
+});
+
+it('marks exactly the agent-returned block IDs, not the selected or neighbouring block', async () => {
+    const harness = await loadHarness();
+    const draft = buildDraft(harness, [
+        { kind: 'step', id: 'first', document: { text: 'First', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+        { kind: 'step', id: 'second', document: { text: 'Second', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+        { kind: 'step', id: 'third', document: { text: 'Third', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+    ]);
+    const screen = await renderList(harness, { draft, selectedBlockId: 'first', highlightedBlockIds: ['second'] });
+    const highlights = screen.root.findAll((node) => typeof node.props.testID === 'string'
+        && node.props.testID.startsWith('workflow-agent-change:'));
+    expect(highlights.map((node) => node.props.testID)).toEqual(['workflow-agent-change:second']);
+});
 
 /**
  * A container's options are Step options content (04 §4.3, §5.2): the document
@@ -343,6 +429,11 @@ describe('workflow block list editor', () => {
         const screen = await renderList(harness, { draft, onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>) });
 
         // Action: one row per declared field, bound or not.
+        for (const id of ['action-notify', 'workflow-review', 'wait-check']) {
+            const mark = screen.findHostByTestId(`workflow-editor-${id}-label-kind-mark`);
+            expect(mark, id).not.toBeNull();
+            expect(mark?.props.accessibilityElementsHidden).toBe(true);
+        }
         for (const field of ['message', 'title', 'channels']) {
             expect(screen.findHostByTestId(`workflow-editor-action-notify-field-${field}`), field).not.toBeNull();
         }
@@ -870,11 +961,19 @@ describe('workflow block list editor', () => {
         const changes: ReturnType<typeof buildDraft>[] = [];
         const screen = await renderList(harness, { draft: withInput, onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>) });
 
+        // The source select offers exactly the kinds valid where the step sits.
+        const sourceKinds = (stepId: string) => {
+            const select = screen.findAll((node) => node.props?.testID === `workflow-editor-step-${stepId}-input-0-kind`
+                && typeof node.props?.onSelect === 'function')[0];
+            if (select === undefined) throw new Error(`No source select for ${stepId}`);
+            return select as unknown as { props: { items: ReadonlyArray<{ id: string }>; onSelect: (id: string) => void } };
+        };
         // The root step is outside every loop: no item or round facts.
-        expect(screen.findByTestId('workflow-editor-step-root-step-input-0-kind-item')).toBeNull();
-        expect(screen.findByTestId('workflow-editor-step-root-step-input-0-kind-iteration')).toBeNull();
+        expect(sourceKinds('root-step').props.items.map((item) => item.id)).not.toContain('item');
+        expect(sourceKinds('root-step').props.items.map((item) => item.id)).not.toContain('iteration');
         // The body step of a for-each loop can author both.
-        await screen.pressByTestIdAsync(`workflow-editor-step-${inside}-input-0-kind-item`);
+        expect(sourceKinds(inside).props.items.map((item) => item.id)).toEqual(expect.arrayContaining(['item', 'iteration']));
+        await act(async () => { sourceKinds(inside).props.onSelect('item'); });
         const readInput = () => harness.findWorkflowBlock(changes.at(-1)!, inside) as { input: unknown[] };
         expect(readInput().input[0]).toEqual({ kind: 'item', field: 'value' });
 

@@ -12,6 +12,11 @@ import { useCheckoutSelectionPicker } from '@/components/sessions/new/hooks/scre
 import { useNewSessionRepoScmSnapshot } from '@/components/sessions/new/hooks/screenModel/useNewSessionRepoScmSnapshot';
 import { resolveNewSessionCheckoutChipModel } from '@/components/sessions/new/modules/newSessionCheckoutChipModel';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
+import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
+import { Item } from '@/components/ui/lists/Item';
+import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { Popover } from '@/components/ui/popover';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
@@ -68,6 +73,7 @@ const styles = StyleSheet.create((theme) => ({
         minWidth: 320,
         gap: theme.margins.xs,
         paddingVertical: theme.margins.xs,
+        paddingHorizontal: theme.margins.sm,
     },
     control: {
         minWidth: 0,
@@ -108,11 +114,18 @@ type WorkflowProjectTargetControlProps = Readonly<{
     onChange?: (target: WorkflowAuthoringTarget) => void;
     /**
      * `chip`: the editor header's chip ("MacBook Pro / ~/src/happier", or the
-     * quiet "Choose where it runs" while missing), opening one content-sized
-     * popover with the same Machine, folder and checkout choices. `field` (the
-     * default): those choices in place, for the Workflow settings row.
+     * quiet "Choose where it runs" while missing). `field`: one settings row —
+     * its label, its description and one field select showing the same summary
+     * (Workflow settings' "Machine and project", a trigger set's "Runs on").
+     * Both open the one content-sized popover with the Machine, folder and
+     * checkout choices. `inline` (the default): those choices in place, for a
+     * host that is already that popover (a run composer's Where chip).
      */
-    presentation?: 'chip' | 'field';
+    presentation?: 'chip' | 'field' | 'inline';
+    /** The field row's label; `field` only. */
+    title?: string;
+    /** The field row's description (its consequence), wrapping; `field` only. */
+    subtitle?: string;
     testIDPrefix: string;
 }>;
 
@@ -166,33 +179,132 @@ export const WorkflowProjectTargetControl = React.forwardRef<
         );
     }
 
+    if (props.presentation !== 'field') {
+        return (
+            <View testID={`${testIDPrefix}-machine-row`} style={styles.row}>
+                {editable && props.machines !== undefined && props.onChange !== undefined ? (
+                    <EditableProjectTarget
+                        target={target ?? null}
+                        machines={props.machines}
+                        onChange={props.onChange}
+                        testIDPrefix={testIDPrefix}
+                    />
+                ) : (
+                    <>
+                        <Text
+                            testID={`${testIDPrefix}-machine`}
+                            style={props.machineName === null ? styles.unresolved : styles.value}
+                        >
+                            {props.machineName ?? t('workflows.editor.targetRequired')}
+                        </Text>
+                        {target === undefined || target === null ? null : (
+                            <Text testID={`${testIDPrefix}-project-directory-readonly`} style={styles.value}>
+                                {isWorkflowProjectTarget(target) ? formatPathRelativeToHome(target.directory, machineHomeDir) : t('newSession.folder.noFolder')}
+                            </Text>
+                        )}
+                    </>
+                )}
+            </View>
+        );
+    }
+
+    const summary = formatWorkflowWhereSummary({ target, machineName: props.machineName, machineHomeDir });
     return (
-        <View testID={`${testIDPrefix}-machine-row`} style={styles.row}>
-            {editable && props.machines !== undefined && props.onChange !== undefined ? (
+        <WhereField
+            title={props.title ?? t('workflows.page.sections.machineAndProject')}
+            {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle })}
+            summary={summary}
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            readOnlyValue={editable ? null : (
+                target === undefined || target === null || props.machineName === null ? (
+                    <Text testID={`${testIDPrefix}-machine`} style={styles.unresolved}>
+                        {props.machineName ?? t('workflows.editor.targetRequired')}
+                    </Text>
+                ) : (
+                    <Text testID={`${testIDPrefix}-project-directory-readonly`} style={styles.value}>{summary}</Text>
+                )
+            )}
+            testIDPrefix={testIDPrefix}
+        >
+            {props.machines !== undefined && props.onChange !== undefined ? (
                 <EditableProjectTarget
                     target={target ?? null}
                     machines={props.machines}
                     onChange={props.onChange}
                     testIDPrefix={testIDPrefix}
                 />
-            ) : (
-                <>
-                    <Text
-                        testID={`${testIDPrefix}-machine`}
-                        style={props.machineName === null ? styles.unresolved : styles.value}
-                    >
-                        {props.machineName ?? t('workflows.editor.targetRequired')}
-                    </Text>
-                    {target === undefined || target === null ? null : (
-                        <Text testID={`${testIDPrefix}-project-directory-readonly`} style={styles.value}>
-                            {isWorkflowProjectTarget(target) ? formatPathRelativeToHome(target.directory, machineHomeDir) : t('newSession.folder.noFolder')}
-                        </Text>
-                    )}
-                </>
-            )}
-        </View>
+            ) : null}
+        </WhereField>
     );
 });
+
+/**
+ * The field presentation: one row, one field select (the canonical page field box) whose value is
+ * the one where-summary; pressing it opens the same choices the chip opens. A read-only host gets
+ * the summary as plain value text.
+ */
+function WhereField(props: Readonly<{
+    title: string;
+    subtitle?: string;
+    summary: string | null;
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    /** Non-null: the target is fixed by the host and reads as this value. */
+    readOnlyValue: React.ReactNode | null;
+    testIDPrefix: string;
+    children: React.ReactNode;
+}>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const anchorRef = React.useRef<View>(null);
+    const fieldColors = React.useMemo(() => resolveFieldBoxColors(theme), [theme]);
+    const editable = props.readOnlyValue === null;
+    return (
+        <View ref={anchorRef} collapsable={false}>
+            <Item
+                testID={`${props.testIDPrefix}-machine-row`}
+                title={props.title}
+                {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle, subtitleLines: 0 })}
+                accessoryLayout="adaptive"
+                showChevron={false}
+                selected={false}
+                {...(editable ? {
+                    onPress: () => props.onOpenChange(!props.open),
+                    accessibilityExpanded: props.open,
+                    rightElement: renderDropdownItemTriggerRightElement({
+                        detail: props.summary,
+                        open: props.open,
+                        detailColor: theme.colors.text.secondary,
+                        chevronColor: theme.colors.text.secondary,
+                        field: fieldColors,
+                        placeholder: t('common.choose'),
+                        placeholderColor: theme.colors.input.placeholder,
+                    }),
+                } : { mode: 'info' as const, rightElement: props.readOnlyValue })}
+            />
+            {editable && props.open ? (
+                <Popover
+                    open
+                    anchorRef={anchorRef}
+                    focusReturnRef={anchorRef}
+                    placement="auto"
+                    portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}
+                    maxWidthCap={420}
+                    maxHeightCap={560}
+                    onRequestClose={() => props.onOpenChange(false)}
+                >
+                    {({ maxHeight }) => (
+                        <FloatingOverlay maxHeight={maxHeight} scrollEnabled surfaceChrome="theme">
+                            <View testID={`${props.testIDPrefix}-where-popover`} style={styles.popover}>
+                                {props.children}
+                            </View>
+                        </FloatingOverlay>
+                    )}
+                </Popover>
+            ) : null}
+        </View>
+    );
+}
 
 function WhereChipIcon(): React.ReactElement {
     const { theme } = useUnistyles();

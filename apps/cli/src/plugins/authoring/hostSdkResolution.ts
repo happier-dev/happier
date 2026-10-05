@@ -21,9 +21,9 @@ import { resolveSameInstallNodeModulesRoot } from './packageInstallationRoot';
  * The one resolver for the running host's public Plugin SDK package. It owns
  * the shipped binary-safe closure proof (the CLI must already declare and
  * physically bundle the SDK) and projects exact public specifier aliases for
- * the narrow dependency-free single-file development loader. Pack, managed
- * installs, and package-root development never consume this module; they use
- * declared package resolution.
+ * the narrow dependency-free single-file development loader. Package-root
+ * development shares the bundled-package resolver for prepublication
+ * dependency preparation, but never consumes the single-file aliases.
  */
 export const PLUGIN_SDK_PACKAGE_NAME = '@happier-dev/plugin-sdk';
 
@@ -120,7 +120,10 @@ export function resolvePackagedCliBundledWorkspacePackageRoot(
 ): string {
   const candidateRoots: Array<Readonly<{ candidatePath: string; allowedRootPath: string }>> = [{
     candidatePath: join(runtimeRoot, 'node_modules', ...packageName.split('/')),
-    allowedRootPath: runtimeRoot,
+    // Managed code artifacts link this entire tree to their shared support
+    // payload. Packages must remain physical children of that owned tree,
+    // not necessarily of the separate code artifact.
+    allowedRootPath: join(runtimeRoot, 'node_modules'),
   }];
   const sameInstallNodeModulesRoot = resolveSameInstallNodeModulesRoot(runtimeRoot);
   if (sameInstallNodeModulesRoot) {

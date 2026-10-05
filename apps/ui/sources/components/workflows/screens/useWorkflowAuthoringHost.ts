@@ -5,7 +5,8 @@ import type { WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowP
 import type { AuthoringComposerScope } from '@/components/sessions/authoring/ScopedAuthoringComposer';
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { useSessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/useSessionAuthoringControlFacts';
-import { useAllMachines } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useAllMachines } from '@/sync/domains/state/storage';
+import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 import type { WorkflowExistingSessionOption } from '@/sync/domains/workflows/workflowAuthoring';
 import { useWorkflowExistingSessionOptions } from './useWorkflowExistingSessionOptions';
 
@@ -23,6 +24,7 @@ export type WorkflowAuthoringHostContext = Readonly<{
     existingSessions: readonly WorkflowExistingSessionOption[];
     /** Every continuable Session on any Machine: what the Session drop target resolves against. */
     sessionDropCandidates: readonly WorkflowExistingSessionOption[];
+    sessionBindingScope: EntityDragScopeV1 | null;
 }>;
 
 /**
@@ -48,6 +50,8 @@ export function useWorkflowAuthoringHost(params: Readonly<{
 }>): WorkflowAuthoringHostContext {
     const { capturedSession, serverId } = params;
     const machineId = params.projectTarget?.machineId ?? null;
+    const activeScope = useActiveServerAccountScope();
+    const sessionBindingScope = activeScope?.serverId === serverId ? activeScope : null;
     const directory = typeof params.projectTarget?.directory === 'string' ? params.projectTarget.directory : null;
     const machines = useAllMachines();
     const machineHomeDir = React.useMemo(() => (
@@ -69,7 +73,7 @@ export function useWorkflowAuthoringHost(params: Readonly<{
     ), [capturedServerId, capturedSessionId, directory, machineHomeDir, machineId, serverId]);
 
     return React.useMemo(
-        () => ({ authoringFacts, composerScope, existingSessions, sessionDropCandidates }),
-        [authoringFacts, composerScope, existingSessions, sessionDropCandidates],
+        () => ({ authoringFacts, composerScope, existingSessions, sessionDropCandidates, sessionBindingScope }),
+        [authoringFacts, composerScope, existingSessions, sessionDropCandidates, sessionBindingScope],
     );
 }

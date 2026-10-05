@@ -6,6 +6,9 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { t } from '@/text';
 import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
+import {
+    areLocalNotificationsOff, readLocalNotificationPreference, resolveLocalNotificationPreferenceDelta, type LocalNotificationPreferenceId,
+} from '@/components/settings/notifications/localNotificationPreferences';
 
 type NotificationLocalDeviceSectionProps = Readonly<{
     localSettings: LocalSettings;
@@ -16,33 +19,11 @@ export function NotificationLocalDeviceSection({
     localSettings,
     setLocalSetting,
 }: NotificationLocalDeviceSectionProps): React.ReactElement {
-    const deviceOverrides = localSettings.attentionDeviceOverridesV1;
-    const localNotifications = deviceOverrides.localNotifications;
-    const disabled = deviceOverrides.enabled === false || localNotifications.enabled === false;
-    const setLocalNotifications = React.useCallback((
-        next: Partial<typeof localNotifications>,
-    ) => {
-        setLocalSetting({
-            attentionDeviceOverridesV1: {
-                ...deviceOverrides,
-                localNotifications: {
-                    ...localNotifications,
-                    ...next,
-                },
-            },
-        });
-    }, [deviceOverrides, localNotifications, setLocalSetting]);
-    const setLocalNotificationEvent = React.useCallback((
-        event: keyof typeof localNotifications.events,
-        enabled: boolean,
-    ) => {
-        setLocalNotifications({
-            events: {
-                ...localNotifications.events,
-                [event]: enabled,
-            },
-        });
-    }, [localNotifications.events, setLocalNotifications]);
+    const disabled = areLocalNotificationsOff(localSettings);
+    const events = localSettings.attentionDeviceOverridesV1.localNotifications.events;
+    const read = (id: LocalNotificationPreferenceId) => readLocalNotificationPreference(localSettings, id);
+    const write = (id: LocalNotificationPreferenceId, value: boolean) =>
+        setLocalSetting(resolveLocalNotificationPreferenceDelta(localSettings, id, value));
 
     return (
         <ItemGroup
@@ -54,8 +35,8 @@ export function NotificationLocalDeviceSection({
                 setting={NOTIFICATIONS_SETTINGS.settings.localEnabled}
                 rightElement={(
                     <Switch
-                        value={!disabled}
-                        onValueChange={(value) => setLocalNotifications({ enabled: Boolean(value) })}
+                        value={read('enabled')}
+                        onValueChange={(value) => write('enabled', Boolean(value))}
                     />
                 )}
                 showChevron={false}
@@ -64,9 +45,9 @@ export function NotificationLocalDeviceSection({
                 setting={NOTIFICATIONS_SETTINGS.settings.ready}
                 rightElement={(
                     <Switch
-                        value={localNotifications.events.ready !== false}
+                        value={read('ready')}
                         disabled={disabled}
-                        onValueChange={(value) => setLocalNotificationEvent('ready', Boolean(value))}
+                        onValueChange={(value) => write('ready', Boolean(value))}
                     />
                 )}
                 showChevron={false}
@@ -75,11 +56,9 @@ export function NotificationLocalDeviceSection({
                 setting={NOTIFICATIONS_SETTINGS.settings.readyPreview}
                 rightElement={(
                     <Switch
-                        value={localNotifications.previewBehavior !== 'status_only'}
-                        disabled={disabled || localNotifications.events.ready === false}
-                        onValueChange={(value) => setLocalNotifications({
-                            previewBehavior: Boolean(value) ? 'account' : 'status_only',
-                        })}
+                        value={read('readyPreview')}
+                        disabled={disabled || events.ready === false}
+                        onValueChange={(value) => write('readyPreview', Boolean(value))}
                     />
                 )}
                 showChevron={false}
@@ -88,11 +67,9 @@ export function NotificationLocalDeviceSection({
                 setting={NOTIFICATIONS_SETTINGS.settings.requestPreview}
                 rightElement={(
                     <Switch
-                        value={localNotifications.requestPreviewBehavior !== 'status_only'}
-                        disabled={disabled || (localNotifications.events.permission_request === false && localNotifications.events.user_action_request === false)}
-                        onValueChange={(value) => setLocalNotifications({
-                            requestPreviewBehavior: Boolean(value) ? 'account' : 'status_only',
-                        })}
+                        value={read('requestPreview')}
+                        disabled={disabled || (events.permission_request === false && events.user_action_request === false)}
+                        onValueChange={(value) => write('requestPreview', Boolean(value))}
                     />
                 )}
                 showChevron={false}
@@ -101,9 +78,9 @@ export function NotificationLocalDeviceSection({
                 setting={NOTIFICATIONS_SETTINGS.settings.localPermissionRequests}
                 rightElement={(
                     <Switch
-                        value={localNotifications.events.permission_request !== false}
+                        value={read('permissionRequests')}
                         disabled={disabled}
-                        onValueChange={(value) => setLocalNotificationEvent('permission_request', Boolean(value))}
+                        onValueChange={(value) => write('permissionRequests', Boolean(value))}
                     />
                 )}
                 showChevron={false}
@@ -112,9 +89,9 @@ export function NotificationLocalDeviceSection({
                 setting={NOTIFICATIONS_SETTINGS.settings.localUserActions}
                 rightElement={(
                     <Switch
-                        value={localNotifications.events.user_action_request !== false}
+                        value={read('userActions')}
                         disabled={disabled}
-                        onValueChange={(value) => setLocalNotificationEvent('user_action_request', Boolean(value))}
+                        onValueChange={(value) => write('userActions', Boolean(value))}
                     />
                 )}
                 showChevron={false}

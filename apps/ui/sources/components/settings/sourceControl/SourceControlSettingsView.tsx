@@ -10,7 +10,7 @@ import { createScmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry'
 import { getFirstPartyScmBackendLegacyLocalId } from '@/scm/registry/firstPartyScmBackendIdentity';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/domains/state/storage';
-import { useApplySettings } from '@/sync/store/settingsWriters';
+import { useApplySettings, useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { createScmBackendSettingsRegistry } from '@/scm/settings/scmBackendSettingsRegistry';
 import { useDaemonScmContributionCatalog } from '@/scm/registry/useDaemonScmContributionCatalog';
@@ -41,6 +41,9 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { SOURCE_CONTROL_SETTINGS } from '@/components/settings/sourceControl/sourceControlSettings';
+import { ScmDiffSummaryModelPicker } from '@/components/settings/sourceControl/ScmDiffSummaryModelPicker';
+import { WalkthroughSavedSettings } from '@/components/settings/sourceControl/WalkthroughSavedSettings';
+import { Modal } from '@/modal';
 
 
 /**
@@ -185,6 +188,22 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [scmGitRepoPreferredBackend] = useSettingMutable('scmGitRepoPreferredBackend');
     const [scmGitRepoPreferredBackendQualifiedId] = useSettingMutable('scmGitRepoPreferredBackendQualifiedId');
     const applySettings = useApplySettings();
+    const settingsScope = useAccountSettingsScope();
+    const [explainChanges, setExplainChanges] = useSettingMutable('scm.diffSummary.enabled');
+    const [prepareAfterTurn] = useSettingMutable('scm.diffSummary.prefetch');
+    const [summaryModel] = useSettingMutable('scm.diffSummary.modelProfileOverride');
+    const [summaryModelAvailable, setSummaryModelAvailable] = React.useState(false);
+    const setWalkthroughSetting = async (anchor: string, value: string | boolean) => {
+        if (!settingsScope) { Modal.alert(t('common.error'), t('walkthroughSettings.unavailable')); return; }
+        try {
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const result = await createDefaultActionExecutor().execute('settings.set', { anchor, value }, { surface: 'ui',
+                serverId: settingsScope.serverId, expectedAccountId: settingsScope.accountId });
+            if (!result.ok || result.result && typeof result.result === 'object' && 'ok' in result.result && result.result.ok === false) {
+                Modal.alert(t('common.error'), t('walkthroughSettings.unavailable'));
+            }
+        } catch { Modal.alert(t('common.error'), t('walkthroughSettings.unavailable')); }
+    };
     const [scmRemoteConfirmPolicy, setScmRemoteConfirmPolicy] = useSettingMutable('scmRemoteConfirmPolicy');
     const [scmPushRejectPolicy, setScmPushRejectPolicy] = useSettingMutable('scmPushRejectPolicy');
     const [scmPullRequestPlacement, setScmPullRequestPlacement] = useSettingMutable('scmPullRequestPlacement');
@@ -594,6 +613,24 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                     onPress={() => setWrapLinesInDiffs(wrapLinesInDiffs !== true)}
                 />
             </ItemGroup>
+            </SettingSection>
+
+            <SettingSection section={SOURCE_CONTROL_SETTINGS.sectionRefs.walkthroughs}>
+                <ItemGroup title={t('walkthroughSettings.title')} description={t('walkthroughSettings.description')}>
+                    <SettingRow setting={SOURCE_CONTROL_SETTINGS.settings.explainChanges} subtitleLines={0} showChevron={false}
+                        rightElement={<Switch value={explainChanges !== false} onValueChange={setExplainChanges} />}
+                        onPress={() => setExplainChanges(explainChanges === false)} />
+                    <SettingAnchor setting={SOURCE_CONTROL_SETTINGS.settings.summaryModel}>
+                        <ScmDiffSummaryModelPicker value={typeof summaryModel === 'string' ? summaryModel : ''}
+                            onChange={value => { void setWalkthroughSetting(SOURCE_CONTROL_SETTINGS.settings.summaryModel.anchor, value); }}
+                            onAvailabilityChange={setSummaryModelAvailable}
+                            machineId={executionTarget?.machine.id} serverId={executionTarget?.serverId} testID="settings.sourceControl.summaryModel" />
+                    </SettingAnchor>
+                    <WalkthroughSavedSettings machineId={executionTarget?.machine.id ?? null} serverId={executionTarget?.serverId ?? null}
+                        machineName={administrationTargetSelection.candidates.find(candidate => candidate.target.machineId === executionTarget?.machine.id)?.displayName ?? ''}
+                        prepareAfterTurn={prepareAfterTurn === true}
+                        onPrepareAfterTurn={value => { void setWalkthroughSetting(SOURCE_CONTROL_SETTINGS.settings.prepareAfterTurn.anchor, value); }} modelAvailable={summaryModelAvailable} />
+                </ItemGroup>
             </SettingSection>
 
             {backendPlugins.map((plugin, backendIndex) => {

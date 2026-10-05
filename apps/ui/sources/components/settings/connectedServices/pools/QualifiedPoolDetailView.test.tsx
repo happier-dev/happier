@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 
 import { renderScreen } from '@/dev/testkit';
 import { presentConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
@@ -14,6 +15,8 @@ import {
 } from '@happier-dev/protocol';
 
 import type { PoolMemberRow } from './PoolMemberRow';
+import { EntityFlatReorderList } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
+import { storage } from '@/sync/domains/state/storageStore';
 import {
     buildPoolQuotaLimitCandidates,
     QualifiedPoolDetailView,
@@ -23,6 +26,14 @@ import {
 } from './QualifiedPoolDetailView';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+let restorePopoverGlobals: (() => void) | undefined;
+const initialScope = storage.getState().profileScope;
+beforeEach(() => { restorePopoverGlobals = withPopoverWebGlobals(); });
+afterEach(async () => {
+    await act(async () => storage.setState({ profileScope: initialScope }));
+    restorePopoverGlobals?.();
+});
 
 const modalSpies = vi.hoisted(() => ({
     prompt: vi.fn(),
@@ -76,14 +87,6 @@ vi.mock('@/components/ui/icons/Icon', () => ({
     Icon: (props: Record<string, unknown>) => React.createElement('Icon', props),
 }));
 
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: Record<string, unknown>) => React.createElement('Switch', props),
-}));
 
 const SERVICE = { pluginId: 'acme.accounts', localId: 'openai-codex' } as const;
 
@@ -188,6 +191,32 @@ async function renderPoolDetail(
     return { screen, group };
 }
 
+it('keeps an empty pool focused on adding its first members rather than unusable policy controls', async () => {
+    const { screen } = await renderPoolDetail({ members: [], activeAccountId: null });
+    expect(screen.findByTestId('connected-services-pool-detail:no-members')).not.toBeNull();
+    expect(screen.findByTestId('connected-services-pool-detail:auto-switch:toggle')).toBeNull();
+    expect(screen.findByTestId('connected-services-pool-detail:strategy')).toBeNull();
+});
+it('keeps individual member limits instead of repeating the pool aggregate on a compact pane', async () => {
+    const { screen } = await renderPoolDetail();
+    const pane = screen.findHostByTestId('connected-services-pool-detail');
+    act(() => pane?.props.onLayout?.({ nativeEvent: { layout: { width: 390, height: 800, x: 0, y: 0 } } }));
+    expect(screen.findByTestId('connected-services-pool-detail:left:none') === null).toBe(true);
+    expect(memberRows(screen)).toHaveLength(2);
+});
+it('keeps compact defaults in the identity line and retains sharing without desktop header controls', async () => {
+    const setDefault = vi.fn();
+    const share = vi.fn();
+    const { screen } = await renderPoolDetail({}, { agentDefaults: { choices: [{ agentId: 'codex', title: 'Codex', isDefault: true }], setDefault }, onShareWithTeam: share });
+    act(() => screen.findHostByTestId('connected-services-pool-detail')?.props.onLayout?.({ nativeEvent: { layout: { width: 390, height: 800, x: 0, y: 0 } } }));
+    expect(screen.findHostByTestId('connected-services-pool-detail:more')).toBeNull();
+    await screen.pressByTestIdAsync('connected-services-pool-detail:default-for');
+    await screen.pressByTestIdAsync('connected-services-pool-detail:default-for:agent:codex');
+    expect(setDefault).toHaveBeenCalledWith('codex', false);
+    await screen.pressByTestIdAsync('connected-services-pool-detail:share');
+    expect(share).toHaveBeenCalledOnce();
+});
+
 const NOW = 1_800_000_000_000;
 const MIN = 60_000;
 
@@ -251,7 +280,7 @@ function itemProps(screen: Screen, testID: string): Record<string, any> {
 
 function dropdownByTriggerTestId(screen: Screen, testID: string): ReactTestInstance {
     const node = screen.root
-        .findAllByType('DropdownMenu' as never)
+        .findAll((candidate) => typeof candidate.type !== 'string' && Array.isArray(candidate.props.items) && typeof candidate.props.onSelect === 'function')
         .find((candidate) => candidate.props.itemTrigger?.itemProps?.testID === testID);
     if (!node) throw new Error(`no dropdown with trigger testID "${testID}"`);
     return node;
@@ -260,7 +289,7 @@ function dropdownByTriggerTestId(screen: Screen, testID: string): ReactTestInsta
 /** The membership multi-select is the only menu that stays open across selections. */
 function membersDropdown(screen: Screen): ReactTestInstance {
     const node = screen.root
-        .findAllByType('DropdownMenu' as never)
+        .findAll((candidate) => typeof candidate.type !== 'string' && Array.isArray(candidate.props.items) && typeof candidate.props.onSelect === 'function')
         .find((candidate) => candidate.props.closeOnSelect === false);
     if (!node) throw new Error('no members multi-select dropdown');
     return node;
@@ -268,7 +297,7 @@ function membersDropdown(screen: Screen): ReactTestInstance {
 
 function switchByTestId(screen: Screen, testID: string): ReactTestInstance {
     const node = screen.root
-        .findAllByType('Switch' as never)
+        .findAll((candidate) => typeof candidate.type !== 'string' && typeof candidate.props.value === 'boolean')
         .find((candidate) => candidate.props.testID === testID);
     if (!node) throw new Error(`no switch with testID "${testID}"`);
     return node;
@@ -540,7 +569,7 @@ describe('QualifiedPoolDetailView', () => {
         ]);
         expect(memberRow(screen, 'work').active).toBe(true);
         expect(memberRow(screen, 'backup').active).toBe(false);
-        expect(memberRow(screen, 'work').reorderGesture).toBeTruthy();
+        expect(screen.root.findByType(EntityFlatReorderList).props.binding.items.map((item: { id: string }) => item.id)).toEqual(['work', 'backup']);
     });
 
     it('says why the pool turned a member off, and that an off member is not used', async () => {
@@ -682,7 +711,7 @@ describe('QualifiedPoolDetailView', () => {
                 setDefault,
             },
         });
-        const star = screen.root.findAllByType('DropdownMenu' as never)
+        const star = screen.root.findAll((candidate) => typeof candidate.type !== 'string' && Array.isArray(candidate.props.items) && typeof candidate.props.onSelect === 'function')
             .find((node) => node.props.items?.some((item: { id: string }) => item.id === 'opencode'));
         await act(async () => { star?.props.onSelect('opencode'); });
         expect(setDefault).toHaveBeenCalledWith('opencode', true);
@@ -708,40 +737,25 @@ describe('QualifiedPoolDetailView', () => {
         expect(patchMember.mock.calls[0]?.[0]).toMatchObject({ group, account: { accountId: 'backup' }, enabled: false });
     });
 
-    it('moving a member down writes spaced priorities in sequence, threading the returned group', async () => {
+    it('admits a qualified semantic move and refuses stale membership and no-ops', async () => {
+        await act(async () => storage.setState({ profileScope: { serverId: 'home-a', accountId: 'account-a' } }));
         const { screen, group } = await renderPoolDetail();
-        await press(memberAction(screen, 'work', 'move-down'));
-        expect(patchMember).toHaveBeenCalledTimes(2);
-        const [first, second] = patchMember.mock.calls.map((call) => call[0]);
-        expect(first).toMatchObject({ account: { accountId: 'backup' }, priority: 100 });
-        expect(second).toMatchObject({ account: { accountId: 'work' }, priority: 200 });
-        expect(first?.group).toBe(group);
-        expect(second?.group).toBe(mutationResults.patchMember[0]);
-    });
-
-    it('shows the dropped order immediately, before the priority patches land', async () => {
-        const { screen } = await renderPoolDetail();
-        let releaseFirstPatch: (() => void) | null = null;
-        patchMember.mockImplementationOnce(async ({ group, account, priority }: PatchMemberInput) => {
-            await new Promise<void>((resolve) => { releaseFirstPatch = resolve; });
-            return {
-                ...group,
-                members: group.members.map((member) => (
-                    member.ref.accountId === account.accountId && priority !== undefined ? { ...member, priority } : member
-                )),
-            };
-        });
-        await press(memberAction(screen, 'work', 'move-down'));
-        expect(memberRows(screen).map((row) => row.testID.split(':').at(-1))).toEqual(['backup', 'work']);
-        await act(async () => { releaseFirstPatch?.(); });
-        await flush();
-    });
-
-    it('stops the reorder sequence when a member patch fails', async () => {
-        const { screen } = await renderPoolDetail();
-        patchMember.mockResolvedValueOnce(null);
-        await press(memberAction(screen, 'work', 'move-down'));
-        expect(patchMember).toHaveBeenCalledTimes(1);
+        const binding = screen.root.findByType(EntityFlatReorderList).props.binding;
+        expect(binding.getItem('work')).toMatchObject({ kind: 'pool-member', scope: { serverId: 'home-a', accountId: 'account-a' }, pool: group.ref, member: accountRef('work') });
+        expect(binding.resolve('work', { anchorId: 'backup', placement: 'after' })).toMatchObject({ status: 'allowed', effect: { actionId: 'connectedServices.pools.reorder', input: { group: group.ref, move: { accountId: 'work', position: { anchorId: 'backup', placement: 'after' } } } } });
+        expect(binding.resolve('work', { anchorId: 'backup', placement: 'before' }).status).toBe('refused');
+        expect(binding.resolve('missing', { anchorId: 'backup', placement: 'after' }).status).toBe('refused');
+        expect(binding.getSourceId({ ...binding.getItem('work'), pool: { ...group.ref, groupId: 'other' } })).toBeNull();
+        const currentProps = { accounts: ACCOUNTS, serviceLabel: 'Codex', now: NOW, mutations: createMutations() };
+        await screen.update(<QualifiedPoolDetailView {...currentProps} group={{ ...group, members: [
+            ...group.members, { ref: accountRef('spare'), priority: 150, enabled: true, state: {} },
+        ] }} />);
+        const latest = screen.root.findByType(EntityFlatReorderList).props.binding;
+        expect(latest.items.map((item: { id: string }) => item.id)).toEqual(['work', 'spare', 'backup']);
+        expect(latest.resolve('work', { anchorId: 'backup', placement: 'after' })).toMatchObject({ status: 'allowed', effect: { input: { move: { accountId: 'work', position: { anchorId: 'backup', placement: 'after' } } } } });
+        await screen.update(<QualifiedPoolDetailView {...currentProps} group={{ ...group, members: group.members.filter(member => member.ref.accountId !== 'backup') }} />);
+        expect(screen.root.findByType(EntityFlatReorderList).props.binding.resolve('work', { anchorId: 'backup', placement: 'after' }).status).toBe('refused');
+        expect(patchMember).not.toHaveBeenCalled();
     });
 
     it('disables move-up on the first member and move-down on the last', async () => {
@@ -788,14 +802,13 @@ describe('QualifiedPoolDetailView', () => {
                 { ref: accountRef('backup'), priority: 200, enabled: false, state: {} },
             ],
         });
-        const header = itemlessHeader(screen);
-        expect(header.title).toBe('Team pool');
-        expect(header.meta).toEqual([expect.objectContaining({ text: 'connectedServicesPool.membersOn(service=Codex,on=1,total=2)' })]);
+        expect(screen.getTextContent()).toContain('Team pool');
+        expect(screen.getTextContent()).toContain('connectedServicesPool.membersOn(service=Codex,on=1,total=2)');
     });
 
     it('names a pool whose display name is only whitespace by its service title', async () => {
         const { screen } = await renderPoolDetail({ displayName: '   ' });
-        expect(itemlessHeader(screen).title).toBe('Codex');
+        expect(screen.getTextContent()).toContain('Codex');
     });
 
     it('renames the pool inline only after saving the draft', async () => {
@@ -928,21 +941,15 @@ describe('QualifiedPoolDetailView', () => {
 
 function quotaLimitsMenu(screen: Screen) {
     return screen.root
-        .findAllByType('DropdownMenu' as never)
+        .findAll((candidate) => typeof candidate.type !== 'string' && Array.isArray(candidate.props.items) && typeof candidate.props.onSelect === 'function')
         .find((candidate) => candidate.props.items?.some((item: { title?: string }) => (
             item.title === 'connectedServices.detail.groupDetail.quotaLimitsAllTitle'
         )));
 }
 
 function moreMenu(screen: Screen) {
-    const node = screen.root.findAllByType('DropdownMenu' as never)
+    const node = screen.root.findAll((candidate) => typeof candidate.type !== 'string' && Array.isArray(candidate.props.items) && typeof candidate.props.onSelect === 'function')
         .find((candidate) => candidate.props.items?.some((item: { id: string }) => item.id === 'delete'));
     if (!node) throw new Error('no pool menu');
     return node;
-}
-
-function itemlessHeader(screen: Screen): Record<string, any> {
-    const node = screen.root.findAll((candidate) => candidate.props?.testID === 'connected-services-pool-detail:summary' && candidate.props?.meta !== undefined)[0];
-    if (!node) throw new Error('no header');
-    return node.props;
 }

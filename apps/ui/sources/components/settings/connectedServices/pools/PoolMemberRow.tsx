@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { Pressable, View, type LayoutChangeEvent } from 'react-native';
-import { GestureDetector, type ComposedGesture, type GestureType } from 'react-native-gesture-handler';
+import { Platform, Pressable, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -9,6 +8,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -39,9 +39,10 @@ export type PoolMemberNote = Readonly<{ icon: 'info' | 'clock'; text: string }>;
 const LOADING_METERS = ['first', 'second'] as const;
 /**
  * Below this row width the meters move under the member's identity (the lab's phone twin) while the
- * switch, ⋯ and › stay beside the name: identity (~220), meters (300) and controls (~130) need it.
+ * switch and › stay beside the name. Compact rows offer the remaining actions by long press;
+ * intentional Organize mode supplies the shared drag grip on phones.
  */
-const INLINE_USAGE_MIN_ROW_WIDTH_PX = 720;
+const INLINE_USAGE_MIN_ROW_WIDTH_PX = PAGE_LIST_METRICS.rowStackBelowWidthPx;
 
 /**
  * A pool member (lab `csvc` PL, round 3): drag handle (priority), a radio that makes it the active
@@ -63,12 +64,16 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
     onEnabledChange: ((enabled: boolean) => void) | null;
     onOpen: (() => void) | null;
     actions: ReadonlyArray<ItemAction>;
-    reorderGesture?: GestureType | ComposedGesture;
+    /** Shared entity handle; intentional Organize mode makes it available on phones. */
+    reorderHandle?: React.ReactNode;
+    showDivider?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { title } = props;
     const [inlineUsage, setInlineUsage] = React.useState(true);
+    const [actionsOpen, setActionsOpen] = React.useState(false);
+    const openActions = React.useCallback(() => setActionsOpen(true), []);
     const onLayout = React.useCallback((event: LayoutChangeEvent) => {
         const width = event.nativeEvent.layout.width;
         if (!Number.isFinite(width) || width <= 0) return;
@@ -87,6 +92,7 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
                     tone={resolveQuotaMeterTone(meter)}
                     estimated={meter.status === 'estimated'}
                     now={props.now}
+                    size="card"
                 />
             ))}
         </UsageMeterStack>
@@ -104,18 +110,7 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
 
     const leading = (
         <View style={styles.leading}>
-            {props.reorderGesture ? (
-                <GestureDetector gesture={props.reorderGesture}>
-                    <View
-                        testID={`${props.testID}:reorder-handle`}
-                        accessibilityLabel={t('connectedServicesPool.dragA11y')}
-                        hitSlop={8}
-                        style={styles.grip}
-                    >
-                        <Icon name="dots-six-vertical" size={16} color={theme.colors.text.tertiary} />
-                    </View>
-                </GestureDetector>
-            ) : null}
+            {props.reorderHandle}
             <Pressable
                 testID={`${props.testID}:active-radio`}
                 hitSlop={8}
@@ -135,10 +130,16 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
         </View>
     );
 
-    return (
-        <View onLayout={onLayout}>
+    const row = (
+        <View testID={`${props.testID}:layout`} onLayout={onLayout}>
             <Item
                 testID={props.testID}
+                dataSet={{ entityDragBody: 'true' }}
+                onLongPress={(Platform.OS !== 'web' || !inlineUsage) && props.actions.length > 0 ? openActions : undefined}
+                onContextMenu={!inlineUsage && props.actions.length > 0 ? (event) => { (event as { preventDefault?: () => void }).preventDefault?.(); setActionsOpen(true); } : undefined}
+                accessibilityActions={!inlineUsage ? props.actions.filter((action) => !action.disabled).map((action) => ({ name: action.id, label: action.title })) : undefined}
+                onAccessibilityAction={!inlineUsage ? (event) => props.actions.find((action) => action.id === event.nativeEvent.actionName)?.onPress?.() : undefined}
+                onKeyDown={!inlineUsage ? (event) => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault?.(); setActionsOpen(true); } } : undefined}
                 title={title}
                 titleAccessory={props.active ? (
                     <StatusPill testID={`${props.testID}:active`} variant="neutral" hideDot label={t('connectedServicesPool.active')} />
@@ -152,6 +153,7 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
                     </View>
                 ) : undefined}
                 leftElement={leading}
+                bottomElement={!inlineUsage ? usage : undefined}
                 rightElement={(
                     <View style={styles.right}>
                         {inlineUsage ? <View style={styles.usage}>{usage}</View> : null}
@@ -172,6 +174,9 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
                                     compactThreshold={Number.POSITIVE_INFINITY}
                                     compactActionIds={[]}
                                     overflowTriggerTestID={`${props.testID}:actions-menu`}
+                                    overflowOpen={actionsOpen}
+                                    onOverflowOpenChange={setActionsOpen}
+                                    renderOverflowTrigger={!inlineUsage ? () => null : undefined}
                                 />
                             ) : null}
                             {props.onOpen ? (
@@ -190,10 +195,11 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
                 rightElementOutsidePressable
                 showChevron={false}
                 accessoryLayout="inline"
+                showDivider={props.showDivider}
             />
-            {!inlineUsage && usage ? <View style={styles.usageBelow}>{usage}</View> : null}
         </View>
     );
+    return row;
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -202,22 +208,24 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 8,
     },
-    grip: {
-        paddingVertical: 4,
-    },
     right: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 16,
+        flexShrink: 1,
+        minWidth: 0,
     },
     usage: {
         width: 300,
         maxWidth: '100%',
+        flexShrink: 1,
+        minWidth: 0,
     },
     controls: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
+        flexShrink: 0,
     },
     muted: {
         color: theme.colors.text.secondary,
@@ -234,13 +242,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 17,
         color: theme.colors.state.warning.foreground,
         flexShrink: 1,
-    },
-    // Under the identity, aligned with the name (grip + radio), across the rest of the row.
-    usageBelow: {
-        marginTop: -6,
-        paddingLeft: 76,
-        paddingRight: 16,
-        paddingBottom: 14,
     },
     quiet: {
         ...Typography.default(),

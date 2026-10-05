@@ -24,6 +24,25 @@ const REVEAL_DELAY_MS = 250;
  * asks here whether the page rendered the row; only the requested row ever registers.
  */
 const mountedRequestedAnchors = new Map<string, number>();
+const requestedAnchorListeners = new Map<string, Set<() => void>>();
+
+function notifyRequestedAnchorListeners(registrationKey: string) {
+    for (const listener of requestedAnchorListeners.get(registrationKey) ?? []) listener();
+}
+
+function useRequestedAnchorMounted(registrationKey: string): boolean {
+    const subscribe = React.useCallback((listener: () => void) => {
+        const listeners = requestedAnchorListeners.get(registrationKey) ?? new Set<() => void>();
+        listeners.add(listener);
+        requestedAnchorListeners.set(registrationKey, listeners);
+        return () => {
+            listeners.delete(listener);
+            if (listeners.size === 0) requestedAnchorListeners.delete(registrationKey);
+        };
+    }, [registrationKey]);
+    const getSnapshot = React.useCallback(() => mountedRequestedAnchors.has(registrationKey), [registrationKey]);
+    return React.useSyncExternalStore(subscribe, getSnapshot, () => false);
+}
 
 function useAnchorRegistrationKey(anchor: string | null): string {
     return JSON.stringify([useDestinationInstanceKey(), anchor]);
@@ -33,11 +52,16 @@ function useRegisterRequestedAnchor(anchor: string, isTarget: boolean) {
     const registrationKey = useAnchorRegistrationKey(anchor);
     React.useEffect(() => {
         if (!isTarget) return;
+        const wasMounted = mountedRequestedAnchors.has(registrationKey);
         mountedRequestedAnchors.set(registrationKey, (mountedRequestedAnchors.get(registrationKey) ?? 0) + 1);
+        if (!wasMounted) notifyRequestedAnchorListeners(registrationKey);
         return () => {
             const count = (mountedRequestedAnchors.get(registrationKey) ?? 1) - 1;
             if (count > 0) mountedRequestedAnchors.set(registrationKey, count);
-            else mountedRequestedAnchors.delete(registrationKey);
+            else {
+                mountedRequestedAnchors.delete(registrationKey);
+                notifyRequestedAnchorListeners(registrationKey);
+            }
         };
     }, [registrationKey, isTarget]);
 }
@@ -118,8 +142,8 @@ export const SettingRow = React.memo(function SettingRow(props: SettingRowProps)
             <Item
                 {...itemProps}
                 showDivider={showDivider}
-                title={t(setting.titleKey)}
-                subtitle={subtitle ?? (setting.descriptionKey ? t(setting.descriptionKey) : undefined)}
+                title={setting.title ?? t(setting.titleKey)}
+                subtitle={subtitle ?? setting.description ?? (setting.descriptionKey ? t(setting.descriptionKey) : undefined)}
             />
         </SettingAnchor>
     );
@@ -168,7 +192,8 @@ type SettingAnchorProps = Readonly<{
 
 export const SettingAnchor = React.memo(function SettingAnchor(props: SettingAnchorProps) {
     const requested = useRequestedSettingAnchor();
-    const child = props.showDivider === undefined
+    // A fragment of rows has no divider of its own; only a single row takes the section's divider.
+    const child = props.showDivider === undefined || props.children.type === React.Fragment
         ? props.children
         : React.cloneElement(props.children as React.ReactElement<{ showDivider?: boolean }>, { showDivider: props.showDivider });
     const isTarget = requested !== null && (props.setting
@@ -213,6 +238,7 @@ export const SettingSection = React.memo(function SettingSection(props: Readonly
 }>) {
     const requested = useRequestedSettingAnchor();
     const registrationKey = useAnchorRegistrationKey(requested);
+    const rowMounted = useRequestedAnchorMounted(registrationKey);
     const holdsRequested = requested !== null && (
         props.section.settingAnchors.includes(requested)
         || (props.answersFor ?? []).some((other) => other.settingAnchors.includes(requested))
@@ -220,14 +246,14 @@ export const SettingSection = React.memo(function SettingSection(props: Readonly
     const [rowMissing, setRowMissing] = React.useState(false);
 
     React.useEffect(() => {
-        if (!holdsRequested || requested === null) {
+        if (!holdsRequested || requested === null || rowMounted) {
             setRowMissing(false);
             return;
         }
         // Checked when the row itself would reveal, after the page's first layout.
         const timer = setTimeout(() => setRowMissing(!mountedRequestedAnchors.has(registrationKey)), REVEAL_DELAY_MS);
         return () => clearTimeout(timer);
-    }, [holdsRequested, requested, registrationKey]);
+    }, [holdsRequested, requested, registrationKey, rowMounted]);
 
     const { hostRef, highlight } = useSettingReveal(rowMissing, 0);
     // The section's column (as `ItemGroup` lays it out), so the mark follows its sheet edges.

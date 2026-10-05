@@ -8,6 +8,7 @@ import { resolveNativeTypeScriptBin, runPluginAuthorToolchain, type PluginAuthor
 import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
+import { preparePluginDevelopmentRoot } from '@/plugins/daemon/developmentCandidateMaterializer';
 
 function successfulSpawn(_input?: Parameters<PluginAuthorToolchainDeps['spawn']>[0]) {
   return Promise.resolve({ exitCode: 0, signal: null, stdout: '', stderr: '' });
@@ -115,11 +116,13 @@ describe('runPluginAuthorToolchain', () => {
 
 describe('runPluginAuthorToolchain', () => {
 
-  it('installs and loads the prepublication author closure through the real managed file override', async () => {
+  it('installs, refreshes and loads the prepublication author closure through the real managed file override', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'happier-author-external-sdk-resolution-'));
+    const harnessHome = await mkdtemp(join(tmpdir(), 'happier-author-refresh-home-'));
     // Every declared author package must come from the transient file overrides;
     // an undeclared package must not fall back to a registry request.
     vi.stubEnv('npm_config_offline', 'true');
+    vi.stubEnv('HAPPIER_HOME_DIR', harnessHome);
     try {
       await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
         name: 'external-happier-plugin',
@@ -140,6 +143,15 @@ describe('runPluginAuthorToolchain', () => {
 
       expect(result, JSON.stringify(result, null, 2))
         .toMatchObject({ ok: true, operation: 'install', projectRoot });
+      // Dev dependency installation is followed by daemon-owned preparation
+      // during `plugins install --dev`. Each pass disposes its transient SDK.
+      // pnpm must not try to reopen the deleted source from the prior pass.
+      const refreshed = await preparePluginDevelopmentRoot({
+        sourceRootPath: projectRoot,
+        prepareDependencies: true,
+      });
+      expect(refreshed.rootPath).toBe(await realpath(projectRoot));
+      await refreshed.cleanup();
       await expect(readFile(join(projectRoot, 'pnpm-workspace.yaml'), 'utf8'))
         .rejects.toMatchObject({ code: 'ENOENT' });
 
@@ -210,6 +222,7 @@ describe('runPluginAuthorToolchain', () => {
     } finally {
       vi.unstubAllEnvs();
       await rm(projectRoot, { recursive: true, force: true });
+      await rm(harnessHome, { recursive: true, force: true });
     }
   }, 300_000);
 });

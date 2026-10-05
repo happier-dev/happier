@@ -34,7 +34,7 @@ let appliedSnapshot: typeof import('@/sync/domains/server/serverRuntime')['getAc
 let serverId: string;
 
 function definition(definitionId: string) {
-    return { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: `Workflow ${definitionId}` } };
+    return { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: `Workflow ${definitionId}` }, contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null };
 }
 
 let probes: Record<string, ReturnType<typeof import('./workflowLibraryReads')['useWorkflowDefinitionLibrary']>> = {};

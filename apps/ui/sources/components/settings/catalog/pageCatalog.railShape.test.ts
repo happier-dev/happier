@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SETTINGS_PAGE_CATALOG } from './pageCatalog';
+import { SETTINGS_PAGE_CATALOG, readSettingsPageGate } from './pageCatalog';
 
 type CatalogNode = Readonly<{
     id: string;
@@ -29,6 +29,13 @@ function walk(
  * here instead of being left as an implicit assumption inside the renderer.
  */
 describe('settings catalog rail shape', () => {
+    it('gates conversations independently while keeping Dictation reachable when conversations are disabled', () => {
+        const voice = walk(catalog).find(({ node }) => node.id === 'voice')?.node;
+        expect(readSettingsPageGate('voice')).toBeUndefined();
+        expect(readSettingsPageGate('voiceDictation')).toBeUndefined();
+        expect(readSettingsPageGate('voiceConversations')).toEqual({ featureId: 'voice' });
+        expect(voice?.children?.some((child) => child.id === 'voiceDictation')).toBe(true);
+    });
     it('gives every node either a destination or children to label', () => {
         const dead = walk(catalog)
             .filter(({ node }) => !node.route && (node.children?.length ?? 0) === 0)

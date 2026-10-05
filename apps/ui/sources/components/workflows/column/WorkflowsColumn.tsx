@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol';
 import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierPressable, HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 
-import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -17,7 +18,8 @@ import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/wor
 import { AccountTriggersSection } from '@/components/workflows/triggers/AccountTriggersSection';
 import { useWorkflowDefinitionLibrary } from '@/components/workflows/library/workflowLibraryReads';
 import { useSocketStatus } from '@/sync/domains/state/storage';
-import { t } from '@/text';
+import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { t, tLoose } from '@/text';
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
 import { splitLibraryDefinitions } from './workflowsColumnModel';
@@ -38,11 +40,13 @@ function readOpenDefinition(pathname: string): string | null {
 export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readonly<{ surface?: 'plane' | 'page' }>) {
     const access = useWorkflowsDestinationAccess();
     const pathname = usePathname();
+    const params = useGlobalSearchParams<{ trigger?: string }>();
     const [view, setView] = React.useState<WorkflowsColumnView>(() => isRunPath(pathname) ? 'runs' : 'definitions');
     React.useEffect(() => {
-        if (isRunPath(pathname)) setView('runs');
+        if (params.trigger) setView('definitions');
+        else if (isRunPath(pathname)) setView('runs');
         else if (readOpenDefinition(pathname)) setView('definitions');
-    }, [pathname]);
+    }, [pathname, params.trigger]);
     const content = access.kind === 'workflows' ? <View style={styles.column}>
         <View style={styles.views}>
             <SegmentedTabBar<WorkflowsColumnView>
@@ -111,6 +115,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
                 title={definition.metadata.title} icon={<Icon name="tree-structure" />} selected={selectedDefinitionId === definition.definitionId}
                 onPress={() => router.push(`/workflows/${encodeURIComponent(definition.definitionId)}` as never)} />)}
         </> : null}
+        <ColumnBuiltins selectedDefinitionId={selectedDefinitionId} />
         {split.fromPlugins.length > 0 ? <>
             <CollectionListGroupLabel testID="workflows-column:group:fromPlugins" title={t('workflows.plugins.fromPlugins')}
                 count={split.fromPlugins.length} />
@@ -121,6 +126,25 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         </> : null}
     </>;
 });
+
+/**
+ * The column's Built-in group (07 S1, lab `convo-N7`): the same navigation row as Library, mark and name
+ * only. Run now and Choose a session… stay on each built-in's page and on the library home, so the
+ * column carries one row anatomy and never repeats the home's description.
+ */
+function ColumnBuiltins(props: Readonly<{ selectedDefinitionId: string | null }>) {
+    const router = useRouter();
+    const entries = getBuiltinWorkflowCatalogV1();
+    return <>
+        <CollectionListGroupLabel testID="workflows-column:group:builtin" title={t('workflows.page.blocks.builtin')} count={entries.length} />
+        {entries.map((entry) => {
+            const href = createWorkflowDefinitionRoute(entry.id);
+            return <CollectionNavigationRow key={entry.id} href={href} testID={`workflows-column:builtin:${entry.id}`}
+                title={tLoose(entry.titleKey)} icon={<Icon name="tree-structure" />} selected={props.selectedDefinitionId === entry.id}
+                onPress={() => router.push(href as never)} />;
+        })}
+    </>;
+}
 
 function ColumnGroupLink(props: Readonly<{ testID: string; label: string; onPress: () => void }>) {
     return <HappierPressable testID={props.testID} accessibilityRole="link" accessibilityLabel={props.label} onPress={props.onPress} style={styles.groupLink}>

@@ -128,7 +128,7 @@ describe('BrowserShell on a phone', () => {
             kind: 'controllerChanged', eventId: `c_${controller}`, browserSessionId: 'browser_session_1', viewId: 'view_1', occurredAt: 4,
             state: { browserSessionId: 'browser_session_1', viewId: 'view_1', controller, controlEpoch: controller === 'agent' ? 1 : 2 },
         } as BrowserEventV1);
-        const context = {
+        const context: NonNullable<React.ComponentProps<typeof BrowserShell>['browserContext']> = {
             state: createBrowserContextState(),
             contextCapabilities: {
                 enabled: true, available: true, supportedContextKinds: ['browserPageReference'], supportedAdapterKinds: ['chromiumSidecar'],
@@ -138,7 +138,7 @@ describe('BrowserShell on a phone', () => {
             attachmentsUploadsEnabled: true,
             onStateChange: vi.fn(),
             nowMs: () => 1,
-        } as const;
+        };
         const render = (state: ReturnType<typeof withController>) => (
             <BrowserShell browserSessionId="browser_session_1" platform="web" state={state} onCommand={vi.fn()} browserContext={context} agent={{ sessionId: 'session_1' }} testID="browser-shell" />
         );

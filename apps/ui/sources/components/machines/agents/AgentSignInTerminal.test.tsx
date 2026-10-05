@@ -7,6 +7,16 @@ import type { DaemonTerminalEnsureResponse, DaemonTerminalStreamReadResponse } f
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn() }));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+// Unused HTTP boundary: fail loudly if sign-in ever invokes recipient-envelope work.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Sign-in unexpectedly reached the recipient-envelope API'); };
+    return { createSessionDataKeyEnvelopeClient: unused, readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused, prepareSessionDataKeyEnvelopesDetached: unused };
+});
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
@@ -44,7 +54,7 @@ describe('Agent sign-in terminal lifecycle on web', () => {
     });
     afterEach(() => { standardCleanup(); vi.useRealTimers(); });
 
-    function fixture(machineId: string) {
+    function fixture(machineId: string, signedIn = true) {
         const ensure = createDeferred<DaemonTerminalEnsureResponse>();
         const stream = createDeferred<DaemonTerminalStreamReadResponse>();
         const laterStream = createDeferred<DaemonTerminalStreamReadResponse>();
@@ -60,7 +70,10 @@ describe('Agent sign-in terminal lifecycle on web', () => {
                 return stream.promise;
             }
             if (method === 'daemon.terminal.close') return { ok: true };
-            if (method === 'daemon.agents.signIn.status') return { status: 'signedIn', accountLabel: 'fixture@example.invalid', checkedAt: Date.now(),
+            if (method === 'daemon.terminal.list') return { ok: true, terminals: [
+                { terminalId: machineId === 'restart-exits' ? 'first-terminal' : 'fixture-terminal', terminalKey: `provider-login:${machineId}:codex`, cwd: '/fixture', ended: false, exit: null },
+            ] };
+            if (method === 'daemon.agents.signIn.status') return { status: signedIn ? 'signedIn' : 'signedOut', accountLabel: 'fixture@example.invalid', checkedAt: Date.now(),
                 nativeLogin: 'login_terminal', connectedServices: [] };
             if (method === 'capabilities.detect') return { capabilities: {} };
             throw new Error(`Unexpected fixture RPC ${method}`);
@@ -89,6 +102,32 @@ describe('Agent sign-in terminal lifecycle on web', () => {
         await act(async () => { stream.resolve({ ok: true, terminalId: 'exit-terminal', events: [{ t: 'exit', seq: 0, exitCode: 0, signal: null }], nextCursor: 1, done: true }); });
         const view = screen.find((node) => node.props.session?.phase === 'signedIn');
         expect(view.props.accountLabel).toBe('fixture@example.invalid');
+        await screen.unmount();
+    });
+
+    it('reports both unsuccessful process exits after restarting in the same presenter', async () => {
+        const { ensure, stream, target } = fixture('restart-exits', false);
+        const secondStream = createDeferred<DaemonTerminalStreamReadResponse>();
+        const original = boundary.rpc.getMockImplementation()!;
+        let acquisitions = 0;
+        boundary.rpc.mockImplementation(async (request: { method: string; payload?: { terminalId?: string } }) => {
+            if (request.method === 'daemon.terminal.ensure' && ++acquisitions > 1) {
+                return { ok: true, terminalId: 'second-terminal', reused: false };
+            }
+            if (request.method === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ && request.payload?.terminalId === 'second-terminal') return secondStream.promise;
+            return original(request);
+        });
+        ensure.resolve({ ok: true, terminalId: 'first-terminal', reused: false });
+        const onTerminalExit = vi.fn();
+        const screen = await renderScreen(<AgentSignInTerminal {...target} layout="pane" onClose={() => {}} onTerminalExit={onTerminalExit} />);
+        await act(async () => { stream.resolve({ ok: true, terminalId: 'first-terminal', events: [{ t: 'exit', seq: 0, exitCode: 1, signal: null }], nextCursor: 1, done: true }); });
+        expect(screen.find((node) => Boolean(node.props.session)).props.session.phase).toBe('failed');
+        await act(async () => { screen.find((node) => typeof node.props.controller?.requestRestart === 'function').props.controller.requestRestart(); });
+        expect(screen.find((node) => Boolean(node.props.session)).props.session.phase).toBe('waiting');
+        expect(onTerminalExit).toHaveBeenCalledTimes(1);
+        await act(async () => { secondStream.resolve({ ok: true, terminalId: 'second-terminal', events: [{ t: 'exit', seq: 0, exitCode: 1, signal: null }], nextCursor: 1, done: true }); });
+        expect(screen.find((node) => Boolean(node.props.session)).props.session.phase).toBe('failed');
+        expect(onTerminalExit).toHaveBeenCalledTimes(2);
         await screen.unmount();
     });
 

@@ -231,6 +231,13 @@ describe('openBrowserTargetInWorkspace', () => {
         } as LocalServiceLaunchTargetV1)).toBeNull();
     });
 
+    it('refuses inventory registration without a projected inventory identity', async () => {
+        const open = bindServicesOpenInBrowser({ onOpenTarget: vi.fn(), platform: 'web' });
+        expect(await open({ ...serviceTargetWithBrowserTarget, sourceClass: undefined,
+            browserTarget: undefined, actions: ['register_preview'] })).toEqual({ status: 'denied', reasonCode: 'browser_target_unavailable' });
+        expect(machineRpcMock).not.toHaveBeenCalled();
+    });
+
     it('registers a detected service through the server preview owner before opening its returned URL', async () => {
         // The loaded Browser/Services surface subscribes to this canonical store key.
         const unsubscribe = subscribeLocalServicePreviewStore({ machineId: 'machine_123' }, () => {}, {
@@ -238,7 +245,7 @@ describe('openBrowserTargetInWorkspace', () => {
         });
         await Promise.resolve();
         await Promise.resolve();
-        const target: LocalServiceLaunchTargetV1 = { ...serviceTargetWithBrowserTarget, browserTarget: undefined, actions: ['register_preview'], sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'svc_1' } };
+        const target: LocalServiceLaunchTargetV1 = { ...serviceTargetWithBrowserTarget, id: 'opaque-launcher-target', browserTarget: undefined, actions: ['register_preview'], sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'svc_1' } };
         const resource = {
             previewId: 'preview_123', sessionId: 'session_123', machineId: 'machine_123',
             owner: { kind: 'session', id: 'session_123' }, target: { scheme: 'http', host: '127.0.0.1', port: 5173 },

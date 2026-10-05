@@ -39,7 +39,9 @@ const BOARD = projectSessionBoard({
     items: new Map([
         ['relay', boardItem('Relay retries, last 90 min', { kind: 'hostedHtml', source: { kind: 'html', html: '<main></main>' }, requestedCapabilities: {} })],
         ['checklist', boardItem('Release checklist', { kind: 'declarative', document: CHECKLIST })],
-        ['conv', boardItem('External conversations', { kind: 'installedSurface', surface: { pluginId: 'happier.channels', localId: 'session-conversations-widget' } })],
+        ['conv', boardItem('External conversations', { kind: 'widget', instance: {
+            v: 1, id: 'conv', definition: { kind: 'installed', surface: { pluginId: 'happier.channels', localId: 'session-conversations-widget' } }, bindings: {},
+        } })],
         ['question', boardItem('Open question', { kind: 'declarative', document: createSessionSurfaceNoteDocumentV1('Does the phone sheet need the same retry budget as desktop?') })],
     ]),
     capabilities: { readTranscript: true, editSessionRecords: true },

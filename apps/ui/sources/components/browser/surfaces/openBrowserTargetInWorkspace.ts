@@ -385,9 +385,10 @@ export function bindServicesOpenInBrowser(
         if (target.actions.includes('register_preview') || browserTarget?.kind === 'localServicePreview') {
             const inventoryEntryId = target.sourceClass?.kind === 'inventory_entry'
                 ? target.sourceClass.inventoryEntryId
-                : target.source === 'inventory_entry' && target.id.startsWith('inventory:')
-                    ? target.id.slice('inventory:'.length)
-                    : undefined;
+                : undefined;
+            if (target.source === 'inventory_entry' && !inventoryEntryId) {
+                return { status: 'denied', reasonCode: 'browser_target_unavailable' };
+            }
             // A new inventory registration belongs to the viewing context. An existing
             // preview keeps its own resource scope, including an explicitly sessionless one.
             const sessionId = inventoryEntryId

@@ -10,6 +10,21 @@ import {
 } from './sessionTriggerForm';
 
 describe('session trigger form', () => {
+    it('keeps the original prompt step and execution defaults while editing a legacy prompt', () => {
+        const created = buildTriggerTarget({ kind: 'sendPrompt', prompt: 'Before' }, 'account');
+        if (created?.kind !== 'inline') throw new Error('expected an inline target');
+        const target = { ...created, definition: { ...created.definition,
+            defaults: { ...created.definition.defaults, profileId: 'reviewed-profile', permissionMode: 'read-only' },
+            blocks: created.definition.blocks.map((block) => ({ ...block, id: 'retained-step' })),
+        } };
+        const then = readTriggerThen(target);
+        if (then.kind !== 'sendPrompt') throw new Error('expected a prompt form');
+        const changed = buildTriggerTarget({ ...then, prompt: 'After' }, 'account');
+        expect(changed).toMatchObject({ kind: 'inline', definition: {
+            defaults: { profileId: 'reviewed-profile', permissionMode: 'read-only', conversation: { kind: 'fresh' } },
+            blocks: [{ id: 'retained-step', document: { text: 'After' } }],
+        } });
+    });
     it.each(['prComment', 'ciFailed'] as const)('keeps %s and its selected pull request through add and edit', (kind) => {
         expect(createDefaultWhen(kind)).toEqual({ kind, pullRequest: null });
         const when = { kind, pullRequest: { repository: 'happier-dev/happier', number: 42 } };
@@ -48,7 +63,7 @@ describe('session trigger form', () => {
         const target = buildTriggerTarget({ kind: 'sendPrompt', prompt: '  Summarize overnight CI  ' });
         if (target?.kind !== 'inline') throw new Error('expected an inline target');
         expect(target.definition.defaults.conversation).toEqual({ kind: 'origin_session' });
-        expect(readTriggerThen(target)).toEqual({ kind: 'sendPrompt', prompt: 'Summarize overnight CI' });
+        expect(readTriggerThen(target)).toMatchObject({ kind: 'sendPrompt', prompt: 'Summarize overnight CI' });
         // An Account trigger has no session to continue: its prompt starts a new one.
         const account = buildTriggerTarget({ kind: 'sendPrompt', prompt: 'Morning digest' }, 'account');
         expect(account?.kind === 'inline' ? account.definition.defaults.conversation : null).toEqual({ kind: 'fresh' });
@@ -57,9 +72,9 @@ describe('session trigger form', () => {
     });
 
     it('writes Run a workflow as the reference arm', () => {
-        expect(buildTriggerTarget({ kind: 'runWorkflow', ref: 'builtin:review-and-converge' }))
+        expect(buildTriggerTarget({ kind: 'runWorkflow', ref: 'builtin:review-and-converge', inputs: {} }))
             .toEqual({ kind: 'workflow', ref: 'builtin:review-and-converge' });
-        expect(buildTriggerTarget({ kind: 'runWorkflow', ref: null })).toBeNull();
+        expect(buildTriggerTarget({ kind: 'runWorkflow', ref: null, inputs: {} })).toBeNull();
     });
 
     it('keeps the trigger context inputs when a workflow reference is reopened for editing', () => {
@@ -68,6 +83,16 @@ describe('session trigger form', () => {
         expect(then).toEqual({ kind: 'runWorkflow', ref: 'builtin:review-and-converge', inputs });
         // Constant inputs belong to the Action request, never the strict target arm.
         expect(buildTriggerTarget(then)).toEqual({ kind: 'workflow', ref: 'builtin:review-and-converge' });
+    });
+
+    it('keeps constant inputs for an inline target the popover does not author', () => {
+        const target = buildTriggerTarget({ kind: 'sendPrompt', prompt: 'Review' });
+        if (target?.kind !== 'inline') throw new Error('expected an inline target');
+        const keptTarget = { ...target, definition: { ...target.definition,
+            inputs: [{ name: 'brief', valueType: 'string' as const, required: true }] } };
+        expect(readTriggerThen(keptTarget, undefined, { brief: 'Retained' })).toEqual({
+            kind: 'kept', target: keptTarget, inputs: { brief: 'Retained' },
+        });
     });
 
     it('writes each session kind as its lifecycle events on this session, and a weekly schedule as its cron', () => {
@@ -93,6 +118,17 @@ describe('session trigger form', () => {
         const custom = { kind: 'schedule', schedule: { kind: 'cron', scheduleExpr: '*/15 * * * *', everyMs: null, timezone: null } } as unknown as Parameters<typeof readTriggerWhen>[0];
         // A cron that is not a simple schedule keeps its expression.
         expect(readTriggerWhen(custom)).toEqual({ kind: 'schedule', schedule: null, expression: '*/15 * * * *', timezone: null });
+    });
+
+    it('keeps an interval schedule ("Every hour") editable: it reads back and is written back as the same interval', () => {
+        const hourly = { kind: 'schedule', schedule: { kind: 'interval', scheduleExpr: null, everyMs: 3_600_000, timezone: 'Europe/Zurich' } } as unknown as Parameters<typeof readTriggerWhen>[0];
+        const when = readTriggerWhen(hourly);
+        expect(when).toEqual({ kind: 'schedule', schedule: null, expression: '', everyMs: 3_600_000, timezone: 'Europe/Zurich' });
+        expect(buildTriggerDefinition({ when: when!, enabled: false, sessionId: null })).toEqual({
+            kind: 'schedule',
+            enabled: false,
+            schedule: { kind: 'interval', scheduleExpr: null, everyMs: 3_600_000, timezone: 'Europe/Zurich' },
+        });
     });
 
     it('writes Do an action as one Action step with literal fields, and reads it back', () => {

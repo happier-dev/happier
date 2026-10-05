@@ -5,6 +5,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { t } from '@/text';
 
 export type PoolMultiSelectCandidate = Readonly<{
     id: string;
@@ -31,6 +33,8 @@ export type PoolMultiSelectFieldProps = Readonly<{
     testID?: string;
     /** Always offer search (a members list the person scans by name), not only for long lists. */
     searchable?: boolean;
+    menuChrome?: boolean;
+    connectAction?: Readonly<{ label: string; onPress: () => void }>;
     /** Controlled open state, for a surface that opens the menu from elsewhere (an empty state). */
     open?: boolean;
     onOpenChange?: (open: boolean) => void;
@@ -94,7 +98,8 @@ export const PoolMultiSelectField = React.memo(function PoolMultiSelectField(
                     <Icon
                         name={checked ? 'check-square' : 'square'}
                         size={20}
-                        color={checked ? theme.colors.accent.blue : theme.colors.text.secondary}
+                        weight={checked ? 'fill' : 'regular'}
+                        color={checked ? theme.colors.text.primary : theme.colors.text.secondary}
                     />
                 </View>
             ),
@@ -103,7 +108,7 @@ export const PoolMultiSelectField = React.memo(function PoolMultiSelectField(
         props.candidates,
         props.optionTestIDPrefix,
         selected,
-        theme.colors.accent.blue,
+        theme.colors.text.primary,
         theme.colors.text.secondary,
     ]);
 
@@ -114,6 +119,11 @@ export const PoolMultiSelectField = React.memo(function PoolMultiSelectField(
     }, [draft, open, props.selectedIds]);
     return (
         <DropdownMenu
+            header={props.menuChrome ? <Item title={props.title} subtitle={props.subtitle(selectedCount, props.candidates.length, selected)} mode="info" showChevron={false} showDivider={false} /> : undefined}
+            footer={props.menuChrome ? <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: theme.colors.border.default, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                {props.connectAction ? <RoundButton testID={`${props.testID}:connect`} size="small" display="inverted" title={props.connectAction.label} onPress={() => { handleOpenChange(false); props.connectAction?.onPress(); }} /> : <View />}
+                <RoundButton testID={`${props.testID}:done`} size="small" display="secondary" title={t('common.done')} onPress={() => handleOpenChange(false)} />
+            </View> : undefined}
             open={open}
             onOpenChange={handleOpenChange}
             items={items}

@@ -8,6 +8,7 @@ import type { WorkflowInvocationLifecycleV1 } from '@happier-dev/protocol/workfl
 import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 import { t } from '@/text';
 import { workflowStepPromptLabel } from '@happier-dev/protocol/workflows';
+import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
 import { buildHappierWorkMap, type HappierWorkMap, type HappierWorkMapPlaced } from '@happier-dev/plugin-ui/presentation';
 
 /**
@@ -26,6 +27,9 @@ import { buildHappierWorkMap, type HappierWorkMap, type HappierWorkMapPlaced } f
 
 export type WorkflowFlowNodeKind =
   | 'step'
+  | 'action'
+  | 'workflow'
+  | 'wait'
   | 'parallel'
   | 'branch'
   | 'loop'
@@ -100,8 +104,14 @@ function declareFlowNode(node: WorkflowFlowNodeInput): WorkflowFlowNodeDeclarati
 }
 
 function labelForBlock(block: WorkflowBlock, fallback: string): string {
-  if (block.kind === 'step') return workflowStepPromptLabel(block) ?? fallback;
+  if (block.kind === 'step' || block.kind === 'wait') return workflowStepPromptLabel(block) ?? fallback;
+  if (block.kind === 'action') return findWorkflowActionSpec(block.actionId)?.title ?? fallback;
   return fallback;
+}
+
+/** Child definitions may reuse ids; the call path, not the invocation occurrence, identifies a node. */
+export function resolveWorkflowFlowScopedNodeId(blockId: string, workflowPath: readonly string[] = []): string {
+  return workflowPath.length === 0 ? blockId : JSON.stringify([...workflowPath, blockId]);
 }
 
 function summarizeRepetition(repetition: WorkflowRepetition): WorkflowFlowRepetitionSummary {
@@ -127,7 +137,10 @@ function summarizeRepetition(repetition: WorkflowRepetition): WorkflowFlowRepeti
  * conditional branches, loop body and continuation. Nothing is added that the
  * author did not write.
  */
-export function projectWorkflowFlow(definition: WorkflowDefinitionV1): WorkflowFlowProjection {
+export function projectWorkflowFlow(
+  definition: WorkflowDefinitionV1,
+  frozenChildren: Readonly<Record<string, WorkflowDefinitionV1>> = {},
+): WorkflowFlowProjection {
   const declarations: WorkflowFlowNodeDeclaration[] = [];
   const pushNode = (node: WorkflowFlowNodeInput): void => {
     declarations.push(declareFlowNode(node));
@@ -136,16 +149,43 @@ export function projectWorkflowFlow(definition: WorkflowDefinitionV1): WorkflowF
   const visitList = (
     list: readonly WorkflowBlock[],
     parentNodeId: string | null,
+    workflowPath: readonly string[] = [],
+    childEditTarget: WorkflowFlowEditTarget | null = null,
+    refs: readonly string[] = [],
   ): void => {
     list.forEach((block, index) => {
       const ordinal = index + 1;
+      const nodeId = resolveWorkflowFlowScopedNodeId(block.id, workflowPath);
+      const editTarget = childEditTarget ?? { kind: 'block' as const, blockId: block.id };
       switch (block.kind) {
+        case 'action':
+        case 'wait':
+        case 'workflow': {
+          pushNode({
+            nodeId,
+            blockId: block.id,
+            kind: block.kind,
+            editTarget,
+            label: labelForBlock(block, t(block.kind === 'action' ? 'workflows.page.blocks.menuAction'
+              : block.kind === 'wait' ? 'workflows.page.blocks.menuWait' : 'workflows.page.blocks.menuRun')),
+            parentNodeId,
+            observed: false,
+          });
+          if (block.kind === 'workflow') {
+            const child = frozenChildren[block.workflowRef];
+            // Drafts may contain cycles; accepted definitions are admission-validated.
+            if (child !== undefined && !refs.includes(block.workflowRef)) {
+              visitList(child.blocks, nodeId, [...workflowPath, block.id], editTarget, [...refs, block.workflowRef]);
+            }
+          }
+          break;
+        }
         case 'step':
           pushNode({
-            nodeId: block.id,
+            nodeId,
             blockId: block.id,
             kind: 'step',
-            editTarget: { kind: 'prompt', blockId: block.id },
+            editTarget: childEditTarget ?? { kind: 'prompt', blockId: block.id },
             label: labelForBlock(block, t('workflows.editor.unnamedStep', { position: ordinal })),
             parentNodeId,
             observed: false,
@@ -153,39 +193,40 @@ export function projectWorkflowFlow(definition: WorkflowDefinitionV1): WorkflowF
           break;
         case 'parallel': {
           pushNode({
-            nodeId: block.id,
+            nodeId,
             blockId: block.id,
             kind: 'parallel',
-            editTarget: { kind: 'block', blockId: block.id },
-            label: `${t('workflows.editor.unnamedParallel')} ${ordinal}`,
+            editTarget,
+            // 07 S14 / 05 §4.4: the fork reads as its sentence, not a structural name.
+            label: t('workflows.page.inspector.lanes', { count: block.branches.length }),
             parentNodeId,
             failurePolicy: block.failurePolicy,
             ...(block.maxConcurrent === undefined ? {} : { maxConcurrent: block.maxConcurrent }),
             observed: false,
           });
           block.branches.forEach((branch, branchIndex) => {
-            const branchNodeId = `${block.id}#${branch.id}`;
+            const branchNodeId = resolveWorkflowFlowScopedNodeId(`${block.id}#${branch.id}`, workflowPath);
             pushNode({
               nodeId: branchNodeId,
               blockId: branch.id,
               kind: 'branch',
               // A branch is a frame inside its group, not a block: the group is
               // the editor that can be revealed for it.
-              editTarget: { kind: 'block', blockId: block.id },
-              label: `${t('workflows.editor.branch')} ${branchIndex + 1}`,
-              parentNodeId: block.id,
+              editTarget,
+              label: t('workflows.page.inspector.lane', { position: branchIndex + 1 }),
+              parentNodeId: nodeId,
               observed: false,
             });
-            visitList(branch.blocks, branchNodeId);
+            visitList(branch.blocks, branchNodeId, workflowPath, childEditTarget, refs);
           });
           break;
         }
         case 'loop': {
           pushNode({
-            nodeId: block.id,
+            nodeId,
             blockId: block.id,
             kind: 'loop',
-            editTarget: { kind: 'block', blockId: block.id },
+            editTarget,
             label: `${t('workflows.editor.unnamedLoop')} ${ordinal}`,
             parentNodeId,
             repetition: summarizeRepetition(block.repetition),
@@ -199,16 +240,16 @@ export function projectWorkflowFlow(definition: WorkflowDefinitionV1): WorkflowF
               : {}),
             observed: false,
           });
-          visitList(block.body, block.id);
+          visitList(block.body, nodeId, workflowPath, childEditTarget, refs);
           if (block.repetition.kind === 'evaluate') {
             const evaluator = block.repetition.evaluator;
             pushNode({
-              nodeId: evaluator.id,
+              nodeId: resolveWorkflowFlowScopedNodeId(evaluator.id, workflowPath),
               blockId: evaluator.id,
               kind: 'evaluator',
-              editTarget: { kind: 'prompt', blockId: evaluator.id },
+              editTarget: childEditTarget ?? { kind: evaluator.kind === 'step' ? 'prompt' : 'block', blockId: evaluator.id },
               label: labelForBlock(evaluator, t('workflows.editor.evaluator')),
-              parentNodeId: block.id,
+              parentNodeId: nodeId,
               observed: false,
             });
           }
@@ -216,37 +257,37 @@ export function projectWorkflowFlow(definition: WorkflowDefinitionV1): WorkflowF
         }
         case 'if': {
           pushNode({
-            nodeId: block.id,
+            nodeId,
             blockId: block.id,
             kind: 'if',
-            editTarget: { kind: 'block', blockId: block.id },
+            editTarget,
             label: `${t('workflows.editor.unnamedIf')} ${ordinal}`,
             parentNodeId,
             observed: false,
           });
-          const thenNodeId = `${block.id}#then`;
+          const thenNodeId = resolveWorkflowFlowScopedNodeId(`${block.id}#then`, workflowPath);
           pushNode({
             nodeId: thenNodeId,
             blockId: block.id,
             kind: 'thenBranch',
-            editTarget: { kind: 'block', blockId: block.id },
+            editTarget,
             label: t('workflows.editor.ifTrue'),
-            parentNodeId: block.id,
+            parentNodeId: nodeId,
             observed: false,
           });
-          visitList(block.then, thenNodeId);
+          visitList(block.then, thenNodeId, workflowPath, childEditTarget, refs);
           if (block.otherwise.length > 0) {
-            const otherwiseNodeId = `${block.id}#otherwise`;
+            const otherwiseNodeId = resolveWorkflowFlowScopedNodeId(`${block.id}#otherwise`, workflowPath);
             pushNode({
               nodeId: otherwiseNodeId,
               blockId: block.id,
               kind: 'otherwiseBranch',
-              editTarget: { kind: 'block', blockId: block.id },
+              editTarget,
               label: t('workflows.editor.otherwise'),
-              parentNodeId: block.id,
+              parentNodeId: nodeId,
               observed: false,
             });
-            visitList(block.otherwise, otherwiseNodeId);
+            visitList(block.otherwise, otherwiseNodeId, workflowPath, childEditTarget, refs);
           }
           break;
         }

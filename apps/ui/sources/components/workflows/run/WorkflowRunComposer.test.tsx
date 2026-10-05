@@ -43,7 +43,7 @@ async function mount(initial: React.ComponentProps<typeof WorkflowRunComposer>['
 }
 
 describe('workflow composer admission', () => {
-    it('does not admit a root-role repeat when inline admission would drop its frozen role authority', async () => {
+    it('submits an accepted repeat with frozen root roles and nested step targets', async () => {
         const role = resolveRoleSelectionV1({ roleId: 'builder', runOverrides: [{ roleId: 'builder', workspaceWrites: 'deny' }] });
         if (!role.ok) throw new Error('invalid_role_fixture');
         const onRun = vi.fn();
@@ -51,21 +51,15 @@ describe('workflow composer admission', () => {
             definition={createWorkflowDefinitionFixture()} onRun={onRun} onCancel={() => {}} materializedLeaves={[{
                 sourceKey: '$root', blockId: 'build', kind: 'step', selection: {}, role: role.selection,
                 authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'session' },
-            }]} />);
-        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
-        await screen.pressByTestIdAsync('workflow-run-inputs-run');
-        expect(onRun).not.toHaveBeenCalled();
-    });
-    it('does not admit a nested repeat when inline admission cannot preserve its frozen child graph', async () => {
-        const onRun = vi.fn();
-        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}} onChangeValues={() => {}}
-            definition={createWorkflowDefinitionFixture()} onRun={onRun} onCancel={() => {}} materializedLeaves={[{
-                sourceKey: 'builtin:review-and-converge', blockId: 'child-step', kind: 'step', selection: {},
+            }, {
+                sourceKey: 'saved-child', blockId: 'child-step', kind: 'step', selection: {},
                 authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'detached_run' },
             }]} />);
-        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+        expect(screen.findByTestId('workflow-run-inputs-roles-chip')).not.toBeNull();
+        expect(screen.findByTestId('workflow-run-inputs-targets-chip')).not.toBeNull();
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
-        expect(onRun).not.toHaveBeenCalled();
+        expect(onRun).toHaveBeenCalledWith(undefined, []);
     });
     it('prefills only the starter’s newest accepted run of the saved workflow', async () => {
         getStorage().setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
@@ -77,9 +71,10 @@ describe('workflow composer admission', () => {
                 createWorkflowRunSummaryFixture({ id: 'own-run', ownerAccountId: 'account-a', sourceArtifactId: 'saved-workflow' }),
             ] } };
             if (action === 'workflow.run.get') return { ok: true, result: {
+                callerAccess: { canEdit: true },
                 run: createWorkflowRunSummaryFixture({ id: 'own-run', ownerAccountId: 'account-a', sourceArtifactId: 'saved-workflow' }),
-                definition, acceptedContext: { source: { kind: 'saved', definitionId: 'saved-workflow', revision: { headerVersion: 1, bodyVersion: 1 } },
-                    inputs: {}, machineId: 'machine-1', executionTarget: { kind: 'session' }, materializedLeaves: [], roleOverrides,
+                definition, authoredDefinition: definition, acceptedContext: { startedBy: 'user', source: { kind: 'saved', definitionId: 'saved-workflow', revision: { headerVersion: 1, bodyVersion: 1 }, savedBy: null },
+                    inputs: {}, machineId: 'machine-1', executionTarget: { kind: 'session' }, materializedLeaves: [], frozenChildren: {}, roleOverrides,
                     workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } }, origin: { kind: 'direct' } }, checkpoint: null,
             } };
             return { ok: true, result: { items: [] } };

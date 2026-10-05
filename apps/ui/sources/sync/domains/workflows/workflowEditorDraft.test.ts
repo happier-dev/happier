@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { WorkflowDefinitionV1Schema, type WorkflowBlock, type WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { createWorkflowEditorDraft, resolveSelectionAfterRemoval, toggleWorkflowBlockCollapsed, EMPTY_WORKFLOW_EDITOR_VIEW_STATE, type WorkflowEditorDraft } from './workflowEditorDraft';
+import * as draftOwner from './workflowEditorDraft';
+import { WORKFLOW_STARTER_EXAMPLES_V1 } from '@happier-dev/protocol';
+import { validateWorkflowEditorDraft } from './workflowAuthoring';
 import { collectWorkflowBlockIds, createWorkflowBlock, findWorkflowBlock, findWorkflowBlockListRef, insertWorkflowBlock, moveWorkflowBlock, resolvePreviousResultInputForInsertion, removeWorkflowBlock, setWorkflowDefaultField, setWorkflowFinalOutput, setWorkflowStepExecutionField, setWorkflowStepText, setWorkflowStepTimeout, updateWorkflowBlock, walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 function step(id: string, text = `${id} prompt`): WorkflowStep {
@@ -14,6 +17,19 @@ function draftWith(blocks: readonly WorkflowBlock[]): WorkflowEditorDraft {
 }
 
 describe('workflow block creation', () => {
+  it.each(WORKFLOW_STARTER_EXAMPLES_V1)('inserts $key atomically, renaming collisions without changing the catalog or existing work', (example) => {
+    const existing = setWorkflowDefaultField(draftWith([step('fix')]), 'agentTarget',
+      { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } });
+    const before = structuredClone(example.definition);
+    const first = draftOwner.insertWorkflowStarterExample(existing, example);
+    const second = draftOwner.insertWorkflowStarterExample(first.draft, example);
+    expect(second.draft.blocks[0]).toBe(existing.blocks[0]);
+    expect(collectWorkflowBlockIds(second.draft).size).toBe(collectWorkflowBlockIds(existing).size
+      + 2 * collectWorkflowBlockIds({ ...existing, blocks: example.definition.blocks }).size);
+    expect(validateWorkflowEditorDraft(second.draft).issues.filter((issue) => issue.severity === 'error')).toEqual([]);
+    expect(second.before).toEqual(first.draft);
+    expect(example.definition).toEqual(before);
+  });
   it('assigns a stable id at object creation so no block enters the optional-id dialect', () => {
     const first = createWorkflowBlock('step', new Set<string>());
     expect(first.id).toBe('step-1');

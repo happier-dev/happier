@@ -11,8 +11,10 @@ import { resolveViewportMinEdgePx, VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX } from
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 
 import { SettingsSidebar } from '@/components/settings/shell/SettingsSidebar';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 import { SettingsFloatingControlsHost } from '@/components/settings/shell/SettingsModalFloatingControls';
 import { SettingsRailVisibilityContext } from '@/components/settings/shell/settingsRailVisibility';
+import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import {
     SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX,
     SETTINGS_NAV_SIDEBAR_MAX_WIDTH_PX,
@@ -56,7 +58,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         // The plane the content pane lies on: the content pane is transparent and each settings
         // route paints its own canvas through `ItemList`. The rail beside it is the raised
         // surface, so this canvas is the recessed field the rail sits proud of.
-        backgroundColor: theme.colors.background.canvas,
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.background.canvas, 'content', true),
     },
     row: {
         flex: 1,
@@ -84,6 +86,7 @@ const stylesheet = StyleSheet.create((theme) => ({
  */
 
 export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{ children: React.ReactNode }>) {
+    const hosted = useDestinationInstanceKey() !== null;
     const styles = stylesheet;
     const { width: windowWidth, height: windowHeight } = useWindowDimensions();
     const settingsNavSidebarEnabled = useLocalSetting('settingsNavSidebarEnabled');
@@ -151,7 +154,7 @@ export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{
 
                 <View style={styles.content}>
                     <SettingsRailVisibilityContext.Provider value={showRail || appShell.columnVisible}>
-                        <SettingsFloatingControlsHost enabled={isTabletViewport}>
+                        <SettingsFloatingControlsHost enabled={isTabletViewport || hosted}>
                             {props.children}
                         </SettingsFloatingControlsHost>
                     </SettingsRailVisibilityContext.Provider>

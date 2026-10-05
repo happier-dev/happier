@@ -48,6 +48,8 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
             providerAccountId={shown.accountId}
             planLabel={quota.snapshot?.planLabel ?? null}
             agentDefaults={agentDefaults}
+            onRefresh={quota.supported !== false ? () => { void quota.refresh(); } : undefined}
+            refreshing={quota.refreshing}
             usageSection={(
                 <AccountDetailFactsSections
                     account={props.account}

@@ -31,6 +31,7 @@ export function isActionApprovalRequiredInState(
     state: Readonly<{ settings?: unknown }>,
     actionId: ActionSettingsActionId,
     ctx: Parameters<typeof isApprovalRequiredByActionsSettings>[2],
+    contributedApprovalDefault?: boolean,
 ): boolean {
-    return isApprovalRequiredByActionsSettings(actionId, resolveActionsSettingsV1FromState(state), ctx);
+    return isApprovalRequiredByActionsSettings(actionId, resolveActionsSettingsV1FromState(state), ctx, undefined, contributedApprovalDefault);
 }

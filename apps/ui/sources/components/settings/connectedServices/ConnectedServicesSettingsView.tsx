@@ -42,6 +42,7 @@ import { useConnectedServicesIndex } from './model/useConnectedServicesIndex';
 import { ConnectedAccountSettled } from './setup/ConnectedAccountSettled';
 import { ConnectedServicesConnectMore } from './setup/ConnectedServicesConnectMore';
 import type { ConnectedServiceSetupTarget } from './setup/ConnectedServiceSetupPanel';
+import { readConnectedServiceSetupResult } from './setup/connectMoreBlocks';
 
 const EMPTY_LABELS: Readonly<Record<string, string | undefined>> = {};
 
@@ -70,7 +71,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
   const usage = useUsageSummary({ load: 'cache' });
 
   // The rail's "+" (and a service route's `connect`) open the set-up blocks on the catalog.
-  const params = useLocalSearchParams<{ connect?: string; service?: string }>();
+  const params = useLocalSearchParams<{ connect?: string; service?: string; connectedService?: string; connectedAccount?: string }>();
   const [request, setRequest] = React.useState<ConnectedServiceSetupTarget | null>(null);
   const connectParam = typeof params.connect === 'string' ? params.connect : null;
   const serviceParam = typeof params.service === 'string' ? params.service : null;
@@ -82,6 +83,14 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
   const [setupOpen, setSetupOpen] = React.useState(false);
   const [settled, setSettled] = React.useState<Readonly<{ serviceKey: string; account: QualifiedConnectedAccountRef }> | null>(null);
   const [refreshToken, setRefreshToken] = React.useState(0);
+  const connectedServiceParam = params.connectedService;
+  const connectedAccountParam = params.connectedAccount;
+  React.useEffect(() => {
+    if (connectedServiceParam === undefined && connectedAccountParam === undefined) return;
+    const result = readConnectedServiceSetupResult({ connectedService: connectedServiceParam, connectedAccount: connectedAccountParam });
+    if (result) { setSettled(result); setRefreshToken((current) => current + 1); }
+    router.setParams({ connectedService: undefined, connectedAccount: undefined });
+  }, [connectedAccountParam, connectedServiceParam, router]);
 
   const navigate = React.useCallback((href: Parameters<typeof router.push>[0], tag: string) => {
     const result = runGuardedNavigation(() => router.push(href));
@@ -173,7 +182,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
     const canAdd = agentConnectable.length > 0 || projectionLoading;
     return (
       <ItemList>
-        <SettingsPageHeader description={t('settings.connectedServicesSubtitle')} />
+        {!canAdd ? <SettingsPageHeader description={t('settings.connectedServicesSubtitle')} /> : null}
         {banner}
         {canAdd ? connectMore : !projectionFailed ? (
           <View style={styles.firstRun}>

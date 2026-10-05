@@ -7,10 +7,12 @@ import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { SetupBlockPaper } from '@/components/ui/setupBlocks/SetupBlockPaper';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
 
 import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getConnectedServiceSetupPresentation } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 import type { ConnectedServiceSetupCatalogEntry } from './ConnectedServiceSetupPanel';
 
@@ -43,7 +45,9 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
 }>) {
     const { entry } = props;
     const card = props.layout === 'card';
-    const signIn = describeConnectedServiceSignIn(entry.entry);
+    const presentation = getConnectedServiceSetupPresentation(entry.service);
+    const signIn = presentation ? t(presentation.catalogDescriptionKey) : describeConnectedServiceSignIn(entry.entry);
+    const connectDisplay = presentation && 'connectPrimary' in presentation && presentation.connectPrimary ? 'default' : 'secondary';
     const count = props.showCount && entry.connectedCount > 0
         ? t('connectedServicesSettings.setupConnectedCount', { count: entry.connectedCount })
         : null;
@@ -55,9 +59,10 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
     return (
         <Pressable
             testID={`connected-service-setup:tile:${entry.serviceKey}`}
-            accessibilityRole="button"
-            accessibilityLabel={t('connectedServicesSettings.setupServiceTitle', { service: entry.label })}
-            accessibilityHint={entry.usedBy.length > 0 ? entry.usedBy.join(', ') : undefined}
+            // The tile extends the pointer target; Connect owns keyboard and screen-reader activation.
+            accessible={false}
+            focusable={false}
+            tabIndex={-1}
             onPress={props.onConnect}
             style={styles.press}
         >
@@ -74,9 +79,16 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     </View>
                     <View>
                         <Text style={styles.title} numberOfLines={1}>{entry.label}</Text>
-                        {signIn ? <Text style={styles.body} numberOfLines={2}>{signIn}</Text> : null}
+                        {signIn ? <Text style={styles.body}>{signIn}</Text> : null}
                     </View>
-                    {agents ? <View style={styles.foot}>{agents}</View> : null}
+                    <View style={styles.foot}>
+                        {agents}
+                        <RoundButton testID={`connected-service-setup:connect:${entry.serviceKey}`}
+                            size="small" display={connectDisplay} title={t('connectedServicesSettings.connect')}
+                            accessibilityLabel={t('connectedServicesSettings.setupServiceTitle', { service: entry.label })}
+                            accessibilityHint={entry.usedBy.length > 0 ? entry.usedBy.join(', ') : undefined}
+                            onPress={(event) => { event?.stopPropagation?.(); props.onConnect(); }} />
+                    </View>
                 </SetupBlockPaper>
             ) : (
                 <SetupBlockPaper
@@ -85,12 +97,22 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     appearance="tile"
                     highlighted={pressed || hovered === true}
                 >
-                    <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} size="card" />
+                    <View style={styles.rowIdentity}>
+                        <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} size="card" />
+                        {count ? <Text style={styles.count}>{count}</Text> : null}
+                    </View>
                     <View style={styles.rowText}>
                         <Text style={styles.title} numberOfLines={1}>{entry.label}</Text>
-                        <Text style={styles.body} numberOfLines={2}>{[signIn, count].filter(Boolean).join(' · ')}</Text>
+                        {signIn ? <Text style={styles.body}>{signIn}</Text> : null}
                     </View>
+                    <View style={styles.rowFoot}>
                     {agents}
+                    <RoundButton testID={`connected-service-setup:connect:${entry.serviceKey}`}
+                        size="small" display={connectDisplay} title={t('connectedServicesSettings.connect')}
+                        accessibilityLabel={t('connectedServicesSettings.setupServiceTitle', { service: entry.label })}
+                        accessibilityHint={entry.usedBy.length > 0 ? entry.usedBy.join(', ') : undefined}
+                        onPress={(event) => { event?.stopPropagation?.(); props.onConnect(); }} />
+                    </View>
                 </SetupBlockPaper>
             )}
         </Pressable>
@@ -115,6 +137,7 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         minWidth: 0,
     },
+    rowIdentity: { alignItems: 'center', gap: 4 },
     title: {
         ...Typography.default('semiBold'),
         ...happierPageTextMetrics('rowTitle'),
@@ -131,10 +154,15 @@ const styles = StyleSheet.create((theme) => ({
     },
     foot: {
         marginTop: 'auto',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
     },
     agents: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
     },
+    rowFoot: { alignItems: 'flex-end', gap: 5 },
 }));

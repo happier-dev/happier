@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, View, type LayoutChangeEvent } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
@@ -18,6 +18,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -68,33 +69,33 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
     /** Each window can be pinned: pinned windows show as extra gauges beside the composer. */
     pins?: Readonly<{ pinnedMeterIds: readonly string[]; onToggle: (meterId: string) => void }>;
     testID?: string;
+    compact?: boolean;
 }>) {
     const styles = stylesheet;
     const { facts } = props;
     const testID = props.testID ?? 'account-detail-usage';
-    const action = !props.signedOut && facts.refresh ? (
+    const action = !props.signedOut && (facts.refresh || facts.fetchedAt !== null) ? (
         <View style={styles.headerActions}>
             {facts.fetchedAt !== null ? <SurfaceAsOfLabel at={facts.fetchedAt} testID={`${testID}:as-of`} /> : null}
-            <RoundButton
+            {!props.compact && facts.refresh ? <RoundButton
                 testID={`${testID}:refresh`}
                 size="small"
                 display="inverted"
                 title={t('common.refresh')}
+                leading={<Icon name="arrow-clockwise" size={14} />}
                 loading={facts.refreshing}
                 disabled={facts.refreshing}
                 onPress={facts.refresh}
-            />
+            /> : null}
         </View>
     ) : undefined;
     return (
-        <ItemGroup title={t('settings.usage')} action={action}>
+        <ItemGroup title={t('settings.usage')} action={action} headerStyle={{ alignItems: 'center' }}>
             {props.signedOut && facts.fetchedAt !== null ? (
                 <SectionContentRow>
                     <SurfaceFreshnessLine
                         testID={`${testID}:stale`}
-                        asOf={facts.fetchedAt}
-                        reason={t('connectedServicesSettings.detailUsageSignedOut')}
-                        tone="warning"
+                        reason={t('connectedServicesSettings.detailUsageSignedOutAt', { time: formatAsOfTime(facts.fetchedAt, props.now) })}
                     />
                 </SectionContentRow>
             ) : null}
@@ -170,6 +171,7 @@ export const AccountDetailSubscriptionSectionView = React.memo(function AccountD
     planLabel: string | null;
     now: number;
     testID?: string;
+    compact?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -187,7 +189,7 @@ export const AccountDetailSubscriptionSectionView = React.memo(function AccountD
                 : t('connectedServicesCollection.subscriptionPeriodEndsOn', { date: ends ?? '', days });
     const checked = (
         <View style={styles.checked}>
-            <Icon name="clock" size={12} color={presented.stale ? theme.colors.state.warning.foreground : theme.colors.text.tertiary} />
+            {!props.compact ? <Icon name="clock" size={12} color={presented.stale ? theme.colors.state.warning.foreground : theme.colors.text.tertiary} /> : null}
             <Text style={[styles.checkedText, presented.stale ? styles.warning : null]}>
                 {presented.stale
                     ? t('connectedServicesCollection.checkedMayBeOutOfDate', { time: formatAsOfTime(presented.checkedAtMs, props.now) })
@@ -195,12 +197,23 @@ export const AccountDetailSubscriptionSectionView = React.memo(function AccountD
             </Text>
         </View>
     );
+    if (props.compact) {
+        const summary = presented.state === 'none' ? t('connectedServicesCollection.subscriptionNone')
+            : presented.state === 'renews' ? `${[props.serviceLabel, props.planLabel].filter(Boolean).join(' ')} · ${t('connectedServicesCollection.subscriptionRenewsIn', { days })}`
+            : presented.state === 'ends' ? t('connectedServicesCollection.subscriptionEndsIn', { days })
+            : t('connectedServicesCollection.subscriptionPeriodEndsIn', { days });
+        return <ItemGroup><Item testID={testID} density="compact" title={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <StatusDot color={presented.state === 'ends' ? theme.colors.state.warning.foreground : presented.state === 'renews' ? theme.colors.state.success.foreground : theme.colors.text.tertiary} />
+            <Text style={[styles.compactSubscription, presented.state === 'ends' ? styles.warning : null]}>{summary}</Text>
+        </View>} mode="info" showChevron={false} rightElement={checked} /></ItemGroup>;
+    }
     return (
         <ItemGroup title={t('connectedServicesCollection.subscriptionTitle')} action={checked}>
             <Item
                 testID={testID}
                 title={[props.serviceLabel, props.planLabel].filter(Boolean).join(' ')}
                 subtitle={subtitle}
+                subtitleLines={0}
                 mode="info"
                 showChevron={false}
                 rightElement={presented.state === 'none' ? undefined : (
@@ -215,6 +228,25 @@ export const AccountDetailSubscriptionSectionView = React.memo(function AccountD
             />
         </ItemGroup>
     );
+});
+
+/** The account facts' responsive composition, shared by live detail and the specimen fixture. */
+export const AccountDetailFactsSectionsView = React.memo(function AccountDetailFactsSectionsView(props: Readonly<{
+    facts: AccountDetailUsageFacts;
+    serviceLabel: string;
+    signedOut: boolean;
+    now: number;
+    pins?: React.ComponentProps<typeof AccountDetailUsageSectionView>['pins'];
+    resetsSection?: React.ReactNode;
+}>) {
+    const [compact, setCompact] = React.useState(false);
+    const onLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const width = event.nativeEvent.layout.width;
+        if (Number.isFinite(width) && width > 0) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx);
+    }, []);
+    const subscription = <AccountDetailSubscriptionSectionView key="subscription" subscription={props.facts.subscription} serviceLabel={props.serviceLabel} planLabel={props.facts.planLabel} now={props.now} compact={compact} />;
+    const usage = <AccountDetailUsageSectionView key="usage" facts={props.facts} signedOut={props.signedOut} now={props.now} pins={props.pins} compact={compact} />;
+    return <View onLayout={onLayout}>{compact ? [subscription, usage] : [usage, subscription]}{props.resetsSection}</View>;
 });
 
 /**
@@ -295,15 +327,7 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
     };
     const now = Date.now();
     return (
-        <>
-            <AccountDetailUsageSectionView facts={facts} signedOut={props.signedOut} now={now} pins={pins} />
-            <AccountDetailSubscriptionSectionView
-                subscription={subscription}
-                serviceLabel={props.serviceLabel}
-                planLabel={facts.planLabel}
-                now={now}
-            />
-            {props.legacyServiceId && !props.signedOut ? (
+        <AccountDetailFactsSectionsView facts={facts} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={props.legacyServiceId && !props.signedOut ? (
                 <LiveResetsSection
                     legacyServiceId={props.legacyServiceId}
                     accountId={props.account.accountId}
@@ -312,8 +336,7 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
                     onApplied={retry}
                     now={now}
                 />
-            ) : null}
-        </>
+            ) : null} />
     );
 });
 
@@ -486,6 +509,7 @@ export const AccountDetailWorksOnSection = React.memo(function AccountDetailWork
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
+    compactSubscription: { ...Typography.default(), fontSize: 13, lineHeight: 18, color: theme.colors.text.primary, flexShrink: 1 },
     headerActions: {
         flexDirection: 'row',
         alignItems: 'center',

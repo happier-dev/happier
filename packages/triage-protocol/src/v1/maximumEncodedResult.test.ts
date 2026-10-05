@@ -286,7 +286,7 @@ describe('maximum encoded value derivation', () => {
             getInput: 11_496,
             detailInput: 468_637,
             prepareReviewWorkspaceInput: 14_243,
-            administrationInput: 7_775,
+            administrationInput: 8_325,
         });
     });
 

@@ -43,6 +43,16 @@ function separators(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('SessionTriggersSectionView', () => {
+    it('offers PR-link Retry while keeping ordinary trigger rows usable', async () => {
+        const retry = vi.fn();
+        const screen = await renderScreen(<SessionTriggersSectionView groups={GROUPS} status="ready" pullRequestLinksUnavailable
+            pendingKeys={new Set()} onToggle={vi.fn()} onOpen={vi.fn()} onAdd={vi.fn()} onRetry={retry} />);
+        expect(screen.findByTestId('session-work-trigger:review:t1-switch')?.props.disabled).not.toBe(true);
+        expect(screen.findByTestId('session-work-triggers-failed')).toBeNull();
+        expect(screen.findByTestId('session-work-trigger-links-unavailable')).not.toBeNull();
+        screen.pressByTestId('session-work-trigger-links-unavailable-action');
+        expect(retry).toHaveBeenCalledOnce();
+    });
     it('does not claim Manual while the workflow trigger read failed, and offers Retry', async () => {
         const retry = vi.fn();
         const screen = await renderScreen(<WorkflowTriggerSection
@@ -64,6 +74,7 @@ describe('SessionTriggersSectionView', () => {
             triggers: [] });
         const screen = await renderScreen(<WorkflowTriggerSection
             testIDPrefix="legacy-editor" set={set} draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={vi.fn()}
+            status="ready" onRetry={vi.fn()}
             runsOn="m1 · /repo" stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]}
         />);
         expect(screen.getTextContent()).toContain('Review release');

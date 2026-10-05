@@ -611,6 +611,29 @@ function isDefinitivePreCommitMigrationFailure(
     );
 }
 
+export async function shouldRetainAccountEncryptionMigrationArtifactUploads(params: Readonly<{
+    error: unknown;
+    migrationIssued: boolean;
+    firstKey?: Readonly<{ accountId: string; request: AccountEncryptionMigrateRequest; target: FirstKeyHomeTarget }>;
+}>): Promise<boolean> {
+    if (params.firstKey) {
+        const { accountId, request, target } = params.firstKey;
+        try {
+            const pending = await TokenStorage.readPendingExternalAuthStateForServerUrl(target.serverUrl, {
+                serverId: target.serverId,
+                storageReadFailure: 'surface',
+            });
+            const firstKey = pending.value?.accountEncryptionFirstKey;
+            return !pending.serverMismatch && firstKey?.accountId === accountId
+                && firstKey.requestDigest === createAccountEncryptionMigrateRequestBindingDigestV1({ accountId, request, sourceMode: 'plain' });
+        } catch {
+            // An unreadable custody owner cannot establish that the request was discarded.
+            return true;
+        }
+    }
+    return params.migrationIssued && !isDefinitivePreCommitMigrationFailure(params.error);
+}
+
 async function clearPendingExternalAuthRequired(
     removeFirstKeyMigrationAttempted?: PendingExternalAuth,
 ): Promise<void> {

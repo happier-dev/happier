@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { SelectionListStep } from '@/components/ui/selectionList';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { storage } from '@/sync/domains/state/storage';
+import { authoringMemoryDefaults } from '@/sync/store/domains/authoringMemory';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 /**
  * The Workflow "Where" row consumes New Session's project/checkout owners.
@@ -18,10 +21,6 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 const browser = vi.hoisted(() => ({ open: vi.fn() }));
 const scm = vi.hoisted(() => ({ snapshot: null as ScmWorkingSnapshot | null }));
-const settings = vi.hoisted(() => ({
-    values: {} as Record<string, unknown>,
-    recentMachinePaths: [] as Array<{ machineId: string; path: string }>,
-}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -43,17 +42,6 @@ vi.mock('@/components/ui/icons/Icon', async (importOriginal) => ({
     ...(await importOriginal<Record<string, unknown>>()),
     Icon: (props: Record<string, unknown>) => React.createElement('Icon', props),
 }));
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createLiveStorageStoreMock, createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    const { authoringMemoryDefaults } = await import('@/sync/store/domains/authoringMemory');
-    return createStorageModuleStub({
-        storage: createLiveStorageStoreMock(() => ({
-            authoringMemory: { ...authoringMemoryDefaults, recentMachinePaths: settings.recentMachinePaths },
-        })),
-        useSetting: (key: string) => settings.values[key] ?? null,
-        useActiveServerAccountScope: () => ({ serverId: 'server-a', accountId: 'account-a' }),
-    });
-});
 vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
     MachineSelector: (props: Record<string, unknown>) => React.createElement('MachineSelector', props),
 }));
@@ -61,6 +49,11 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputSelectionListPopo
     AgentInputSelectionListPopover: (props: Record<string, unknown>) => (
         props.open === true ? React.createElement('SelectionListPopover', props) : null
     ),
+}));
+// The anchored popover's portal and measurement are a platform boundary; its content stays real.
+vi.mock('@/components/ui/popover/Popover', () => ({
+    Popover: (props: { open: boolean; children: (render: unknown) => React.ReactNode }) =>
+        (props.open ? React.createElement(React.Fragment, null, props.children({})) : null),
 }));
 vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
     openMachinePathBrowserModal: browser.open,
@@ -105,19 +98,19 @@ function repoSnapshot(): ScmWorkingSnapshot {
 }
 
 function workspaceRef(id: string, rootPath: string) {
-    return { id, machineId: 'machine-1', serverId: 'server-a', rootPath };
+    return { id, machineId: 'machine-1', serverId: 'server-a', rootPath, createdAtMs: 1 };
 }
 
 beforeEach(() => {
     browser.open.mockReset();
     scm.snapshot = repoSnapshot();
-    settings.recentMachinePaths = [{ machineId: 'machine-2', path: '/home/me/service' }];
-    settings.values = {
-        workspaceRefsV1: [
+    const workspaceRefs = [
             workspaceRef('ref-main', '/repo/payments'),
             workspaceRef('ref-feature', '/repo/payments-feature-auth'),
-        ],
-    };
+        ];
+    storage.setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' },
+        settings: { ...settingsDefaults, workspaceRefsV1: workspaceRefs },
+        authoringMemory: { ...authoringMemoryDefaults, recentMachinePaths: [{ machineId: 'machine-2', path: '/home/me/service' }] } });
 });
 
 afterEach(async () => {
@@ -220,6 +213,32 @@ describe('workflow project target control', () => {
         await act(async () => {});
 
         expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-1', directory: '/Users/me/unbound' });
+    });
+
+    it('presents Machine and project as one field select whose value is the where-summary, opening the same choices', async () => {
+        const onChange = vi.fn();
+        const screen = await renderControl({
+            presentation: 'field',
+            title: 'Runs on',
+            subtitle: 'All of this workflow\'s triggers run here.',
+            target: { machineId: 'machine-1', directory: '/Users/me/project' },
+            onChange,
+        });
+
+        // One row: its label, its consequence and one value — no nested Machine tile and no
+        // separate folder line until the person opens the field.
+        expect(screen.getTextContent()).toContain('Runs on');
+        expect(screen.getTextContent()).toContain('Mac Studio / ~/project');
+        expect(screen.getTextContent()).not.toContain('/Users/me/project');
+        expect(screen.root.findAllByType('MachineSelector' as never)).toHaveLength(0);
+        expect(screen.findByTestId('workflow-editor-project-directory')).toBeNull();
+
+        await screen.pressByTestIdAsync('workflow-editor-machine-row');
+        expect(screen.findByTestId('workflow-editor-where-popover')).not.toBeNull();
+        await act(async () => {
+            screen.root.findByType('MachineSelector' as never).props.onSelect(MACHINES[1]);
+        });
+        expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-2', directory: '/home/me/service' });
     });
 
     it('shows a host-fixed target read-only and names an unresolved Machine truthfully', async () => {

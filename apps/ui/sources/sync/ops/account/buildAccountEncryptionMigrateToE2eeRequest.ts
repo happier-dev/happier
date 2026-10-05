@@ -208,12 +208,13 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
       templates.push({
         automationId: automation.id,
         expectedTemplateVersion: automation.templateVersion,
+        triggerDefinitionEnvelopes: [],
         templateCiphertext: await convertAccountEncryptionMigrationTemplate({
           id: automation.id, templateCiphertext: automation.templateCiphertext, toMode: 'e2ee', targetMaterial: material,
         }),
       });
     }
-    return { action: 'migrate' as const, templates };
+    return { action: 'migrate' as const, templates, runs: [] };
   })();
   const sessionDrafts = buildAccountEncryptionSessionDraftsDirective({
     candidates: params.sessionDrafts ?? [],

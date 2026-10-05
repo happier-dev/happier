@@ -2439,6 +2439,27 @@ const zhHant: typeof en = {
     },
 };
 
+// Newly introduced fidelity copy uses the English fallback until locale translations arrive.
+const fidelity = {
+    allClean: 'All clean',
+    suggestedNext: 'Suggested next',
+    lastPushed: ({ when }: { when: string }) => `Last pushed ${when}`,
+    lastSeen: ({ when }: { when: string }) => `Last seen ${when}. Showing the last known state.`,
+    elapsed: ({ seconds }: { seconds: number }) => `${seconds} s`,
+    openTerminal: 'Open terminal',
+    authenticationHint: ({ command, machine }: { command: string; machine: string }) => `Run ${command} on ${machine}, then try again. Your commits are still here.`,
+    conflictBody: ({ agent }: { agent: string }) => `Open each file under Needs you, or ask ${agent} to resolve them.`,
+    conflictReassurance: 'Nothing is lost — resolve them one by one, or put everything back.',
+    askAgent: ({ agent }: { agent: string }) => `Ask ${agent} to resolve`,
+    pullThenPush: 'Pull then push',
+    branchChanged: 'The branch changed after pulling. Refresh and review it before pushing.',
+    pushing: ({ count, target }: { count: number; target: string }) => `Pushing ${count} ${count === 1 ? 'commit' : 'commits'} to ${target}…`,
+    pulling: ({ count, target }: { count: number; target: string }) => `Pulling ${count} ${count === 1 ? 'commit' : 'commits'} from ${target}…`,
+    operation: ({ operation, source }: { operation: string; source: string }) => `${operation} ${source}`,
+};
+const withFidelity = (locale: typeof en) => ({ ...locale, fidelity });
+
 export const sessionGitPaneTranslations = {
-    en, ca, de, es, fr, it, ja, pl, pt, ru, zhHans, zhHant,
+    en: withFidelity(en), ca: withFidelity(ca), de: withFidelity(de), es: withFidelity(es), fr: withFidelity(fr), it: withFidelity(it),
+    ja: withFidelity(ja), pl: withFidelity(pl), pt: withFidelity(pt), ru: withFidelity(ru), zhHans: withFidelity(zhHans), zhHant: withFidelity(zhHant),
 };

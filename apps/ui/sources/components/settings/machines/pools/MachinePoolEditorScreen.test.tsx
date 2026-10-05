@@ -13,6 +13,7 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { SelectionListStep } from '@/components/ui/selectionList';
 import { Modal } from '@/modal';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest } from '@/sync/domains/artifacts/artifactTypes';

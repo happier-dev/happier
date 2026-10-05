@@ -13,9 +13,14 @@ import { PhoneWelcomeDoorway } from '@/components/homes/journeys/phone/PhoneWelc
 import { WelcomeActionList, type WelcomeActionAdmission } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { useJourneyAccountService } from '@/components/homes/journeys/useJourneyAccountService';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
+import { useIsTablet } from '@/utils/platform/responsive';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
+import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
+import { AccountServiceMark } from '@/components/settings/account/AccountServiceMark';
+import { t } from '@/text';
 
 /**
  * Dev-only specimen of the Homes journeys (lab `hjourneys`), rendered through the real components
@@ -46,12 +51,13 @@ export function HomesJourneysSpecimen(props: Readonly<{ only: string | null }>) 
 }
 
 function FrameBody(props: Readonly<{ frame: Frame }>) {
+    const phone = !useIsTablet();
     const service = useJourneyAccountService();
     const generation = useServerProfilesGeneration();
     const profiles = React.useMemo(() => listServerProfiles(), [generation]);
     const panel = (path: AlreadyUsePath) => (
         <View style={styles.panelFrame}>
-            <HomeAddForm layout="panel" testID="specimen.already-use" initialPath={path} onClose={noop} />
+            <HomeAddForm layout={phone ? 'sheet' : 'panel'} testID="specimen.already-use" initialPath={path} onClose={noop} />
         </View>
     );
     switch (props.frame) {
@@ -83,12 +89,30 @@ function FrameBody(props: Readonly<{ frame: Frame }>) {
             );
         case 'J2':
             return profiles.length > 0 ? (
-                <View style={styles.sheetFrame}>
+                <ModalCardFrame
+                    leading={<HeaderLogo size={32} />}
+                    title={t(phone ? 'homesJourneys.phone.reconcileTitle' : 'homesJourneys.reconcileTitle')}
+                    subtitle={phone ? t('homesJourneys.phone.reconcileLead') : t('homesJourneys.reconcileLead', { count: Math.min(profiles.length, 2) })}
+                    dimensions={{ width: 560 }}
+                    presentation={phone ? 'sheet' : 'card'}
+                    onClose={noop}
+                >
                     <ReconcileHomesContent found={profiles.slice(0, 2)} personal={null} settle={noop} onClose={noop} />
-                </View>
+                </ModalCardFrame>
             ) : <Text style={styles.caption}>No saved Homes on this device.</Text>;
         case 'J3':
-            return <View style={styles.sheetFrame}><UseServiceAsHomeSheet onClose={noop} /></View>;
+            return (
+                <ModalCardFrame
+                    leading={<AccountServiceMark url={service.discovery?.endpointUrl ?? service.entry.endpoint.url} size={36} />}
+                    title={t('homesJourneys.serviceAsHomeTitle', { service: service.name })}
+                    subtitle={t(phone ? 'homesJourneys.phone.serviceAsHomeLead' : 'homesJourneys.serviceAsHomeLead', { service: service.name })}
+                    dimensions={{ width: 560 }}
+                    presentation={phone ? 'sheet' : 'card'}
+                    onClose={noop}
+                >
+                    <UseServiceAsHomeSheet onClose={noop} />
+                </ModalCardFrame>
+            );
         case 'J4':
             return <View style={styles.sheetFrame}><HomeAddForm layout="page" testID="specimen.add-home" onClose={noop} /></View>;
         case 'J6':

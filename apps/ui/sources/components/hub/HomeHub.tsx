@@ -13,8 +13,17 @@ import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetri
 import { useWidgetFrameStyle } from '@/components/widgets/frame/useWidgetFrameStyle';
 import { createNearViewportTracker, type NearViewportTracker } from '@/components/widgets/nearViewport';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
+import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
+import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
+import { runWidgetSetupCommand, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
+import type { WidgetInputBindingsV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { HubCustomizeButton } from './header/HubCustomizeButton';
+import { VoiceBriefBlock, VoiceBriefButton } from '@/components/voice/brief/VoiceBrief';
+import { useVoiceBriefHomeRequest } from '@/components/voice/brief/useVoiceBriefRequest';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { useIsTablet } from '@/utils/platform/responsive';
 import { HubStatusLine } from './header/HubStatusLine';
 import { useHomeGreeting } from './header/homeGreeting';
 import { findHomeHubBuiltinSection } from './homeHubSections';
@@ -23,10 +32,20 @@ import { HubWidgetSection } from './HubWidgetSection';
 import type { HomeHubSection } from './layout/homeHubLayout';
 import { HubSectionMenu } from './layout/HubSectionMenu';
 import { useHomeHubLayout, type HomeHubLayout } from './layout/useHomeHubLayout';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
+import { SessionSurfaceEntityFeedback, SessionSurfaceEntityTargetFeedback, useSessionSurfaceEntityDrag, useSessionSurfaceGeometryRefresh, type SessionSurfaceEntityBinding } from '@/components/sessions/board/SessionSurfaceEntityDrag';
+import { useWidgetMovementAdmission } from '@/components/widgets/surface/useWidgetMovementAdmission';
+import { widgetEntitySourceRef, widgetMovementRefused } from '@/sync/ops/actions/widgetEntityMovement';
+import { t } from '@/text';
 
 // The Home on the status line: its name, and where it lives while nothing is running (J1).
 const renderHomeLine = (detail: 'full' | 'name') => <HomeWhereLine detail={detail} separated />;
 
+
+/** Home has no Session of its own: a Session input there is chosen, never borrowed from the page. */
+const HOME_CONTEXT: WidgetSurfaceContext = Object.freeze({});
 
 type SlotProps = Readonly<{
     index: number;
@@ -34,6 +53,7 @@ type SlotProps = Readonly<{
     onCustomize: () => void;
     placeholder: string;
     tracker: NearViewportTracker;
+    widgetDrag: Pick<SessionSurfaceEntityBinding, 'scope' | 'isCurrent' | 'admitWidgetMovement'> | null;
 }>;
 
 /**
@@ -76,7 +96,30 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
 }>) {
     const hover = useRowActionHoverHost();
     const frameStyle = useWidgetFrameStyle('home', props.section.frameStyle);
-    // "Open <plugin>" is the card's footer; the menu keeps hide, move and Customize.
+    const testID = `home-hub.section.${props.section.id}`;
+    const { instance, widget } = props.section;
+    const { setInputs, rename } = props.layout;
+    const account = useActiveServerAccountScope();
+    const scope = React.useMemo<WidgetSurfaceRefV1 | null>(() => (
+        account ? { serverId: account.serverId, accountId: account.accountId, owner: { kind: 'home' } } : null
+    ), [account]);
+    // Edit inputs… and the card's repair line: this copy only, through the Home layout owner.
+    const saveInputs = React.useCallback((bindings: WidgetInputBindingsV1) => (
+        runWidgetSetupCommand(() => setInputs(instance.id, bindings), t('widgetAdd.saveFailed'))
+    ), [instance.id, setInputs]);
+    const edit = useWidgetInputsEditor({ instance, candidate: widget, scope, context: HOME_CONTEXT, audience: 'personal', setInputs: saveInputs, testID });
+    // About this widget (lab dagent G2) for a copy of one of the Account's own widgets.
+    const definition = useWidgetDefinitionFlows({ instance, scope, anchorRef: edit.anchorRef, editInputs: edit.editInputs, testID });
+    // Rename stays optional (lab dbind N1): an empty name, or the widget's own, goes back to it.
+    const renaming = useWidgetFrameRename({
+        title: instance.displayName ?? widget?.title ?? instance.id,
+        testID,
+        onRename: (next) => {
+            const displayName = next.length > 0 && next !== widget?.title ? next : undefined;
+            if (displayName !== instance.displayName) void rename(instance.id, displayName);
+        },
+    });
+    // "Open <plugin>" is the card's footer; the menu keeps Edit inputs, Rename, width, hide, move and Customize.
     const menu = (
         <HubSectionMenu
             section={props.section}
@@ -84,17 +127,33 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
             layout={props.layout}
             hovered={hover.isHovered}
             onCustomize={props.onCustomize}
+            anchorRef={edit.anchorRef}
+            {...(edit.editInputs ? { editInputs: edit.editInputs } : {})}
+            {...(renaming.begin ? { onRename: renaming.begin } : {})}
+            {...(definition.about ? { onAbout: definition.about } : {})}
         />
     );
     return (
-        <HubWidgetSection
-            testID={`home-hub.section.${props.section.id}`}
-            widget={props.section.widget}
-            menu={menu}
-            frameStyle={frameStyle}
-            tracker={props.tracker}
-            hoverProps={hover.hoverProps}
-        />
+        <>
+            <HubWidgetSection
+                testID={testID}
+                widget={props.section.widget}
+                instance={props.section.instance}
+                menu={menu}
+                frameStyle={frameStyle}
+                tracker={props.tracker}
+                hoverProps={hover.hoverProps}
+                titleEditor={renaming.field}
+                {...(edit.onRepairInputs ? { onRepairInputs: edit.onRepairInputs } : {})}
+                {...(props.widgetDrag ? { entityDrag: { ...props.widgetDrag,
+                    title: props.section.instance.displayName ?? props.section.widget?.title ?? props.section.id,
+                    getItem: () => props.layout.sections.some(section => section.kind === 'widget' && section.id === props.section.id)
+                        ? { kind: 'home-section', scope: props.widgetDrag!.scope, sectionId: props.section.id } : null,
+                } } : {})}
+            />
+            {edit.popover}
+            {definition.panel}
+        </>
     );
 }
 
@@ -111,7 +170,11 @@ export const HomeHub = React.memo(function HomeHub() {
     const title = useHomeGreeting();
     const layout = useHomeHubLayout();
     const [customizeOpen, setCustomizeOpen] = React.useState(false);
+    // Brief me (lab voice-moments B0/B1): the greeting turns into the brief, in place, while open.
+    const [briefOpen, setBriefOpen] = React.useState(false);
+    const phone = !useIsTablet();
     const listRef = React.useRef<ScrollView>(null);
+    const contentRef = React.useRef<View>(null);
     // A section's "⋯ → Customize" opens the header's popover; bring the header into view first so
     // the popover opens beside its button, not off-screen.
     const openCustomize = React.useCallback(() => {
@@ -124,7 +187,37 @@ export const HomeHub = React.memo(function HomeHub() {
     const [tracker] = React.useState(() => createNearViewportTracker({
         quantum: PAGE_ROW_TOUCH_MIN_HEIGHT_PX,
         initialViewportHeight,
+        readContentNode: () => contentRef.current ?? listRef.current?.getInnerViewNode(),
     }));
+    React.useEffect(() => { tracker.invalidateLayout(); }, [tracker, layout.sections]);
+    const accountScope = useActiveServerAccountScope();
+    const focused = useIsFocused();
+    useVoiceBriefHomeRequest({
+        available: focused && guidance.kind !== 'loading' && guidance.kind !== 'connect_machine' && guidance.kind !== 'start_daemon',
+        onOpen: () => setBriefOpen(true),
+    });
+    const surface = React.useMemo(() => accountScope ? { ...accountScope, owner: { kind: 'home' as const } } : null, [accountScope]);
+    const movement = useWidgetMovementAdmission(focused ? surface : null, layout.sections);
+    const admitWidgetMovement = movement.admit;
+    const widgetDrag = React.useMemo(() => accountScope && focused && layout.status === 'ready' && guidance.kind !== 'loading'
+        && guidance.kind !== 'connect_machine' && guidance.kind !== 'start_daemon' ? {
+            scope: accountScope, admitWidgetMovement,
+            isCurrent: () => { const current = getActiveServerAccountScope(); return current?.serverId === accountScope.serverId && current.accountId === accountScope.accountId; },
+        } : null, [accountScope, focused, layout.status, guidance.kind, admitWidgetMovement]);
+    const homeDrop = useSessionSurfaceEntityDrag(widgetDrag && surface ? { ...widgetDrag, title: t('common.home'), getItem: () => null,
+        target: { acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget'],
+            listDestinations: () => [{ destination: { index: 0 }, label: t('common.home'), group: t('common.home') }],
+            resolve: ({ item }) => {
+                const ref = widgetEntitySourceRef(item);
+                if (!ref) return widgetMovementRefused('unsupported_widget_surface');
+                return { status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref, to: { surface, index: 0 } },
+                    preview: { verb: t('sessionBoard.item.moveTargetView', { title: t('common.home') }), target: t('common.home') } } };
+            },
+            execute: async () => ({ status: 'refused', reason: { code: 'invalid_parameters', message: t('entityDragDrop.reasons.generic') } }),
+        },
+    } : null);
+    useSessionSurfaceGeometryRefresh(homeDrop.refresh);
+    const homeListRef = React.useCallback((node: ScrollView | null) => { listRef.current = node; homeDrop.ref(node); }, [homeDrop.ref]);
 
     // Until the model knows, the pane holds a quiet page: neither the hub (which could swap to the
     // guidance) nor the guidance's mark draws before the answer, so nothing moves on arrival.
@@ -140,22 +233,40 @@ export const HomeHub = React.memo(function HomeHub() {
         return <SessionGettingStartedGuidance variant="primaryPane" />;
     }
 
-    const slotProps = { layout, onCustomize: openCustomize, placeholder: greeting.subtitle, tracker };
+    const slotProps = { layout, onCustomize: openCustomize, placeholder: greeting.subtitle, tracker, widgetDrag };
 
     return (
+        // RN's innerViewRef declaration omits the null lifecycle supported by its native forwarder.
         <ItemList
-            ref={listRef}
+            ref={homeListRef}
+            innerViewRef={contentRef as React.RefObject<View>}
             testID="home-hub"
             onScroll={tracker.onScroll}
-            onLayout={tracker.onLayout}
+            onLayout={event => { tracker.onLayout(event); homeDrop.onLayout(event); }}
+            onContentSizeChange={tracker.onContentSizeChange}
             scrollEventThrottle={16}
         >
             <PageHeader
                 title={title}
+                titleProminence={phone ? 'hero' : 'page'}
                 alwaysShowTitle
                 details={<HubStatusLine home={renderHomeLine} />}
-                actions={<HubCustomizeButton open={customizeOpen} onOpenChange={setCustomizeOpen} />}
+                actions={(
+                    <View style={styles.headerActions}>
+                        {phone ? null : <VoiceBriefButton open={briefOpen} onOpen={() => setBriefOpen(true)} />}
+                        <HubCustomizeButton open={customizeOpen} onOpenChange={setCustomizeOpen} />
+                    </View>
+                )}
             />
+            {phone && !briefOpen ? (
+                // Phone (lab B0p): the brief's entry spans the page under the greeting.
+                <ItemGroup surface="none">
+                    <VoiceBriefButton open={briefOpen} onOpen={() => setBriefOpen(true)} block />
+                </ItemGroup>
+            ) : null}
+            {briefOpen ? <VoiceBriefBlock onClose={() => setBriefOpen(false)} /> : null}
+            <SessionSurfaceEntityFeedback kind="home-section" scope={accountScope} address={null} testID="home-hub.widget-move" />
+            <SessionSurfaceEntityTargetFeedback drag={homeDrop} testID="home-hub.widget-move" />
             <HomeHubSectionList
                 sections={layout.sections}
                 renderSection={(section, index) => (
@@ -168,4 +279,5 @@ export const HomeHub = React.memo(function HomeHub() {
 
 const styles = {
     card: { flexGrow: 1 },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 } as const;

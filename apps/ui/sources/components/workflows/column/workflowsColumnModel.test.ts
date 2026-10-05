@@ -33,6 +33,7 @@ describe('splitLibraryDefinitions', () => {
             definitionId,
             revision: { headerVersion: 1, bodyVersion: 1 },
             metadata: { title: definitionId },
+            contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null,
             ...(access === undefined ? {} : { access }),
         });
         const split = splitLibraryDefinitions([header('mine'), header('owned', 'owner'), header('theirs', 'edit')] as never);

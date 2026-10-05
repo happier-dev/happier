@@ -29,7 +29,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it('reports unreadable Home features before creating terminal credentials', async () => {
+it.each(['unreadable', 'network', 'timeout', 'http'] as const)('reports %s Home features before creating terminal credentials', async (reason) => {
   const home = await createTempDir('happier-auth-feature-admission-');
   const env = createEnvKeyScope([
     'HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL',
@@ -42,7 +42,10 @@ it('reports unreadable Home features before creating terminal credentials', asyn
   // enrollment verification, and credential persistence remain real.
   const originalFetch = globalThis.fetch;
   vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (input, init) => {
-    if (String(input) === 'https://feature-admission.example.test/v1/features') {
+    if (String(input) === `https://${reason}.feature-admission.example.test/v1/features`) {
+      if (reason === 'network') throw new TypeError('Fetch failed');
+      if (reason === 'timeout') throw new DOMException('Request timed out', 'AbortError');
+      if (reason === 'http') return new Response('', { status: 503 });
       return new Response(JSON.stringify({ features: 'unreadable' }));
     }
     return originalFetch(input, init);
@@ -50,8 +53,8 @@ it('reports unreadable Home features before creating terminal credentials', asyn
   try {
     env.patch({
       HAPPIER_HOME_DIR: home,
-      HAPPIER_SERVER_URL: 'https://feature-admission.example.test',
-      HAPPIER_WEBAPP_URL: 'https://feature-admission.example.test',
+      HAPPIER_SERVER_URL: `https://${reason}.feature-admission.example.test`,
+      HAPPIER_WEBAPP_URL: `https://${reason}.feature-admission.example.test`,
       HAPPIER_PUBLIC_SERVER_URL: undefined,
       HAPPIER_ACTIVE_SERVER_ID: undefined,
       HAPPIER_AUTH_METHOD: 'web',
@@ -65,7 +68,12 @@ it('reports unreadable Home features before creating terminal credentials', asyn
     expect(post).not.toHaveBeenCalled();
     expect(await readStoredCredentials()).toBeNull();
     const text = output.logs.join('\n');
-    expect(text).toMatch(/features.*cannot read/i);
+    expect(text).toContain({
+      unreadable: 'HOME_FEATURES_UNREADABLE',
+      network: 'HOME_FEATURES_NETWORK',
+      timeout: 'HOME_FEATURES_TIMEOUT',
+      http: 'HOME_FEATURES_HTTP_ERROR',
+    }[reason]);
     expect(text).not.toContain('Unable to verify the selected Home identity');
   } finally {
     output.restore();

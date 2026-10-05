@@ -14,6 +14,7 @@ import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
 import { t } from '@/text';
+import { readViewportClass, useViewportClass } from '@/utils/platform/useViewportClass';
 import { useUsableHomeServerIds } from '@/sync/domains/scope/usableHomeServerIds';
 import { shouldFocusConnectedHome } from '../../add/addHomeFlowModel';
 
@@ -46,6 +47,7 @@ export function UseServiceAsHomeSheet(props: CustomModalInjectedProps) {
  */
 export function UseServiceAsHomeBody(props: Readonly<{ onDone: () => void; shouldFocusNewHome?: boolean }>) {
     const service = useJourneyAccountService();
+    const phone = useViewportClass() === 'compact';
     // Standalone sheets capture the same entry policy as the shared Add a Home flow.
     const usableHomesAtEntry = React.useRef(useUsableHomeServerIds()).current;
     const request = useJourneySignInRequest(
@@ -71,8 +73,8 @@ export function UseServiceAsHomeBody(props: Readonly<{ onDone: () => void; shoul
     return (
         <View style={styles.body} testID="use-service-as-home">
             <View style={styles.facts}>
-                <Fact icon="wifi-high" title={t('homesJourneys.factAlwaysOn')} detail={t('homesJourneys.factAlwaysOnDetail')} />
-                <Fact icon="laptop" title={t('homesJourneys.factAgents')} detail={t('homesJourneys.factAgentsDetail')} />
+                <Fact icon="wifi-high" title={t('homesJourneys.factAlwaysOn')} detail={t(phone ? 'homesJourneys.phone.factAlwaysOnDetail' : 'homesJourneys.factAlwaysOnDetail')} />
+                <Fact icon="laptop" title={t(phone ? 'homesJourneys.phone.factAgents' : 'homesJourneys.factAgents')} detail={t(phone ? 'homesJourneys.phone.factAgentsDetail' : 'homesJourneys.factAgentsDetail')} />
                 {service.storage ? <StorageFact storage={service.storage} service={service.name} /> : null}
             </View>
             <EmptyPersonalHomeOption choice={emptyChoice} detail={t('homesJourneys.removeEmptyOfferedDetail')} />
@@ -135,7 +137,7 @@ export function presentUseServiceAsHomeSheet(input: Readonly<{ serviceName: stri
             kind: 'card',
             leading: <AccountServiceMark url={input.serviceUrl} size={36} />,
             title: t('homesJourneys.serviceAsHomeTitle', { service: input.serviceName }),
-            subtitle: t('homesJourneys.serviceAsHomeLead', { service: input.serviceName }),
+            subtitle: t(readViewportClass() === 'compact' ? 'homesJourneys.phone.serviceAsHomeLead' : 'homesJourneys.serviceAsHomeLead', { service: input.serviceName }),
             dimensions: { width: 560 },
             testID: 'use-service-as-home-sheet',
         },

@@ -10,6 +10,7 @@ type DetailsFileTranslations = Readonly<{
     areaLabel: string;
     preview: string;
     viewLabel: string;
+    compare: string;
     stage: string;
     unstage: string;
     addToCommit: string;
@@ -35,6 +36,7 @@ export const detailsFileTranslations = {
         areaLabel: 'Changes',
         preview: 'Preview',
         viewLabel: 'View',
+        compare: 'Compare',
         stage: 'Stage',
         unstage: 'Unstage',
         addToCommit: 'Add to commit',
@@ -58,6 +60,7 @@ export const detailsFileTranslations = {
         areaLabel: 'Canvis',
         preview: 'Previsualització',
         viewLabel: 'Vista',
+        compare: 'Compara',
         stage: 'Prepara',
         unstage: 'Treu de la preparació',
         addToCommit: 'Afegeix al commit',
@@ -81,6 +84,7 @@ export const detailsFileTranslations = {
         areaLabel: 'Änderungen',
         preview: 'Vorschau',
         viewLabel: 'Ansicht',
+        compare: 'Vergleichen',
         stage: 'Vormerken',
         unstage: 'Nicht mehr vormerken',
         addToCommit: 'Zum Commit hinzufügen',
@@ -104,6 +108,7 @@ export const detailsFileTranslations = {
         areaLabel: 'Cambios',
         preview: 'Vista previa',
         viewLabel: 'Vista',
+        compare: 'Comparar',
         stage: 'Preparar',
         unstage: 'Quitar de preparados',
         addToCommit: 'Añadir al commit',
@@ -127,6 +132,7 @@ export const detailsFileTranslations = {
         areaLabel: 'Modifications',
         preview: 'Aperçu',
         viewLabel: 'Affichage',
+        compare: 'Comparer',
         stage: 'Indexer',
         unstage: 'Désindexer',
         addToCommit: 'Ajouter au commit',
@@ -150,6 +156,7 @@ export const detailsFileTranslations = {
         areaLabel: 'Modifiche',
         preview: 'Anteprima',
         viewLabel: 'Vista',
+        compare: 'Confronta',
         stage: 'Metti in stage',
         unstage: 'Togli dallo stage',
         addToCommit: 'Aggiungi al commit',
@@ -173,6 +180,7 @@ export const detailsFileTranslations = {
         areaLabel: '変更',
         preview: 'プレビュー',
         viewLabel: '表示',
+        compare: '比較',
         stage: 'ステージ',
         unstage: 'ステージ解除',
         addToCommit: 'コミットに追加',
@@ -196,6 +204,7 @@ export const detailsFileTranslations = {
         areaLabel: 'Zmiany',
         preview: 'Podgląd',
         viewLabel: 'Widok',
+        compare: 'Porównaj',
         stage: 'Przygotuj',
         unstage: 'Cofnij przygotowanie',
         addToCommit: 'Dodaj do commita',
@@ -219,6 +228,7 @@ export const detailsFileTranslations = {
         areaLabel: 'Alterações',
         preview: 'Pré-visualizar',
         viewLabel: 'Exibição',
+        compare: 'Comparar',
         stage: 'Preparar',
         unstage: 'Remover da preparação',
         addToCommit: 'Adicionar ao commit',
@@ -242,6 +252,7 @@ export const detailsFileTranslations = {
         areaLabel: 'Изменения',
         preview: 'Просмотр',
         viewLabel: 'Вид',
+        compare: 'Сравнить',
         stage: 'Добавить в индекс',
         unstage: 'Убрать из индекса',
         addToCommit: 'Добавить в коммит',
@@ -265,6 +276,7 @@ export const detailsFileTranslations = {
         areaLabel: '更改',
         preview: '预览',
         viewLabel: '视图',
+        compare: '对比',
         stage: '暂存',
         unstage: '取消暂存',
         addToCommit: '加入提交',
@@ -288,6 +300,7 @@ export const detailsFileTranslations = {
         areaLabel: '變更',
         preview: '預覽',
         viewLabel: '檢視',
+        compare: '比較',
         stage: '暫存',
         unstage: '取消暫存',
         addToCommit: '加入提交',

@@ -32,7 +32,13 @@ import {
     type ArtifactAccessRecipientCensusResponseV1,
     ArtifactBodyV1Schema,
     type ArtifactBlobReadResponseV1,
+    type ArtifactBlobStoredContentV1,
+    ArtifactBlobAccountEncryptionStageV1Schema,
+    type ArtifactBlobAccountEncryptionStageV1,
+    type ArtifactAccountEncryptionMigrationOwnershipV1,
 } from '@happier-dev/protocol';
+import { decodePackageAssetArchiveBodyV1, openPackageAssetArchiveV1 } from '@happier-dev/protocol/plugins/availability';
+import { decodePluginUiArtifactArchiveBodyV1, openPluginUiArtifactArchiveV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
@@ -80,6 +86,7 @@ export type AccountEncryptionMigrationKvRow = Readonly<{
 
 export type AccountEncryptionMigrationArtifactRow = Readonly<{
     id: string;
+    ownership: ArtifactAccountEncryptionMigrationOwnershipV1;
     header: string;
     headerVersion: number;
     body: string;
@@ -404,6 +411,7 @@ async function buildArtifactDirective(params: Readonly<{
     targetEncryption: Encryption | null;
     readRecipients?: (artifactId: string) => Promise<ArtifactAccessRecipientCensusResponseV1>;
     readBlob?: (artifactId: string, blobId: string) => Promise<ArtifactBlobReadResponseV1>;
+    stageBlob?: (artifactId: string, blobId: string, content: ArtifactBlobStoredContentV1) => Promise<ArtifactBlobAccountEncryptionStageV1>;
     scope: AccountEncryptionMigrationScope;
 }>): Promise<AccountEncryptionMigrateArtifactsDirective> {
     if (params.rows.length === 0) return { action: 'assert_empty' };
@@ -414,6 +422,25 @@ async function buildArtifactDirective(params: Readonly<{
             row,
             sourceEncryption: params.sourceEncryption,
         });
+        const ownership = row.ownership;
+        if (ownership.kind !== 'ordinary') {
+            // Release-owned proof comes only from the qualified migration reader.
+            // Opened E2EE bytes receive the same archive verification as plain bytes.
+            for (const body of [opened.body, ...opened.revisions.map(revision => revision.body)]) {
+                const archiveBody = typeof body.body === 'string' ? body.body : null;
+                const valid = ownership.kind === 'packageAsset'
+                    ? archiveBody !== null && openPackageAssetArchiveV1({ expectedDescriptor: ownership.descriptor,
+                        header: opened.header, body: decodePackageAssetArchiveBodyV1(archiveBody) }) !== null
+                    : (() => {
+                        const archive = archiveBody !== null ? openPluginUiArtifactArchiveV1({ pluginId: ownership.pluginId,
+                            expectedArtifactDigest: ownership.slot.artifactDigest, header: opened.header,
+                            body: decodePluginUiArtifactArchiveBodyV1(archiveBody) }) : null;
+                        return archive !== null && archive.artifactGraph.artifactId === ownership.slot.artifactId
+                            && archive.artifactGraph.tier === ownership.slot.tier && archive.artifactGraph.hostUiApiRange === ownership.slot.hostUiApiRange;
+                    })();
+                if (!valid) throw new Error(`Invalid qualified Artifact migration archive (${row.id})`);
+            }
+        }
         const expectedRevision = { headerVersion: row.headerVersion, bodyVersion: row.bodyVersion };
         const header = workflowDefinitionArtifactSharingAdapterV1.canShare({
             artifactId: row.id, header: opened.header, revision: expectedRevision,
@@ -423,27 +450,40 @@ async function buildArtifactDirective(params: Readonly<{
         }) : opened.header;
         const binaryBodies = [opened.body, ...opened.revisions.map(revision => revision.body)]
             .map(body => body.body).filter(body => body !== null && typeof body === 'object');
-        const sourceBlobs = new Map<string, Readonly<{ bytes: Uint8Array; expectedContentSha256: string }>>();
+        const sourceBlobs = new Map<string, (typeof binaryBodies)[number]>();
         for (const reference of binaryBodies) {
-            if (sourceBlobs.has(reference.blobId)) {
-                const bytes = sourceBlobs.get(reference.blobId)!.bytes;
-                if (reference.sizeBytes !== bytes.length || reference.sha256 !== hashArtifactBinaryContent(bytes)) {
+            const existing = sourceBlobs.get(reference.blobId);
+            if (existing) {
+                if (reference.sizeBytes !== existing.sizeBytes || reference.sha256 !== existing.sha256) {
                     throw new Error('Artifact retained file reference is inconsistent');
                 }
                 continue;
             }
-            if (!params.readBlob) throw new Error('Artifact migration binary reader is unavailable');
-            const stored = await params.readBlob(row.id, reference.blobId);
-            assertAccountEncryptionMigrationScopeCurrent(params.scope);
-            if (stored.blobId !== reference.blobId) throw new Error('Artifact migration binary identity changed');
-            const bytes = await openArtifactBinaryContent({ reference, content: stored.content, mode: params.fromMode, encryption: opened.encryption });
-            const sourceBytes = decodeBase64(stored.content.t === 'plain' ? stored.content.v : stored.content.c);
-            sourceBlobs.set(reference.blobId, { bytes, expectedContentSha256: hashArtifactBinaryContent(sourceBytes) });
+            sourceBlobs.set(reference.blobId, reference);
         }
-        const convertBlobs = async (encryption: ArtifactEncryption | null) => Promise.all([...sourceBlobs].map(async ([blobId, source]) => ({
-            blobId, expectedContentSha256: source.expectedContentSha256,
-            content: await sealArtifactBinaryContent(source.bytes, params.toMode, encryption),
-        })));
+        const convertBlobs = async (encryption: ArtifactEncryption | null) => {
+            const blobs = [];
+            // Retain only references across uploads, not every historical file's opened bytes.
+            for (const [blobId, reference] of sourceBlobs) {
+                if (!params.readBlob) throw new Error('Artifact migration binary reader is unavailable');
+                if (!params.stageBlob) throw new Error('Artifact migration binary uploader is unavailable');
+                const stored = await params.readBlob(row.id, blobId);
+                assertAccountEncryptionMigrationScopeCurrent(params.scope);
+                if (stored.blobId !== blobId) throw new Error('Artifact migration binary identity changed');
+                const bytes = await openArtifactBinaryContent({ reference, content: stored.content, mode: params.fromMode, encryption: opened.encryption });
+                const sourceBytes = decodeBase64(stored.content.t === 'plain' ? stored.content.v : stored.content.c);
+                const expectedContentSha256 = hashArtifactBinaryContent(sourceBytes);
+                const content = await sealArtifactBinaryContent(bytes, params.toMode, encryption);
+                const staged = ArtifactBlobAccountEncryptionStageV1Schema.parse(await params.stageBlob(row.id, blobId, content));
+                assertAccountEncryptionMigrationScopeCurrent(params.scope);
+                const encoded = content.t === 'plain' ? content.v : content.c;
+                if (staged.t !== content.t || staged.contentSha256 !== hashArtifactBinaryContent(decodeBase64(encoded))) {
+                    throw new Error('Artifact migration binary upload integrity changed');
+                }
+                blobs.push({ blobId, expectedContentSha256, content: staged });
+            }
+            return blobs;
+        };
         if (params.toMode === 'plain') {
             items.push({
                 artifactId: row.id,
@@ -466,12 +506,12 @@ async function buildArtifactDirective(params: Readonly<{
             params.targetEncryption,
             'target Artifact storage',
         );
-        if (!params.readRecipients) throw new Error('Artifact migration recipient census is unavailable');
-        const census = await params.readRecipients(row.id);
+        if (ownership.kind === 'ordinary' && !params.readRecipients) throw new Error('Artifact migration recipient census is unavailable');
+        const census = ownership.kind === 'ordinary' ? await params.readRecipients!(row.id) : null;
         assertAccountEncryptionMigrationScopeCurrent(params.scope);
-        if (census.artifactId !== row.id || census.ownerAccountId !== params.scope.scope.accountId
+        if (census && (census.artifactId !== row.id || census.ownerAccountId !== params.scope.scope.accountId
             || census.access !== 'owner' || census.encryptionMode !== params.fromMode
-            || (census.dataEncryptionKey ?? ARTIFACT_PLAIN_DATA_KEY_MARKER) !== row.dataEncryptionKey) {
+            || (census.dataEncryptionKey ?? ARTIFACT_PLAIN_DATA_KEY_MARKER) !== row.dataEncryptionKey)) {
             throw new Error('Artifact migration recipient census changed');
         }
         const dataKey = ArtifactEncryption.generateDataEncryptionKey();
@@ -483,7 +523,7 @@ async function buildArtifactDirective(params: Readonly<{
             expectedBodyVersion: row.bodyVersion,
             expectedDataEncryptionKey: row.dataEncryptionKey,
             recipientKeyEnvelopes: prepareArtifactRecipientKeyEnvelopesV1({ dataKey,
-                recipients: census.recipients.filter(recipient => recipient.recipientAccountId !== census.ownerAccountId),
+                recipients: census ? census.recipients.filter(recipient => recipient.recipientAccountId !== census.ownerAccountId) : [],
                 randomBytes: getRandomBytes, replaceExisting: true }),
             header: await artifactEncryption.encryptHeader(header),
             body: await artifactEncryption.encryptBody(opened.body),
@@ -633,12 +673,14 @@ export async function buildAccountEncryptionMigrationStorageDirectives(
         sessionOrganizationInventory:
             SessionOrganizationAccountEncryptionMigrationInventory;
         automationsInventory?: AccountEncryptionMigrateAutomationsInventoryResponse;
+        resolveSession?: Parameters<typeof buildAccountEncryptionMigrationAutomations>[0]['resolveSession'];
         sessionSourceCredentials: AuthCredentials;
         sessionTargetCredentials: AuthCredentials | null;
         scope: AccountEncryptionMigrationScope;
         /** The network reader captured for this exact Home/Account transition. */
         readArtifactRecipients?: (artifactId: string) => Promise<ArtifactAccessRecipientCensusResponseV1>;
         readArtifactBlob?: (artifactId: string, blobId: string) => Promise<ArtifactBlobReadResponseV1>;
+        stageArtifactBlob?: (artifactId: string, blobId: string, content: ArtifactBlobStoredContentV1) => Promise<ArtifactBlobAccountEncryptionStageV1>;
     }>,
 ): Promise<AccountEncryptionMigrationStorageDirectives> {
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
@@ -670,6 +712,7 @@ export async function buildAccountEncryptionMigrationStorageDirectives(
         targetEncryption: params.targetEncryption,
         readRecipients: params.readArtifactRecipients,
         readBlob: params.readArtifactBlob,
+        stageBlob: params.stageArtifactBlob,
         scope: params.scope,
     });
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
@@ -720,7 +763,8 @@ export async function buildAccountEncryptionMigrationStorageDirectives(
         ? await buildAccountEncryptionMigrationAutomations({ accountId: params.scope.scope.accountId,
             fromMode: params.fromMode, toMode: params.toMode, inventory: params.automationsInventory,
             sourceCredentials: params.sessionSourceCredentials, targetCredentials: params.sessionTargetCredentials,
-            sourceEncryption: params.sourceEncryption, targetEncryption: params.targetEncryption })
+            sourceEncryption: params.sourceEncryption, targetEncryption: params.targetEncryption,
+            resolveSession: params.resolveSession })
         : undefined;
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
     return {

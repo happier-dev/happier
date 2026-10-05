@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SetupSteps } from '@/components/ui/setupBlocks/SetupSteps';
 import { t } from '@/text';
@@ -36,7 +36,8 @@ function useCodeExpiry(expiresAtMs: number | undefined): number | null {
 /**
  * Signing in with a code (lab `csvc` A2): the code is the hero, beside Copy and the one primary
  * action — open the page where it is entered. Underneath, the present: waiting for approval, and how
- * long the code lasts. Happier checks by itself; "Check now" and "Try again" stay as quiet recovery.
+ * long the code lasts. Happier checks at the provider's cadence; a service without a cadence keeps
+ * its manual check, and an expired code offers a new one.
  */
 export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDeviceForm(props: Readonly<{
     /** Inside the new-account draft row instead of as page sections. */
@@ -49,6 +50,8 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
     /** The service's name, so the action says where it goes ("Open ChatGPT"). */
     serviceTitle?: string;
     busy: boolean;
+    /** False only when a valid external attempt publishes no automatic polling cadence. */
+    automaticPolling?: boolean;
     /** In a setup panel: Cancel (local), at the end of the recovery line. */
     onCancel?: () => void;
     onPoll(): Promise<void> | void;
@@ -56,6 +59,7 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const phone = useDeviceType() === 'phone';
     const openUrl = props.verificationUriComplete ?? props.verificationUri ?? '';
     const where = props.verificationUri ? props.verificationUri.replace(/^https?:\/\//, '') : null;
     const msLeft = useCodeExpiry(props.expiresAtMs);
@@ -63,14 +67,16 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
     const [copied, setCopied] = React.useState(false);
     const service = props.serviceTitle ?? null;
     const code = (
-        <View style={[styles.codeBox, expired ? styles.expired : null]}>
+        <View style={[styles.codeBox, phone ? styles.codeBoxPhone : null, expired ? styles.expired : null]}>
             <Text
                 testID="connected-account-device:code"
                 selectable
                 style={styles.code}
                 accessibilityLabel={props.userCode ? props.userCode.split('').join(' ') : undefined}
             >
-                {props.userCode ?? t('connectedServices.deviceAuth.preparing')}
+                {props.userCode?.includes('-') ? props.userCode.split('-').map((part, index) => <React.Fragment key={index}>
+                    {index > 0 ? <Text style={styles.codeSeparator}>–</Text> : null}{part}
+                </React.Fragment>) : props.userCode ?? t('connectedServices.deviceAuth.preparing')}
             </Text>
             {props.userCode ? (
                 <RoundButton
@@ -78,6 +84,7 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
                     size="small"
                     display="secondary"
                     title={copied ? t('common.copied') : t('common.copy')}
+                    leading={<Icon name="copy" size={14} color={theme.colors.text.secondary} />}
                     onPress={async () => {
                         setCopied(await setClipboardStringSafe(props.userCode ?? ''));
                     }}
@@ -89,6 +96,8 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
         <RoundButton
             testID="connected-account-device:open"
             size="small"
+            style={phone ? styles.openPhone : undefined}
+            leading={<Icon name="arrow-square-out" size={14} color={theme.colors.button.primary.tint} />}
             title={service
                 ? t('connectedServicesSettings.deviceOpenService', { service })
                 : t('connectedServices.deviceAuth.openVerificationUrl')}
@@ -108,7 +117,7 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
                     </>
                 ) : (
                     <>
-                        <ActivitySpinner size={14} color={theme.colors.accent.blue} />
+                        <View style={styles.waitDot} />
                         <Text style={styles.waitingText}>{service
                             ? t('connectedServicesSettings.deviceWaitingFor', { service })
                             : t('connectedServices.deviceAuth.waiting')}</Text>
@@ -119,21 +128,13 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
                     <Text style={styles.expiry}>{t('connectedServicesSettings.deviceExpiresIn', { time: formatExpiry(msLeft) })}</Text>
                 ) : null}
             </View>
-            <View style={styles.recovery}>
-                <RoundButton
-                    testID="connected-account-device:poll"
-                    size="small"
-                    display="secondary"
-                    title={t('connectedServicesSetup.deviceCheckNow')}
-                    disabled={props.busy || expired}
-                    loading={props.busy}
-                    onPress={props.onPoll}
-                />
+            {!expired && props.automaticPolling === false ? <RoundButton testID="connected-account-device:poll" size="small" display="secondary"
+                title={t('connectedServicesSetup.deviceCheckNow')} disabled={props.busy} onPress={props.onPoll} /> : null}
+            {expired ? <View style={styles.recovery}>
                 <RoundButton
                     testID="connected-account-device:resume"
                     size="small"
-                    display={expired ? 'default' : 'secondary'}
-                    title={expired ? t('connectedServicesSettings.deviceNewCode') : t('common.retry')}
+                    title={t('connectedServicesSettings.deviceNewCode')}
                     disabled={props.busy}
                     onPress={props.onResume}
                 />
@@ -143,7 +144,7 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
                         <ConnectedServiceSetupFlowActions onCancel={props.onCancel} />
                     </>
                 ) : null}
-            </View>
+            </View> : null}
         </View>
     );
     return (
@@ -177,6 +178,7 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
+    codeSeparator: { color: theme.colors.text.secondary, fontWeight: '400' },
     page: {
         paddingHorizontal: 16,
         paddingVertical: 12,
@@ -196,6 +198,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     expired: {
         opacity: 0.45,
     },
+    codeBoxPhone: {
+        flexDirection: 'column',
+        width: '100%',
+        gap: 12,
+    },
+    openPhone: { width: '100%' },
+    waitDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent.blue },
     code: {
         ...Typography.mono('semiBold'),
         fontSize: 28,

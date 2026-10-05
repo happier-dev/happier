@@ -427,7 +427,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                 } : {})}
                 {...(accountIsRevisioned && props.onRenameAccount ? {
                     rename: {
-                        currentLabel: accountLabels[account.ref.accountId] ?? resolveAccountIdentity(account).primaryLabel,
+                        currentLabel: accountLabels[account.ref.accountId] ?? '',
                         onRename: (label: string) => props.onRenameAccount?.(account.ref, label),
                     },
                 } : {})}

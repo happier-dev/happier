@@ -18,8 +18,8 @@ import type { AgentDefaultChoice } from './agentDefaultChoices';
 export const AgentDefaultMenuButton = React.memo(function AgentDefaultMenuButton(props: Readonly<{
     choices: readonly AgentDefaultChoice[];
     onChange: (agentId: string, makeDefault: boolean) => void;
-    /** `icon`: the bare ★ of an index row or card (filled when it is any agent's default). */
-    presentation?: 'button' | 'icon';
+    /** `icon`: bare ★ in a collection; `text`: quiet identity-line control on a compact entity page. */
+    presentation?: 'button' | 'icon' | 'text';
     testID?: string;
 }>) {
     const { theme } = useUnistyles();
@@ -74,10 +74,10 @@ export const AgentDefaultMenuButton = React.memo(function AgentDefaultMenuButton
                 <RoundButton
                     testID={props.testID}
                     size="small"
-                    display="secondary"
+                    display={props.presentation === 'text' ? 'inverted' : 'secondary'}
                     title={title}
                     accessibilityLabel={defaults.length === 0 ? t('connectedServicesPool.makeDefaultA11y') : title}
-                    leading={(
+                    leading={props.presentation === 'text' ? undefined : (
                         <Icon
                             name="star"
                             size={14}

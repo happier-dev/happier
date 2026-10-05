@@ -2,6 +2,8 @@ import * as React from 'react';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Platform, View } from 'react-native';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -78,6 +80,8 @@ export type QualifiedAccountDetailViewProps = Readonly<{
     onShareWithTeam?: () => void;
     sharedWithTeamsAdministration?: React.ReactNode;
     onReconnect?: () => void;
+    onRefresh?: () => void;
+    refreshing?: boolean;
     onConfigureAccount?: () => void;
     accountConfigurationBlocked?: boolean;
     configurationDisabled?: boolean;
@@ -165,7 +169,10 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
 
     const [disconnectPending, setDisconnectPending] = React.useState(false);
     const [renameOpen, setRenameOpen] = React.useState(false);
+    const [moreOpen, setMoreOpen] = React.useState(false);
+    const [compact, setCompact] = React.useState(false);
     const renameAnchorRef = React.useRef<View>(null);
+    const identityAnchorRef = React.useRef<View>(null);
 
     const status = parseDisplayableCredentialHealthStatus(props.status);
     const email = providerEmail?.trim() ?? '';
@@ -210,14 +217,21 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
     }, [disconnectPending, onDisconnect, presentation.accessibilityLabel, serviceLabel]);
 
     return (
-        <ItemList testID={testID}>
+        <ItemList testID={testID} pageColumn="wide" onLayout={(event) => {
+            const width = event.nativeEvent.layout.width;
+            if (width > 0) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx);
+        }}>
+            <View ref={identityAnchorRef} collapsable={false}>
             <SettingsPageHeader
+                testID={`${testID}:header`}
                 title={presentation.primaryLabel}
                 alwaysShowTitle
+                compactPresentation="centered"
+                primaryAction={compact && rename ? { testID: `${testID}:action:edit-label`, title: t('connectedServicesPool.rename'), onPress: () => setRenameOpen(true) } : undefined}
                 leading={<ConnectedServiceMark legacyServiceId={props.legacyServiceId ?? null} size="page" />}
                 titleAccessory={rename ? (
                     <View ref={renameAnchorRef} collapsable={false}>
-                        <IconButton
+                        {!compact ? <IconButton
                             testID={`${testID}:action:edit-label`}
                             iconName="pencil-simple"
                             size={26}
@@ -226,11 +240,11 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                             accessibilityLabel={t('connectedServices.detail.actions.editLabel')}
                             tooltip={t('connectedServices.detail.actions.editLabel')}
                             onPress={() => setRenameOpen(true)}
-                        />
+                        /> : null}
                         <ConnectedAccountRenamePopover
                             testID={`${testID}:rename`}
                             open={renameOpen}
-                            anchorRef={renameAnchorRef}
+                            anchorRef={compact ? identityAnchorRef : renameAnchorRef}
                             currentLabel={rename.currentLabel}
                             serviceLabel={serviceLabel}
                             onSave={(label) => {
@@ -244,17 +258,17 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                 // Who the account is, on one line (lab `csvc` D1): the email and the provider id go through the
                 // identity renderer so "Hide account emails and IDs" blurs exactly their hidden runs.
                 details={(
-                    <View style={stylesheet.facts}>
+                    <View style={[stylesheet.facts, compact ? { justifyContent: 'center' } : null]}>
                         {email ? (
                             <View style={stylesheet.fact}>
-                                <Icon name="envelope" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+                                {!compact ? <Icon name="envelope" size={ICON_SIZE.xs} color={theme.colors.text.secondary} /> : null}
                                 <ConnectedAccountIdentityText testID={`${testID}:meta:email`} value={email} style={stylesheet.factText} numberOfLines={1} />
                             </View>
                         ) : null}
                         <Text testID={`${testID}:meta:plan`} style={stylesheet.factText} numberOfLines={1}>
                             {[serviceLabel, props.planLabel].filter(Boolean).join(' ')}
                         </Text>
-                        {providerAccount ? (
+                        {providerAccount && !compact ? (
                             <ConnectedAccountIdentityText
                                 testID={`${testID}:meta:account-id`}
                                 value={t('connectedServicesCollection.accountIdFact', { id: providerAccount })}
@@ -274,28 +288,49 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         ) : null}
                     </View>
                 )}
-                actions={props.agentDefaults && props.agentDefaults.choices.length > 0 ? (
+                actions={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {props.agentDefaults && props.agentDefaults.choices.length > 0 ? (
                     <AgentDefaultMenuButton
                         testID={`${testID}:default-for`}
                         choices={props.agentDefaults.choices}
                         onChange={props.agentDefaults.setDefault}
                     />
-                ) : undefined}
+                    ) : null}
+                    {props.onRefresh && status !== 'needs_reauth' ? compact
+                        ? <RoundButton testID={`${testID}:refresh`} size="small" display="inverted" title={t('common.refresh')} leading={<Icon name="arrow-clockwise" size={14} />} loading={props.refreshing} disabled={props.refreshing} onPress={props.onRefresh} />
+                        : <IconButton testID={`${testID}:refresh`} iconName="arrow-clockwise" variant="plain" accessibilityLabel={t('common.refresh')} disabled={props.refreshing} onPress={props.onRefresh} />
+                        : null}
+                    {!compact && (rename || onReconnect || onDisconnect || onShareWithTeam) ? <DropdownMenu open={moreOpen} onOpenChange={setMoreOpen} items={[
+                        ...(rename ? [{ id: 'rename', title: t('connectedServicesPool.rename') }] : []),
+                        ...(onReconnect ? [{ id: 'reconnect', title: t('connectedServicesSettings.signInAgain') }] : []),
+                        ...(onShareWithTeam ? [{ id: 'share', title: t('teams.credentials.create.action') }] : []),
+                        ...(onDisconnect ? [{ id: 'disconnect', title: t('modals.disconnect'), destructive: true }] : []),
+                    ]} onSelect={(id) => {
+                        if (id === 'rename') setRenameOpen(true);
+                        if (id === 'reconnect') onReconnect?.();
+                        if (id === 'share') onShareWithTeam?.();
+                        if (id === 'disconnect') void handleDisconnect();
+                    }} trigger={({ toggle }) => <IconButton testID={`${testID}:more`} iconName="dots-three" variant="plain" accessibilityLabel={t('connectedServicesPool.moreActions')} onPress={toggle} />} rowKind="item" /> : null}
+                </View>}
             />
+            </View>
             {status === 'needs_reauth' ? (
                 // Signed out blocks this account, so the banner lives here (and only here), with the fix.
                 <AttentionBanner
+                    compactActionPlacement="full-width"
                     testID={`${testID}:signed-out-banner`}
                     title={t('connectedServicesSettings.detailSignedOutTitle', { service: serviceLabel })}
-                    description={t('connectedServicesSettings.detailSignedOutBody')}
+                    description={t(compact ? 'connectedServicesCollection.signedOutConsequence' : 'connectedServicesSettings.detailSignedOutBody')}
                     action={onReconnect ? {
                         label: t('connectedServicesSettings.signInAgain'),
+                        display: 'default',
                         testID: `${testID}:signed-out-banner:sign-in-again`,
                         onPress: onReconnect,
                     } : null}
                 />
             ) : null}
             {props.usageSection ?? null}
+            {compact && providerAccount ? <ItemGroup title={t('connectedServices.profile.providerAccountId')}><Item title={t('connectedServices.profile.providerAccountId')} subtitle={<ConnectedAccountIdentityText value={providerAccount} style={stylesheet.mono} />} showChevron={false} mode="info" /></ItemGroup> : null}
             {props.usedBySection ?? null}
             {showPools ? (
                 <ItemGroup title={t('connectedServices.profile.poolsGroupTitle')}>
@@ -325,8 +360,9 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     ) : (
                         <EmptyState
                             testID={`${testID}:pools-empty`}
+                            layout="line"
                             titleTestID={`${testID}:pools-empty:title`}
-                            icon={<Icon name="stack-simple" size={ICON_SIZE.xl} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="stack-simple" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
                             title={t('connectedServices.profile.pools.emptyTitle')}
                             subtitle={t('connectedServices.profile.pools.emptySubtitle')}
                         />

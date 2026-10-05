@@ -462,8 +462,8 @@ const styles = StyleSheet.create((theme) => ({
         paddingRight: 8,
     },
     divider: {
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.colors.border.subtle,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: theme.colors.border.subtle,
     },
     hovered: {
         backgroundColor: theme.colors.surface.pressedOverlay,

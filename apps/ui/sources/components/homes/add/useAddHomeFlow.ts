@@ -3,11 +3,11 @@ import { Platform } from 'react-native';
 
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
-import { ALL_HOMES_SELECTION_TARGET_ID } from '@/sync/domains/server/selection/allHomesSelectionTarget';
-import { updateEffectiveHomeViewState } from '@/sync/domains/server/selection/homeViewSelectionState';
+import { selectAllHomes } from '@/sync/domains/server/selection/homeViewSelectionState';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { useUsableHomeServerIds } from '@/sync/domains/scope/usableHomeServerIds';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { offerThisComputerConnectionToHome } from '@/components/serverProfiles/offerThisComputerConnectionToHome';
 
 import {
     resolveAddHomePaths,
@@ -61,6 +61,7 @@ export function useAddHomeFlow(input: AddHomeAvailabilityInput & Readonly<{
         setPane((current) => transitionAddHomePane(current, { kind: 'back' }));
     }, []);
     const onConnected = React.useCallback(async (profile: ServerProfile): Promise<AddHomeConnectedResult> => {
+        await offerThisComputerConnectionToHome(profile);
         if (shouldFocusNewHome) {
             try {
                 const switched = await setActiveServerAndSwitch({
@@ -81,17 +82,15 @@ export function useAddHomeFlow(input: AddHomeAvailabilityInput & Readonly<{
         return result;
     }, [shouldFocusNewHome]);
     const openConnectedHome = React.useCallback(async (profile: ServerProfile) => {
-        return await setActiveServerAndSwitch({
+        const switched = await setActiveServerAndSwitch({
             serverId: profile.id,
             scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()),
         });
+        if (switched !== 'blocked') await offerThisComputerConnectionToHome(profile);
+        return switched;
     }, []);
     const showAllHomes = React.useCallback(async () => {
-        await updateEffectiveHomeViewState((current) => ({
-            ...current,
-            activeTargetKind: 'group',
-            activeTargetId: ALL_HOMES_SELECTION_TARGET_ID,
-        }), { scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()) });
+        await selectAllHomes({ scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()) });
     }, []);
 
     return { pane, paths, completion, shouldFocusNewHome, choosePath, connectAsHome, homeConnected, back, onConnected, openConnectedHome, showAllHomes };

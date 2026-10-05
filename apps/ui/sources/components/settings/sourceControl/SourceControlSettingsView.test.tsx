@@ -11,6 +11,8 @@ import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/stora
 
 const {
     setScmCommitStrategy,
+    setExplainChanges,
+    setPrepareAfterTurn,
     setScmGitRepoPreferredBackend,
     setScmRemoteConfirmPolicy,
     setScmPushRejectPolicy,
@@ -31,6 +33,8 @@ const {
     daemonProjectionState,
 } = vi.hoisted(() => ({
     setScmCommitStrategy: vi.fn(),
+    setExplainChanges: vi.fn(),
+    setPrepareAfterTurn: vi.fn(),
     setScmGitRepoPreferredBackend: vi.fn(),
     setScmRemoteConfirmPolicy: vi.fn(),
     setScmPushRejectPolicy: vi.fn(),
@@ -74,6 +78,9 @@ installSettingsViewCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useSettingMutable: createUseSettingMutableMockFromReader((name) => {
+                if (name === 'scm.diffSummary.enabled') return [false, setExplainChanges];
+                if (name === 'scm.diffSummary.prefetch') return [false, setPrepareAfterTurn];
+                if (name === 'scm.diffSummary.modelProfileOverride') return ['', vi.fn()];
                 if (name === 'scmCommitStrategy') return ['atomic', setScmCommitStrategy];
                 if (name === 'scmGitRepoPreferredBackend') return [scmGitRepoPreferredBackendValue, setScmGitRepoPreferredBackend];
                 if (name === 'scmGitRepoPreferredBackendQualifiedId') return [scmGitRepoPreferredBackendQualifiedIdValue, vi.fn()];
@@ -125,6 +132,7 @@ vi.mock('@/components/ui/navigation/SegmentedTabBar', () => ({ SegmentedTabBar: 
 
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettings,
+    useAccountSettingsScope: () => ({ serverId: 'server-target', accountId: 'fixture-account' }),
 }));
 
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
@@ -198,6 +206,15 @@ function segmentedControl(row: { props: Record<string, any>; type?: unknown; fin
 }
 
 describe('SourceControlSettingsView', () => {
+    it('writes explicit explain preferences but does not offer prefetch without an eligible selected model', async () => {
+        const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+        screen.pressRowByTitle('walkthroughSettings.enabled');
+        setPrepareAfterTurn.mockClear();
+        screen.pressRowByTitle('walkthroughSettings.prefetch');
+        expect(setExplainChanges).toHaveBeenCalledWith(true);
+        expect(setPrepareAfterTurn).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
         daemonProjectionState.current = { phase: 'unsupported', inputs: null };
         scmGitRepoPreferredBackendValue = 'git';

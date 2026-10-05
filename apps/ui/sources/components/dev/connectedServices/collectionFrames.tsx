@@ -14,8 +14,7 @@ import { ConnectedServicesRailView, RailAccountMeta, type ConnectedServicesRailA
 import { AgentDefaultMenuButton } from '@/components/settings/connectedServices/defaults/AgentDefaultMenuButton';
 import {
     AccountDetailResetsSectionView,
-    AccountDetailSubscriptionSectionView,
-    AccountDetailUsageSectionView,
+    AccountDetailFactsSectionsView,
     AccountDetailUsedBySectionView,
     AccountDetailWorksOnSectionView,
 } from '@/components/settings/connectedServices/account/AccountDetailSections';
@@ -25,7 +24,10 @@ import { ConnectedServicePoolIndexItemView } from '@/components/settings/connect
 import { ConnectedServicesIndexView, type ConnectedServicesIndexPresentation } from '@/components/settings/connectedServices/index/ConnectedServicesIndexView';
 import { buildConnectedServicesIndexModel, type ConnectedServicesIndexSheet } from '@/components/settings/connectedServices/model/buildConnectedServicesIndexModel';
 import { derivePoolUsage } from '@/components/settings/connectedServices/pools/derivePoolUsage';
-import { ConnectedAccountSettled } from '@/components/settings/connectedServices/setup/ConnectedAccountSettled';
+import { ConnectedAccountSettledView } from '@/components/settings/connectedServices/setup/ConnectedAccountSettled';
+import { selectConnectedAccountSettleOffer } from '@/components/settings/connectedServices/setup/selectConnectedAccountSettleOffer';
+import { presentConnectedServicesIndexAccount } from '@/components/settings/connectedServices/model/presentConnectedServicesIndexAccount';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ConnectedServicesConnectMore } from '@/components/settings/connectedServices/setup/ConnectedServicesConnectMore';
 import { resolveQuotaTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
 import { UsageMeterRow, UsageMeterStack } from '@/components/settings/connectedServices/usage/UsageMeterRow';
@@ -222,6 +224,16 @@ function CollectionFrame(props: Readonly<{ presentation: ConnectedServicesIndexP
     const model = useCastModel(props.settled === true);
     const phone = useDeviceType() === 'phone';
     const present = presenter(props.hidden === true);
+    const settledSheet = model.sheets.find((sheet) => sheet.service.localId === CHATGPT.localId);
+    const settleOffer = props.settled && settledSheet ? selectConnectedAccountSettleOffer({
+        account: { service: CHATGPT, accountId: 'bot' },
+        pools: settledSheet.pools,
+        agentDefault: null,
+        labelFor: (accountId) => {
+            const entry = settledSheet.accounts.find((candidate) => candidate.accountId === accountId);
+            return entry ? presentConnectedServicesIndexAccount(settledSheet, entry, LABELS, present).title : null;
+        },
+    }) : null;
     const index = (
         <ConnectedServicesIndexView
             model={model}
@@ -246,10 +258,17 @@ function CollectionFrame(props: Readonly<{ presentation: ConnectedServicesIndexP
                 serviceKey: 'happier.agent.codex/openai-codex',
                 accountId: 'bot',
                 node: (
-                    <ConnectedAccountSettled
-                        account={{ service: CHATGPT, accountId: 'bot' }}
-                        model={model}
-                        agents={[]}
+                    <ConnectedAccountSettledView
+                        identity={present({ email: 'bot@happier.dev' }).email}
+                        offer={settleOffer}
+                        primaryAction={settleOffer?.kind === 'pool' ? (
+                            <RoundButton
+                                testID="connected-services-settle:add-to-pool"
+                                size="small"
+                                title={t('connectedServicesSetup.settleAddToPool', { pool: settleOffer.poolName })}
+                                onPress={noop}
+                            />
+                        ) : null}
                         onDismiss={noop}
                     />
                 ),
@@ -362,10 +381,10 @@ function DetailFrame(props: Readonly<{ accountKey: 'chatgpt:personal' | 'chatgpt
             onOpenPool={noop}
             rename={{ currentLabel: signedOut ? 'Team' : 'Personal', onRename: noop }}
             onReconnect={noop}
+            onRefresh={noop}
             onDisconnect={noop}
             usageSection={(
-                <>
-                    <AccountDetailUsageSectionView
+                    <AccountDetailFactsSectionsView
                         facts={{
                             meters: facts.usage.kind === 'meters' ? facts.usage.meters : [],
                             fetchedAt: facts.fetchedAt,
@@ -378,13 +397,11 @@ function DetailFrame(props: Readonly<{ accountKey: 'chatgpt:personal' | 'chatgpt
                             refresh: noop,
                         }}
                         signedOut={signedOut}
+                        serviceLabel="ChatGPT"
                         now={NOW}
-                    />
-                    <AccountDetailSubscriptionSectionView subscription={usage.subscription ?? null} serviceLabel="ChatGPT" planLabel={usage.plan} now={NOW} />
-                    {signedOut ? null : (
+                        resetsSection={signedOut ? null : (
                         <AccountDetailResetsSectionView recoveryCredits={usage.resets ?? null} now={NOW} pending={false} onUse={noop} />
-                    )}
-                </>
+                    )} />
             )}
             usedBySection={(
                 <AccountDetailUsedBySectionView

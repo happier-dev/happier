@@ -570,7 +570,7 @@ describe('Plain password enrollment external auth', () => {
                     newPlainPassword: 'correct horse battery staple',
                 }),
             }),
-            { retry: 'none' },
+            expect.objectContaining({ retry: 'none' }),
         ]);
         const [, init] = mocks.serverFetch.mock.calls[1]!;
         const url = String(mocks.serverFetch.mock.calls[1]![0]);

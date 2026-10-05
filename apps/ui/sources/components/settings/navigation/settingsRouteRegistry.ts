@@ -55,6 +55,7 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     // index of every service is its unselected detail (lab `csvc` C1/C2).
     { name: 'connected-services', titleKey: 'settings.connectedServices' },
     { name: 'index', navigator: 'connected-services', titleKey: 'settings.connectedServices' },
+    { name: 'connect', navigator: 'connected-services', titleKey: 'settings.connectedServices', headsItself: true },
     { name: '[serviceId]', navigator: 'connected-services', titleKey: 'connectedServices.fallbackName' },
     { name: 'account', navigator: 'connected-services', titleKey: 'connectedServices.profile.profileId', headsItself: true },
     { name: 'sign-in', navigator: 'connected-services', titleKey: 'connectedServicesCollection.agentSignInTitle' },
@@ -251,6 +252,7 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'voice', titleKey: 'settings.voiceAssistant' },
     { name: 'voice/dictation', titleKey: 'settingsVoice.intents.dictation.title' },
     { name: 'voice/conversations', titleKey: 'settingsVoice.intents.conversations.title' },
+    { name: 'voice/service', titleKey: 'settingsVoice.pages.conversations.serviceTitle' },
     { name: 'voice/privacy', titleKey: 'settingsVoice.intents.privacy.title' },
     { name: 'voice/advanced', titleKey: 'settingsVoice.intents.advanced.title' },
     { name: 'voice-history', titleKey: 'settingsVoice.history.title' },

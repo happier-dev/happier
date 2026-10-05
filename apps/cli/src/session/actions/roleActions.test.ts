@@ -68,7 +68,7 @@ describe('role Action effects', () => {
     const deleted: string[] = [];
     const execute = createRoleActionExecutor({ sessionId: '', accountId: 'account-1',
       mutateAccountSettings: async (mutate) => { await mutate({ rolesV1: { overrides: {} } }); },
-      artifactStore: { list: async () => ({ items: [] }),
+      artifactStore: { list: async () => ({ items: [], coverage: 'complete' }),
         accessGrants: {
           list: async () => { throw new Error('Unexpected access grant list'); },
           set: async () => { throw new Error('Unexpected access grant set'); },
@@ -160,7 +160,7 @@ describe('role Action effects', () => {
         set: async () => { throw new Error('Unexpected access grant set'); },
         remove: async () => { throw new Error('Unexpected access grant remove'); },
       },
-      list: async () => ({ items: [{ artifactId: 'shared-role', ownerAccountId: 'other-account', header: { kind: 'role.v1' }, access: 'view', headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }] }),
+      list: async () => ({ items: [{ artifactId: 'shared-role', ownerAccountId: 'other-account', header: { kind: 'role.v1' }, access: 'view', headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }], coverage: 'complete' }),
       read: async () => ({ artifactId: 'shared-role', ownerAccountId: 'other-account', access: 'view', header: { kind: 'role.v1', migratedFromV0_2: true }, body: JSON.stringify(role), revision: { headerVersion: 1, bodyVersion: 1 }, seq: 1, createdAt: 1, updatedAt: 1 }),
       create: async () => { throw new Error('Unexpected create'); }, update: async () => { throw new Error('Unexpected update'); }, delete: async () => { throw new Error('Unexpected delete'); },
     } });
@@ -190,9 +190,9 @@ describe('role Action effects', () => {
           set: async () => { throw new Error('Unexpected access grant set'); },
           remove: async () => { throw new Error('Unexpected access grant remove'); },
         },
-        list: async () => ({ items: [] }),
+        list: async () => ({ items: [], coverage: 'complete' }),
         read: async (artifactId) => { const artifact = artifacts.get(artifactId); return artifact ? { artifactId, ...artifact, ownerAccountId: 'account-1', access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, seq: 1, createdAt: 1, updatedAt: 1 } : null; },
-        create: async ({ artifactId, header, body }) => { if (!artifactId) throw new Error('Missing id'); artifacts.set(artifactId, { header, body }); return { artifactId, revision: { headerVersion: 1, bodyVersion: 1 } }; },
+        create: async ({ artifactId, header, body }) => { if (!artifactId) throw new Error('Missing id'); if (typeof body !== 'string') throw new Error('Expected role text'); artifacts.set(artifactId, { header, body }); return { artifactId, revision: { headerVersion: 1, bodyVersion: 1 } }; },
         update: async () => { throw new Error('Unexpected update'); }, delete: async () => { throw new Error('Unexpected delete'); },
       },
     });

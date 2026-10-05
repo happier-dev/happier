@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 
@@ -60,27 +60,7 @@ installSettingsViewCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useEntitlement: () => false,
-            useLocalSettingMutable: () => [false, vi.fn()],
-            useSetting: (key: string) => {
-                if (key === 'serverSelectionGroups') return [];
-                if (key === 'serverSelectionActiveTargetKind') return null;
-                if (key === 'serverSelectionActiveTargetId') return null;
-                if (key === 'experiments') return false;
-                if (key === 'featureToggles') return {};
-                if (key === 'useProfiles') return false;
-                if (key === 'sessionUseTmux') return false;
-                return null;
-            },
-            useAllMachines: () => [],
-            useMachineListByServerId: () => ({}),
-            useMachineListStatusByServerId: () => ({}),
-            useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
-        });
-    },
+    storage: async (importOriginal) => await importOriginal<typeof import('@/sync/domains/state/storage')>(),
 });
 
 vi.mock('expo-image', () => ({
@@ -210,12 +190,22 @@ vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
     },
 }));
 
+beforeEach(async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+    storage.setState({ settings: settingsDefaults, machines: {}, machineListByServerId: {} });
+});
+
 afterEach(() => {
     routerPushSpy.mockClear();
     automationsSupportState.enabled = false;
     automationsSupportState.discoverable = false;
     automationsSupportState.blockedBy = 'server';
 });
+
+// Resolve the real screen graph during collection, not inside an interaction's
+// timeout. The build-policy owner rekeys its cache when public env changes.
+await import('./SettingsView');
 
 describe('SettingsView (runs entry)', () => {
     async function renderSettingsViewUnderTest() {
@@ -316,7 +306,6 @@ describe('SettingsView (runs entry)', () => {
     it("omits the What's New entry when changelog UI is disabled by build policy", async () => {
         const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'app.ui.changelog';
-        vi.resetModules();
 
         try {
             const screen = await renderSettingsViewUnderTest();
@@ -331,7 +320,9 @@ describe('SettingsView (runs entry)', () => {
         mockFeatureEnabled = (featureId) => featureId === 'execution.runs';
         const screen = await renderSettingsViewUnderTest();
 
-        expect(screen.findRowByTitle('settings.voiceAssistant')).toBeNull();
+        // The Voice root also owns ungated local dictation/privacy settings;
+        // only Conversations is gated by the server's Voice capability.
+        expect(screen.findRowByTitle('settings.voiceAssistant')).not.toBeNull();
         expect(screen.findRowByTitle('settings.filesSourceControl')).toBeNull();
         expect(screen.findRowByTitle('settings.memorySearch')).toBeNull();
     });

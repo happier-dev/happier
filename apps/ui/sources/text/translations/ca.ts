@@ -1,3 +1,7 @@
+import { promptPickerTranslations } from './promptPickerTranslations';
+import { pendingNavigationTranslations } from './pendingNavigationTranslations';
+import { fileContentSearchTranslations } from './fileContentSearchTranslations';
+import { voiceSettingsPagesTranslations } from './voiceSettingsPagesTranslations';
 import { folderlessSessionTranslations } from './folderlessSessionTranslations';
 import { sessionCollaborationTranslations } from './sessionCollaborationTranslations';
 import { sessionMessageAccountActorTranslations } from './sessionMessageAccountActorTranslations';
@@ -33,6 +37,7 @@ import { pluginSettingsPresentationTranslations } from './pluginSettingsPresenta
 import { sessionRemotePermissionGrantTranslations } from './sessionRemotePermissionGrantTranslations';
 import { sessionAgentActivityTranslations } from './sessionAgentActivityTranslations';
 import { sessionWorkTranslations } from './sessionWorkTranslations';
+import { entityDragDropTranslations } from './entityDragDropTranslations';
 import { agentStartTranslations } from './agentStartTranslations';
 import { goalControlTranslations } from './goalControlTranslations';
 import { inboxWorkTranslations } from './inboxWorkTranslations';
@@ -43,6 +48,7 @@ import { sessionGitPullRequestTranslations } from './sessionGitPullRequestTransl
 import { sessionConversationSurfaceTranslations } from './sessionConversationSurfaceTranslations';
 import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
 import { turnChangesTranslations } from './turnChangesTranslations';
+import { committedMessageActionTranslations } from './committedMessageActionTranslations';
 import { scmComparisonTranslations } from './scmComparisonTranslations';
 import { walkthroughTranslations } from './walkthroughTranslations';
 import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
@@ -83,6 +89,8 @@ import { actionConfirmationTranslations } from './actionConfirmationTranslations
 import { detailPageTranslations } from './detailPageTranslations';
 import { rolesTranslations } from './rolesTranslations';
 import { boardsTranslations } from './boardsTranslations';
+import { findTranslations } from './findTranslations';
+import { transcriptFindTranslations } from './transcriptFindTranslations';
 import { artifactsBrowserTranslations } from './artifactsBrowserTranslations';
 import { workStatusTranslations } from './workStatusTranslations';
 import { shareSheetTranslations } from './shareSheetTranslations';
@@ -104,11 +112,16 @@ import { personalHomeSettingsTranslations } from './personalHomeSettingsTranslat
 import { homeDeviceApprovalTranslations } from './homeDeviceApprovalTranslations';
 import { settingsOverviewTranslations } from './settingsOverviewTranslations';
 import { homeSetupTranslations } from './homeSetupTranslations';
+import { personalizeTranslations } from './personalizeTranslations';
 import { connectedServicesSetupTranslations } from './connectedServicesSetupTranslations';
 import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
+import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
+import { voicePresenceTranslations } from './voicePresenceTranslations';
+import { voiceMomentsTranslations } from './voiceMomentsTranslations';
 import { homeIndexTranslations } from './homeIndexTranslations';
 import { addFlowsTranslations } from './addFlowsTranslations';
 import { machineAddTranslations } from './machineAddTranslations';
@@ -269,6 +282,7 @@ const newSessionMcpTranslationExtension = {
 } as const;
 
 const settingsAppearanceTranslationExtension = {
+  glassControls: glassAppearanceTranslations['ca'],
   switchToDarkTheme: 'Canvia al tema fosc',
   switchToLightTheme: 'Canvia al tema clar',
   themeToggle: {
@@ -430,6 +444,7 @@ const settingsAppearanceTranslationExtension = {
       syntax: 'Sintaxi',
       versionControl: 'Control de versions',
       diff: 'Diferències',
+      find: 'Coincidències de cerca',
       permission: 'Permisos',
       overlay: 'Superposicions',
     },
@@ -786,11 +801,16 @@ export const ca = {
     homeDeviceApproval: homeDeviceApprovalTranslations.ca,
     settingsOverview: settingsOverviewTranslations.ca,
     homeSetup: homeSetupTranslations.ca,
+    personalize: personalizeTranslations.ca,
     connectedServicesSetup: connectedServicesSetupTranslations.ca,
     homeWidgets: homeWidgetTranslations.ca,
     widgetFrame: widgetFrameTranslations.ca,
+    inputPicker: inputPickerTranslations.ca,
     widgetAdd: widgetAddTranslations.ca,
+    widgetDefinition: widgetDefinitionTranslations.ca,
     widgetGlances: widgetGlanceTranslations.ca,
+    voicePresence: voicePresenceTranslations.ca,
+    voiceMoments: voiceMomentsTranslations.ca,
     homeIndex: homeIndexTranslations.ca,
     addFlows: addFlowsTranslations.ca,
     machineAdd: machineAddTranslations.ca,
@@ -806,6 +826,8 @@ export const ca = {
     detailPages: detailPageTranslations.ca,
     roles: rolesTranslations.ca,
     boards: boardsTranslations.ca,
+    find: findTranslations.ca,
+    transcriptFind: transcriptFindTranslations['ca'],
     workStatus: workStatusTranslations.ca,
     shareSheet: shareSheetTranslations.ca,
     surfaceState: surfaceStateTranslations.ca,
@@ -819,6 +841,7 @@ export const ca = {
     },
     workspaceSync: workspaceSyncTranslations.ca,
     sessionDrafts: sessionDraftTranslations.ca,
+    pendingNavigation: pendingNavigationTranslations.ca,
     sessionDirectoryRecovery: sessionDirectoryRecoveryTranslations.ca,
     transferRecovery: {
         title: 'Finalitza la pujada preparada',
@@ -833,6 +856,7 @@ export const ca = {
     sessionBoard: sessionBoardTranslations.ca,
     sessionAgentActivity: sessionAgentActivityTranslations.ca,
     sessionWork: sessionWorkTranslations.ca,
+    entityDragDrop: entityDragDropTranslations.ca,
     agentStart: agentStartTranslations.ca,
     goalControl: goalControlTranslations.ca,
     sessionGitPane: sessionGitPaneTranslations.ca,
@@ -842,6 +866,7 @@ export const ca = {
     sessionConversation: sessionConversationSurfaceTranslations.ca,
     ...changedFileEvidenceTranslations.ca,
     ...turnChangesTranslations.ca,
+    ...committedMessageActionTranslations.ca,
     ...scmComparisonTranslations.ca,
     ...walkthroughTranslations.ca,
     ...walkthroughSettingsTranslations.ca,
@@ -914,13 +939,19 @@ export const ca = {
         setShortcutInvalidMessage: 'Introduïu almenys una tecla no modificadora, opcionalment amb Mod, Ctrl, Maj o Alt.',
         resetCommandAccessibility: ({ command }: { command: string }) => `Reset ${command} shortcut`,
         commands: {
+            findOpen: transcriptFindTranslations['ca'].findOpen,
+            findNext: transcriptFindTranslations['ca'].findNext,
+            findPrevious: transcriptFindTranslations['ca'].findPrevious,
             ...workspaceTabKeyboardTranslations,
             ...terminalWorkspaceKeyboardTranslations,
             composerAbortConfirm: 'Confirma la interrupció',
             composerFocus: 'Enfoca el compositor',
+            composerPromptsOpen: promptPickerTranslations.ca.open,
+            voiceToggle: 'Inicia o finalitza la Veu',
             composerSendImmediate: 'Envia immediatament',
             composerSendPending: 'Envia a la cua pendent',
             commandPaletteOpen: 'Obre la cerca',
+            searchTextInFiles: fileContentSearchTranslations["ca"].textInFiles,
             browserAddressFocus: 'Enfoca la barra d’adreces del navegador',
             browserBack: 'Enrere al navegador',
             browserForward: 'Endavant al navegador',
@@ -929,6 +960,7 @@ export const ca = {
             shortcutsHelpOpen: 'Obre l’ajuda de dreceres',
             sessionNew: 'Crea una sessió nova',
             sessionMruNext: 'Sessió recent següent',
+            sessionPendingNext: 'Sol·licitud pendent següent',
             sessionMruPrevious: 'Sessió recent anterior',
             sessionVisibleNext: 'Sessió visible següent',
             sessionVisiblePrevious: 'Sessió visible anterior',
@@ -1097,6 +1129,7 @@ export const ca = {
         stopWaiting: 'Deixa d’esperar',
         loadError: 'No s\'ha pogut carregar l\'aprovació.',
         decisionError: 'No s\'ha pogut actualitzar l\'aprovació.',
+        decisionAuthorityError: 'Aquest inici de sessió no permet aprovar sol·licituds. Inicia sessió en aquest Home amb la clau de recuperació del teu compte, o aprova des d’un altre dispositiu amb una sessió de compte.',
         unsafeDetailsTitle: 'Aquests detalls no es poden mostrar amb seguretat',
         unsafeDetailsBody: 'Happier no ha pogut mostrar aquesta sol·licitud exactament tal com es va enviar, així que no es pot aprovar. Rebutja-la o demana que la tornin a enviar.',
         approveUnavailableHint: 'L\'aprovació no està disponible mentre aquests detalls no es puguin mostrar amb seguretat.',
@@ -1735,7 +1768,10 @@ export const ca = {
     },
 
       common: {
+        decrease: "Redueix",
+        increase: "Augmenta",
           // Simple string constants
+          search: 'Cerca',
           add: 'Afegeix',
           edit: 'Edita',
           change: 'Canvia',
@@ -1748,6 +1784,10 @@ export const ca = {
           decline: 'Rebutja',
           submit: 'Envia',
           close: 'Tancar',
+          minimizeWindow: "Minimitza la finestra",
+          maximizeWindow: "Maximitza la finestra",
+          restoreWindow: "Restaura la finestra",
+          closeWindow: "Tanca la finestra",
           dismissKeyboard: 'Amaga el teclat',
           open: 'Obre',
         done: 'Fet',
@@ -1866,6 +1906,7 @@ export const ca = {
           pluginUi: {
               loading: 'S’està carregant',
               empty: 'No hi ha res per mostrar',
+              collectionEmpty: 'Cap',
               error: 'Alguna cosa ha anat malament',
               moreActions: 'Més accions',
           },
@@ -2621,7 +2662,7 @@ export const ca = {
         systemTaskStartFailed: 'No s’ha pogut iniciar la tasca del sistema.',
         appearance: 'Aparença',
         appearanceSubtitle: 'Personalitza l\'aspecte de l\'aplicació',
-          voiceAssistant: 'Assistent de veu',
+          voiceAssistant: 'Veu',
           voiceAssistantSubtitle: 'Parla amb els teus agents i dicta al compositor.',
           memorySearch: 'Cerca de memòria local',
           memorySearchSubtitle: 'Cerca en converses anteriors (al dispositiu)',
@@ -6587,6 +6628,7 @@ export const ca = {
     },
 
     universalSearch: {
+        content: fileContentSearchTranslations["ca"],
         scopeFilterLabel: 'Home',
         commitsUpdateRequired: 'Actualitza Happier en aquesta màquina per cercar commits.',
         moreResultsAvailable: 'Hi ha més resultats disponibles. Refina la cerca.',
@@ -6601,7 +6643,7 @@ export const ca = {
     },
 
     commandPalette: {
-        placeholder: 'Escriu una comanda o cerca...',
+        placeholder: fileContentSearchTranslations["ca"].placeholder,
         noCommandsFound: 'No s\'han trobat comandes',
         activationFailed: 'No s’ha pogut completar aquesta comanda.',
         shortcutsHelpTitle: 'Dreceres de teclat',
@@ -6684,9 +6726,10 @@ export const ca = {
           thinking: 'Pensant…',
           speaking: 'Parlant',
           microphonePermissionRequired: 'Cal accés al micròfon',
+          microphoneBlocked: 'Micròfon bloquejat',
           interrupted: 'Interromput',
           active: 'Assistent de veu actiu',
-          connectionError: 'Error de connexió',
+          connectionError: "No s’ha pogut connectar",
         label: 'Assistent de veu',
         tapToEnd: 'Toca per acabar',
         startDictation: 'Inicia el dictat',
@@ -7316,6 +7359,7 @@ export const ca = {
     },
 
     agentInput: {
+        promptPicker: promptPickerTranslations['ca'],
         chipPicker: {
             selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Seleccionat.`,
         },
@@ -7518,7 +7562,7 @@ export const ca = {
             pendingValue: ({ current, requested }: { current: string; requested: string }) => `Pendent: ${current} → ${requested}`,
         },
         actionMenu: {
-            title: 'ACCIONS',
+            title: 'Accions',
             files: 'Fitxers',
             stop: 'Atura',
         },
@@ -9832,9 +9876,9 @@ settingsSession: {
               },
               messageActions: {
                 groupTitle: 'Accions de missatge',
-                groupFooter: 'Configura la selecció de missatges i les accions de reenviament a la transcripció.',
+                groupFooter: 'Tria quines accions apareixen sota cada missatge. Una acció desactivada desapareix de la fila i del menú de pulsació llarga.',
                 selectionEnabled: {
-                  title: 'Activa la selecció de missatges',
+                  title: 'Selecciona',
                   subtitle: 'Mostra una icona de selecció sota els missatges per copiar-los o reenviar-los en bloc',
                 },
                 sendToSessionEnabled: {
@@ -10141,6 +10185,7 @@ settingsSession: {
         consoleSubtitle: 'Obre la sessió en una finestra estàndard de consola de Windows.',
     },
     settingsVoice: {
+        ...voiceSettingsPagesTranslations.ca,
         ...voiceDiagnosticsTranslations.ca,
         intents: {
             dictation: { title: 'Dictat', subtitle: 'Converteix una frase parlada en text del quadre de redacció.' },
@@ -10154,7 +10199,7 @@ settingsSession: {
             sectionFooter: 'Revisa o elimina transcripcions de converses de veu globals i sense destinació.',
             pageDescription: 'Transcripcions de la veu global i de converses iniciades fora d’una sessió.',
             entryTitle: 'Historial de veu',
-            entrySubtitle: 'Cerca, exporta o esborra transcripcions de veu desades.',
+            entrySubtitle: "Cerca, exporta o esborra converses de veu anteriors.",
             searchTitle: 'Cerca a l’historial carregat',
             searchFooter: 'La cerca usa els missatges de veu ja desxifrats en aquest dispositiu.',
             searchPlaceholder: 'Cerca transcripcions o proveïdors',
@@ -10170,15 +10215,15 @@ settingsSession: {
             loadOlderFooter: 'Els missatges antics romanen al servidor fins que els carreguis o esborris.',
             loadingOlder: 'S’estan carregant missatges antics…',
             loadOlderFailed: 'No s’ha pogut carregar l’historial de veu antic.',
-            exportTitle: 'Exporta l’historial de veu',
+            exportTitle: "Exporta l’historial de veu",
             exportSubtitle: 'Carrega la resta de l’historial i desa’l com a JSON.',
             exporting: 'S’està preparant l’exportació…',
             exportSucceeded: 'L’exportació de l’historial de veu està preparada.',
             exportFailed: 'No s’ha pogut exportar l’historial de veu.',
-            clearTitle: 'Esborra l’historial de veu',
+            clearTitle: "Esborra l’historial de veu",
             clearSubtitle: 'Elimina tot l’historial de veu independent d’aquest compte.',
             clearing: 'S’està esborrant l’historial de veu…',
-            clearConfirmTitle: 'Vols esborrar l’historial de veu?',
+            clearConfirmTitle: "Vols esborrar l’historial de veu?",
             clearConfirmBody: 'Això elimina permanentment tot l’historial de veu independent d’aquest compte. No es pot desfer.',
             clearConfirmAction: 'Esborra l’historial',
             clearSucceeded: 'S’ha esborrat l’historial de veu.',
@@ -10229,17 +10274,17 @@ settingsSession: {
         modeDescription: 'Configura les funcions de veu. Pots desactivar la veu del tot, utilitzar Happier Voice (requereix subscripció) o utilitzar el teu compte d’ElevenLabs.',
         mode: {
             off: 'Desactivat',
-            offSubtitle: 'Desactiva totes les funcions de veu',
-            happier: 'Happier Voice',
+            offSubtitle: "Sense converses de veu. El dictat continua disponible.",
+            happier: "Happier",
             happierSubtitle: 'Utilitza Happier Voice (cal subscripció)',
             local: 'Veu OSS local',
             localSubtitle: 'Fes servir endpoints STT/TTS locals compatibles amb OpenAI',
-            byo: 'Fes servir el meu ElevenLabs',
+            byo: "El meu compte d’ElevenLabs",
             byoSubtitle: 'Fes servir la teva clau API i l’agent d’ElevenLabs',
             openaiRealtime: 'OpenAI Realtime',
             openaiRealtimeSubtitle: 'Fes servir una clau API desada o un compte d’OpenAI seleccionat explícitament',
-            grokRealtime: 'Grok Voice · BYOK',
-            grokRealtimeSubtitle: 'Fes servir la teva clau API d’xAI per a la veu en directe',
+            grokRealtime: "Grok Voice",
+            grokRealtimeSubtitle: "Fa servir la teva clau API d’xAI",
         },
         realtimeProviders: {
             ...voiceProviderPrivacyTranslations.ca,
@@ -10263,6 +10308,13 @@ settingsSession: {
             activityFeedEnabledSubtitle: 'Mostra esdeveniments de veu recents a la pantalla',
             activityFeedAutoExpandOnStart: 'Expandeix automaticament en iniciar',
             activityFeedAutoExpandOnStartSubtitle: 'Expandeix el feed automaticament quan la veu s\'inicia',
+            presenceContainer: {
+                title: "Ubicació de la veu",
+                subtitle: "Tria on apareix la veu en aquest dispositiu.",
+                topBar: "Barra superior",
+                island: "Illa",
+                orb: "Esfera",
+            },
             orbEnabled: 'Esfera de veu flotant',
             orbEnabledSubtitle: 'Mostra el company de veu arrossegable en aquest dispositiu. La veu continua disponible des de la barra lateral i el redactor.',
             scopeTitle: 'Abast predeterminat de veu',
@@ -10315,7 +10367,7 @@ settingsSession: {
             },
         },
         byo: {
-            title: 'Fes servir el meu ElevenLabs',
+            title: "El meu compte d’ElevenLabs",
 	            agentReuseDialog: {
 	                title: 'Ja existeix un agent de Happier',
 	                messageWithId: ({ name, id }: { name: string; id: string }) =>
@@ -10696,8 +10748,8 @@ settingsSession: {
                 },
 
                 provider: {
-                    title: 'Xarxa neuronal local (beta)',
-                    subtitle: 'STT via daemon al web; els paquets de streaming Sherpa natius continuen disponibles quan són compatibles.',
+                    title: "Model de veu de Happier",
+                    subtitle: "S’executa als teus ordinadors; l’àudio es queda amb tu.",
                     detail: 'Motor Sherpa',
                 },},
             executionMachine: {
@@ -10706,7 +10758,7 @@ settingsSession: {
                 title: 'Màquina d’execució',
                 fallbackSubtitle: 'Tria una màquina per a la veu local.',
                 autoTitle: 'Automàtica',
-                autoSubtitle: 'Utilitza l’activitat recent per triar una màquina disponible.',
+                autoSubtitle: "Tria una màquina per a aquest compte i continua utilitzant-la. Si està fora de línia, tria’n una altra explícitament.",
                 onlineLabel: 'En línia',
                 offlineLabel: 'Fora de línia',
                 unknownMachineLabel: 'Màquina desconeguda',
@@ -10721,14 +10773,14 @@ settingsSession: {
                 },
                 handsFree: {
                     title: 'Mans lliures',
-                    enableTitle: 'Activa mans lliures',
-                    silenceTitle: 'Temps de silenci (ms)',
-                    minSpeechTitle: 'Parla mínima (ms)',
+                    enableTitle: "Mans lliures",
+                    silenceTitle: "Pausa abans de respondre",
+                    minSpeechTitle: "Ignora sons més curts que",
                 },
                 customBackendIdSubtitle: 'Introdueix un ID de backend personalitzat.',
                 searchBackendsPlaceholder: 'Cerca backends',
                 searchModelsPlaceholder: 'Cerca models',
-                machineAutoSubtitle: 'Selecciona automàticament una màquina segons l’ús recent.',
+                machineAutoSubtitle: "Tria una màquina per a aquest compte i continua utilitzant-la. Si està fora de línia, tria’n una altra explícitament.",
                 rootSessionPolicy: {
                     title: 'Política de sessió arrel',
                     fallbackSubtitle: 'Tria una política.',
@@ -10762,10 +10814,10 @@ settingsSession: {
                     title: 'Màquina de l’agent',
                     fallbackSubtitle: 'Tria on executar l’agent de veu.',
                     stayInVoiceHomeTitle: 'Queda’t a voice home',
-                    stayInVoiceHomeEnabledSubtitle: 'Mantén l’agent a la màquina de voice home.',
-                    stayInVoiceHomeDisabledSubtitle: 'Permet que l’agent segueixi la màquina de la sessió.',
+                    stayInVoiceHomeEnabledSubtitle: "Mantén l’agent a la carpeta de Veu.",
+                    stayInVoiceHomeDisabledSubtitle: "Permet que l’agent utilitzi la carpeta del projecte de la sessió.",
                     allowTeleportTitle: 'Permet teletransport',
-                    teleportEnabledSubtitle: 'Permet moure l’agent a una altra màquina quan calgui.',
+                    teleportEnabledSubtitle: "Permet moure l’agent a la carpeta del projecte de la sessió de treball.",
                     teleportDisabledSubtitle: 'Teletransport desactivat.',
                 },
                 machineRecovery: {
@@ -10876,9 +10928,9 @@ settingsSession: {
             mediatorVerbosityShort: 'Curt',
             mediatorVerbosityBalanced: 'Equilibrat',
             mediatorIdleTtl: 'TTL d’inactivitat del mediador',
-            mediatorIdleTtlSubtitle: 'Atura automàticament després d’inactivitat (60–3600s)',
-            mediatorIdleTtlDescription: 'Introdueix un número entre 60 i 3600.',
-            mediatorIdleTtlInvalid: 'Introdueix un número entre 60 i 3600.',
+            mediatorIdleTtlSubtitle: "Atura automàticament després d’inactivitat (60–21600s)",
+            mediatorIdleTtlDescription: "Introdueix un número entre 60 i 21600.",
+            mediatorIdleTtlInvalid: "Introdueix un número entre 60 i 21600.",
             mediatorChatModelSource: 'Origen del model (chat)',
             mediatorChatModelSourceSubtitle: 'Usa el model de la sessió o un model ràpid personalitzat',
             mediatorChatModelSourceSession: 'Model de la sessió',
@@ -10916,9 +10968,9 @@ settingsSession: {
             chatMaxTokensPlaceholder: 'En blanc = per defecte',
             chatMaxTokensUnlimited: 'Per defecte',
             chatMaxTokensInvalid: 'Introdueix un número positiu o deixa-ho en blanc.',
-            deviceStt: 'STT del dispositiu (experimental)',
+            deviceStt: "Veu d’aquest dispositiu",
             deviceSttSubtitle:
-                'Fes servir el reconeixement de veu del dispositiu en lloc d’un endpoint compatible amb OpenAI',
+                "Ràpid i gratuït. El dispositiu o el navegador pot enviar l’àudio al fabricant per reconèixer-lo.",
             sttProvider: 'Proveïdor STT',
             neuralStt: {
                 title: 'STT al dispositiu',
@@ -11126,9 +11178,9 @@ settingsSession: {
             },
         },
         languageTitle: 'Idioma',
-        languageDescription: 'Tria el teu idioma preferit per a les interaccions amb l\'assistent de veu. Aquesta configuració es sincronitza a tots els teus dispositius.',
-        preferredLanguage: 'Idioma preferit',
-        preferredLanguageSubtitle: 'Idioma utilitzat per a les respostes de l\'assistent de veu',
+        languageDescription: "Tria l’idioma admès pel servei de veu. Alguns serveis utilitzen un sol idioma per al reconeixement i les respostes.",
+        preferredLanguage: "Respon en",
+        preferredLanguageSubtitle: "Idioma de resposta preferit, si el servei ho admet",
         language: {
             searchPlaceholder: 'Cerca idiomes...',
             title: 'Idiomes',
@@ -11147,6 +11199,7 @@ settingsSession: {
     },
 
     settingsAccount: {
+        ...accountEncryptionRecoveryTranslations['ca'],
         providerCatalogUnavailable: 'No s’han pogut comprovar les connexions d’inici de sessió disponibles.',
         securityPageDescription: "Mètodes d’inici de sessió, recuperació, sessions i xifratge d’aquest Home.",
         accountServiceUnsupportedTitle: ({ accountService }: { accountService: string }) => `${accountService} encara no pot trobar Homes`,
@@ -11407,7 +11460,10 @@ settingsSession: {
         },
         defaultTitle: 'Què hi ha de nou',
         onboardingShowcase: {
-            details: PRODUCT_STORY_DETAILS_ENGLISH,
+            details: {
+                ...PRODUCT_STORY_DETAILS_ENGLISH,
+                voice: { ...PRODUCT_STORY_DETAILS_ENGLISH.voice, body: "Pregunta per les teves sessions i pensa els pròxims canvis en veu alta. Les sol·licituds de permís requereixen un toc." },
+            },
                 "title": "Benvingut a Happier",
                 "subtitle": "Els teus agents d’IA, a tot arreu on treballes.",
                 "cards": {
@@ -11420,7 +11476,7 @@ settingsSession: {
                         "existingTitle": "Sessions existents, ja disponibles",
                         "existingBody": "Qualsevol sessió de Claude, Codex o OpenCode que s’executi a la teva màquina, obre-la a Happier en directe.",
                         "voiceTitle": "Un assistent de veu per pensar-hi plegats",
-                        "voiceBody": "Pregunta què fan els teus agents, aprova sol·licituds de permís i envia missatges. Sense mans.",
+                        "voiceBody": "Pregunta què fan els teus agents i envia missatges amb la veu. Aprova les sol·licituds de permís amb un toc.",
                         "reviewTitle": "Revisa diffs i deixa comentaris",
                         "reviewBody": "Marca línies concretes en fitxers o diffs, tria quines notes vols enviar i passa-les directament a un agent.",
                         "subagentsTitle": "Subagents entre proveïdors",
@@ -11482,7 +11538,7 @@ settingsSession: {
                     "voiceAssistant": {
                         "title": "Un company amb qui pots parlar",
                         "wideTitle": "Assistent de veu: un company amb qui pots parlar",
-                        "body": "L’assistent de veu supervisa totes les sessions en execució. Penseu plegats els pròxims canvis, aprova permisos i molt més, sense mans.",
+                        "body": "Pregunta per les teves sessions i pensa els pròxims canvis en veu alta. Les sol·licituds de permís requereixen un toc.",
                         "alt": "Imatge abstracta de marcador per a l’assistent de veu."
                     },
                     "reviewComments": {
@@ -13554,6 +13610,24 @@ settingsSession: {
         browseActivityUnknown: "Desconeguda",
         browseSearchPlaceholder: "Cerca sessions carregades…",
         browseSearchAgentPlaceholder: ({ agent }: { agent: string }) => `Cerca sessions de ${agent}…`,
+        browseTitles: "Títols",
+        browseConversations: "Converses",
+        browseSearchTarget: "Cerca a",
+        browseContentPlaceholder: "Cerca al text de les converses…",
+        browseContentSearchPrompt: "Escriu una frase i cerca a les converses.",
+        browseContentSubmit: "Cerca",
+        browseContentUpdateRequired: ({ machine }: { machine: string }) => `Actualitza Happier a ${machine} per cercar converses.`,
+        browseContentPartial: "No s’han pogut cercar algunes converses.",
+        browseContentNotSearchable: "No es pot cercar",
+        browseContentStopped: "Cerca aturada. Els resultats són incomplets.",
+        browseContentPaletteSearch: ({ query }: { query: string }) => `Cerca “${query}” a les converses de Claude Code i Codex`,
+        browseContentOnMachine: ({ machine }: { machine: string }) => `Converses a ${machine}`,
+        browseContentOpen: "Obre a Happier",
+        browseContentShow: "Mostra a Sessions externes",
+        browseContentPreviewOpens: ({ query }: { query: string }) => `Obre la conversa en aquest missatge amb Cerca a “${query}”.`,
+        browseContentPreviewEmpty: "Aquí apareix el missatge que coincideix.",
+        browseContentMore: "Cerca més converses",
+        browseContentBack: "Torna a la cerca",
         browseNoSearchResults: "Cap sessió carregada coincideix encara amb aquesta cerca.",
         browseIndexing: "S'estan indexant les sessions externes…",
         browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `${scanned} de ${total} sessions indexades`,
@@ -13632,3 +13706,5 @@ settingsSession: {
 
 export type TranslationsCa = typeof ca;
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
+import { accountEncryptionRecoveryTranslations } from './accountEncryptionRecoveryTranslations';
+import { glassAppearanceTranslations } from './glassAppearanceTranslations';

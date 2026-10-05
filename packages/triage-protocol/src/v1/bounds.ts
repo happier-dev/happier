@@ -329,12 +329,6 @@ export const TRIAGE_DETAIL_SHARED_TABS_V1 = [
 export type TriageDetailSharedTabIdV1 = (typeof TRIAGE_DETAIL_SHARED_TABS_V1)[number];
 
 /**
- * The four shared tabs plus room for the source-only views the six sources
- * actually declare (at most three: stack trace, occurrences, release).
- */
-export const MAX_TRIAGE_DETAIL_TABS_V1 = 8;
-
-/**
  * The one non-tab panel: a kind that declares `detailActions` renders its
  * write controls (merge, close, reviewers…) when asked for this panel, and the
  * target places them in the detail header (r0.42).

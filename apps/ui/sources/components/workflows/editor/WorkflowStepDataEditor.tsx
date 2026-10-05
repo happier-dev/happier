@@ -1,11 +1,17 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import type { JsonValue } from '@happier-dev/protocol';
 import type { WorkflowReferenceScope, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowResultContract, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
+import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import {
     listWorkflowProducerOptions,
     resolveWorkflowReferenceScopeFacts,
@@ -15,7 +21,7 @@ import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBl
 import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { t } from '@/text';
 
-import { workflowEditorStyles } from './workflowEditorStyles';
+import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
 
 type ItemReferenceField = Extract<WorkflowValueReference, { kind: 'item' }>['field'];
 type IterationReferenceField = Extract<WorkflowValueReference, { kind: 'iteration' }>['field'];
@@ -94,6 +100,58 @@ export function formatWorkflowResultSummary(result: WorkflowResultContract | und
     return t('workflows.page.inspector.returnsDecision');
 }
 
+/**
+ * A field select for one part of a binding (where its value comes from, which input, which
+ * step): the canonical `DropdownMenu` drawn as a field box, so a long list of sources never
+ * becomes a row of text tabs that runs past the pane (07 §3 control table).
+ */
+function ReferenceSelect(props: Readonly<{
+    testID: string;
+    label: string;
+    items: readonly DropdownMenuItem[];
+    selectedId: string | null;
+    onSelect: (id: string) => void;
+}>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const [open, setOpen] = React.useState(false);
+    const selected = props.items.find((item) => item.id === props.selectedId) ?? null;
+    return (
+        <View style={workflowEditorStyles.referenceSelect}>
+            <DropdownMenu
+                testID={props.testID}
+                open={open}
+                onOpenChange={setOpen}
+                items={props.items}
+                selectedId={props.selectedId}
+                matchTriggerWidth={false}
+                onSelect={(id) => { setOpen(false); props.onSelect(id); }}
+                trigger={({ toggle }) => (
+                    <HappierPressable
+                        testID={`${props.testID}-trigger`}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${props.label}: ${selected?.title ?? ''}`}
+                        hasPopup="menu"
+                        expanded={open}
+                        onPress={toggle}
+                    >
+                        {(state) => renderDropdownItemTriggerRightElement({
+                            detail: typeof selected?.title === 'string' ? selected.title : null,
+                            open,
+                            detailColor: theme.colors.text.primary,
+                            chevronColor: theme.colors.text.secondary,
+                            detailDensity: 'compact',
+                            field: {
+                                ...resolveFieldBoxColors(theme),
+                                ...focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+                            },
+                        })}
+                    </HappierPressable>
+                )}
+            />
+        </View>
+    );
+}
+
 /** One mutually exclusive choice set: a labelled radiogroup row of radio chips. */
 function ChoiceGroup(props: Readonly<{
     label: string;
@@ -123,6 +181,7 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
     renderLiteral?: (value: unknown, onChange: (next: unknown) => void) => React.ReactNode;
     testIDPrefix: string;
 }>): React.ReactElement {
+    const { theme } = useUnistyles();
     const rowId = `${props.testIDPrefix}-input-${props.index}`;
     const consumer = props.continuation === true ? { continuation: true } : {};
     const producers = listWorkflowProducerOptions(props.draft, props.stepId, consumer);
@@ -168,24 +227,16 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
     };
     return (
         <View style={workflowEditorStyles.inlineControl}>
-            <ChoiceGroup label={t('workflows.input.valueKindGroup')}>
-                {kinds.map((kind) => (
-                    <Pressable
-                        key={kind}
-                        testID={`${rowId}-kind-${kind}`}
-                        accessibilityRole="radio"
-                        accessibilityState={{ checked: reference.kind === kind }}
-                        accessibilityLabel={referenceKindLabel(kind)}
-                        onPress={() => setKind(kind)}
-                        style={workflowEditorStyles.actionTarget}
-                    >
-                        <Text style={reference.kind === kind
-                            ? workflowEditorStyles.metaAction
-                            : workflowEditorStyles.metaText}
-                        >{referenceKindLabel(kind)}</Text>
-                    </Pressable>
-                ))}
-            </ChoiceGroup>
+            <ReferenceSelect
+                testID={`${rowId}-kind`}
+                label={t('workflows.input.valueKindGroup')}
+                items={kinds.map((kind) => ({ id: kind, testID: `${rowId}-kind-${kind}`, title: referenceKindLabel(kind) }))}
+                selectedId={reference.kind}
+                onSelect={(id) => {
+                    const kind = kinds.find((candidate) => candidate === id);
+                    if (kind !== undefined) setKind(kind);
+                }}
+            />
             {reference.kind === 'literal' && props.renderLiteral !== undefined
                 ? props.renderLiteral(reference.value, (next) => props.onChange({
                     kind: 'literal',
@@ -202,51 +253,33 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                 />
             ) : null}
             {inputName === undefined ? null : (
-                <ChoiceGroup label={t('workflows.input.inputNameGroup')}>
-                    {props.draft.inputs.map((input) => (
-                        <Pressable
-                            key={input.name}
-                            testID={`${rowId}-input-name-${input.name}`}
-                            accessibilityRole="radio"
-                            accessibilityState={{ checked: inputName === input.name }}
-                            accessibilityLabel={input.name}
-                            onPress={() => props.onChange({ kind: 'input', name: input.name })}
-                            style={workflowEditorStyles.actionTarget}
-                        >
-                            <Text style={inputName === input.name
-                                ? workflowEditorStyles.metaAction
-                                : workflowEditorStyles.metaText}
-                            >{input.name}</Text>
-                        </Pressable>
-                    ))}
-                </ChoiceGroup>
+                <ReferenceSelect
+                    testID={`${rowId}-input-name`}
+                    label={t('workflows.input.inputNameGroup')}
+                    items={props.draft.inputs.map((input) => ({ id: input.name, testID: `${rowId}-input-name-${input.name}`, title: input.name }))}
+                    selectedId={inputName}
+                    onSelect={(name) => props.onChange({ kind: 'input', name })}
+                />
             )}
             {producerReference === undefined ? null : (
-                <ChoiceGroup label={t('workflows.input.producerGroup')}>
-                    {producers.map((producer) => (
-                        <Pressable
-                            key={`${producer.blockId}:${producer.scope.kind}:${producer.scope.kind === 'outer'
-                                ? producer.scope.levels
-                                : producer.scope.kind === 'previous_iteration' ? producer.scope.loopBlockId : ''}`}
-                            testID={`${rowId}-producer-${producer.blockId}-${scopeKey(producer.scope)}`}
-                            accessibilityRole="radio"
-                            accessibilityState={{ checked: producerReference.producer.blockId === producer.blockId
-                                && JSON.stringify(producerReference.producer.scope) === JSON.stringify(producer.scope) }}
-                            accessibilityLabel={`${producer.label} · ${scopeLabel(producer.scope)}`}
-                            onPress={() => props.onChange({
-                                ...producerReference,
-                                producer: { blockId: producer.blockId, scope: producer.scope },
-                            })}
-                            style={workflowEditorStyles.actionTarget}
-                        >
-                            <Text style={producerReference.producer.blockId === producer.blockId
-                                && JSON.stringify(producerReference.producer.scope) === JSON.stringify(producer.scope)
-                                ? workflowEditorStyles.metaAction
-                                : workflowEditorStyles.metaText}
-                            >{`${producer.label} · ${scopeLabel(producer.scope)}`}</Text>
-                        </Pressable>
-                    ))}
-                </ChoiceGroup>
+                <ReferenceSelect
+                    testID={`${rowId}-producer`}
+                    label={t('workflows.input.producerGroup')}
+                    items={producers.map((producer) => ({
+                        id: `${producer.blockId}:${scopeKey(producer.scope)}`,
+                        testID: `${rowId}-producer-${producer.blockId}-${scopeKey(producer.scope)}`,
+                        title: producer.label,
+                        subtitle: scopeLabel(producer.scope),
+                    }))}
+                    selectedId={`${producerReference.producer.blockId}:${scopeKey(producerReference.producer.scope)}`}
+                    onSelect={(id) => {
+                        const producer = producers.find((candidate) => `${candidate.blockId}:${scopeKey(candidate.scope)}` === id);
+                        if (producer !== undefined) props.onChange({
+                            ...producerReference,
+                            producer: { blockId: producer.blockId, scope: producer.scope },
+                        });
+                    }}
+                />
             )}
             {resultReference === undefined ? null : (
                 <TextInput
@@ -330,9 +363,13 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                 </ChoiceGroup>
             )}
             {props.onRemove === undefined ? null : (
-                <Pressable accessibilityRole="button" onPress={props.onRemove} style={workflowEditorStyles.actionTarget}>
-                    <Text style={workflowEditorStyles.issueText}>{t('workflows.editor.remove')}</Text>
-                </Pressable>
+                <HappierPressable
+                    accessibilityRole="button"
+                    onPress={props.onRemove}
+                    style={(state) => [workflowEditorStyles.actionTarget, workflowPressFeedbackStyle(state, theme.colors.border.focus)]}
+                >
+                    <Text style={workflowEditorStyles.footAction}>{t('workflows.editor.remove')}</Text>
+                </HappierPressable>
             )}
         </View>
     );
@@ -341,25 +378,23 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
 export function WorkflowStepDataEditor(props: Readonly<{
     draft: WorkflowEditorDraft;
     step: WorkflowStep;
+    editable?: boolean;
     onChangeInput: (input: readonly WorkflowValueReference[]) => void;
+    /** Opens Step options, where named results are added; absent when read-only. */
+    onAddNamedResults?: () => void;
     testIDPrefix: string;
 }>): React.ReactElement {
+    const { theme } = useUnistyles();
     const id = `${props.testIDPrefix}-step-${props.step.id}`;
+    const editable = props.editable !== false;
+    const textResult = props.step.result === undefined || props.step.result.kind === 'text';
     return (
         <View>
-            <View style={workflowEditorStyles.metaRow}>
-                <Text style={workflowEditorStyles.metaText}>{t('workflows.input.label')}</Text>
-                <Pressable
-                    testID={`${id}-add-input`}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('workflows.inputs.addInput')}
-                    onPress={() => props.onChangeInput([...props.step.input, { kind: 'literal', value: '' }])}
-                    style={workflowEditorStyles.actionTarget}
-                >
-                    <Text style={workflowEditorStyles.metaAction}>{t('workflows.editor.add')}</Text>
-                </Pressable>
-            </View>
-            {props.step.input.map((reference, index) => (
+            {props.step.input.map((reference, index) => !editable ? (
+                <Text key={index} testID={`${id}-input-${index}`} style={workflowEditorStyles.metaText} selectable>
+                    {formatWorkflowValueReference(props.draft, reference)}
+                </Text>
+            ) : (
                 <WorkflowValueReferenceEditor
                     key={index}
                     reference={reference}
@@ -376,9 +411,34 @@ export function WorkflowStepDataEditor(props: Readonly<{
                     testIDPrefix={id}
                 />
             ))}
-            <Text testID={`${id}-returns`} style={workflowEditorStyles.groupSummary}>
-                {formatWorkflowResultSummary(props.step.result)}
-            </Text>
+            {/* One footer line (07 S7): what the step returns, then its quiet actions. */}
+            <View style={workflowEditorStyles.metaRow}>
+                <Text testID={`${id}-returns`} style={workflowEditorStyles.groupSummary}>
+                    {formatWorkflowResultSummary(props.step.result)}
+                </Text>
+                {editable && textResult && props.onAddNamedResults !== undefined ? (
+                    <HappierPressable
+                        testID={`${id}-add-named-results`}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('workflows.page.blocks.addNamedResults')}
+                        onPress={props.onAddNamedResults}
+                        style={(state) => [workflowEditorStyles.actionTarget, workflowPressFeedbackStyle(state, theme.colors.border.focus)]}
+                    >
+                        <Text style={workflowEditorStyles.footAction}>{t('workflows.page.blocks.addNamedResults')}</Text>
+                    </HappierPressable>
+                ) : null}
+                {editable ? (
+                    <HappierPressable
+                        testID={`${id}-add-input`}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('workflows.inputs.addInput')}
+                        onPress={() => props.onChangeInput([...props.step.input, { kind: 'literal', value: '' }])}
+                        style={(state) => [workflowEditorStyles.actionTarget, workflowPressFeedbackStyle(state, theme.colors.border.focus)]}
+                    >
+                        <Text style={workflowEditorStyles.footAction}>{t('workflows.inputs.addInput')}</Text>
+                    </HappierPressable>
+                ) : null}
+            </View>
         </View>
     );
 }

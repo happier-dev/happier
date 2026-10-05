@@ -35,6 +35,7 @@ export function EnrolledComputerSetup(props: Readonly<{
     const task = useThisComputerSetupTask({
         // Enrollment owns cancellation on leave; it must not adopt another surface's setup.
         taskId: ownedTaskId,
+        adoptExisting: false,
         authRequestApproval: approval,
         onSucceeded: props.onSucceeded,
         onTaskIdChange,

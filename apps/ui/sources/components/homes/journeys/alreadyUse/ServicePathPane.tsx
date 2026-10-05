@@ -7,6 +7,7 @@ import type { AuthenticatedAccountEntryRequest } from '@/components/navigation/a
 import { useAccountEntryFlow } from '@/components/navigation/accountEntry/useAccountEntryFlow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
+import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 import { useJourneySignInRequest, type JourneyAccountService } from '../useJourneyAccountService';
 import { PaneHeader, PaneHelp, PaneIdentityRow, PaneLink } from './journeyPaneKit';
@@ -25,13 +26,14 @@ export function ServicePathPane(props: Readonly<{
     onDone: () => void;
 }>) {
     const { service } = props;
+    const phone = useViewportClass() === 'compact';
     const request = useJourneySignInRequest(service.discovery, props.shouldFocusNewHome);
     const serviceUrl = service.discovery?.endpointUrl ?? service.entry.endpoint.url;
     return (
         <View style={styles.pane} testID="already-use-happier.pane.service">
             <PaneHeader
                 title={t('homesJourneys.pathServiceTitle', { service: service.name })}
-                lead={t('homesJourneys.serviceLead')}
+                lead={t(phone ? 'homesJourneys.phone.serviceLead' : 'homesJourneys.serviceLead')}
             />
             <PaneIdentityRow
                 testID="already-use-happier.service-identity"

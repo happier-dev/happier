@@ -11,6 +11,7 @@ import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFi
 import type { ScmReviewUnifiedDiffFetcher } from '@/components/workspaces/scm/review/scmReviewDiffFetcher';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { DiffPresentationStyleToggleButton } from '@/components/ui/code/diff/DiffPresentationStyleToggleButton';
+import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
 import { CodeLinesView } from '@/components/ui/code/view/CodeLinesView';
 import { buildCodeLinesFromFile } from '@/components/ui/code/model/buildCodeLinesFromFile';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -28,6 +29,10 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { SessionAttributedFile } from '@/scm/scmAttribution';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
+import { useCodeLinesSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting';
+import { showWorkspaceFileEditorComparison } from '@/components/workspaces/files/details/workspaceFileDetails/WorkspaceFileEditorComparison';
+import { ScmCommitSelectionCheckGlyph } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 
 /**
  * Dev-only specimen of the Details chrome and kinds (details lab 2, frames F1/F2/F3, CM, SZ, R1/SG,
@@ -125,12 +130,12 @@ const DRAFTS: readonly ReviewCommentDraft[] = [
     {
         id: 'c1', filePath: REVIEW_FILES[0].fullPath, source: 'diff', anchor: { kind: 'diffLine', startLine: 22, side: 'after', oldLine: null, newLine: 22 },
         snapshot: { selectedLines: [], beforeContext: [], afterContext: [] },
-        body: 'Name the hook after what it guarantees — useStableSettingsKey? “Route key” reads like a URL.', createdAt: 1, includeInPrompt: true,
+        body: 'Name the hook after what it guarantees — `useStableSettingsKey`? “Route key” reads like a URL.', createdAt: 1, includeInPrompt: true,
     },
     {
         id: 'c2', filePath: REVIEW_FILES[0].fullPath, source: 'diff', anchor: { kind: 'diffLine', startLine: 24, side: 'after', oldLine: null, newLine: 24 },
         snapshot: { selectedLines: [], beforeContext: [], afterContext: [] },
-        body: 'Is 600 the breakpoint the phone sheet uses too? Take it from useModalLayout instead of a literal.', createdAt: 2, includeInPrompt: true,
+        body: 'Is 600 the breakpoint the phone sheet uses too? Take it from `useModalLayout` instead of a literal.', createdAt: 2, includeInPrompt: true,
     },
 ] as unknown as readonly ReviewCommentDraft[];
 
@@ -152,6 +157,7 @@ const STASH_ADAPTER: ScmStashDetailsAdapter = {
 
 function FileFrame(props: Readonly<{ editing?: boolean }>) {
     const { theme } = useUnistyles();
+    const syntaxHighlighting = useCodeLinesSyntaxHighlighting('useSettingsRouteKey.ts');
     return (
         <View style={{ flex: 1, minHeight: 0 }}>
             <FileActionToolbar
@@ -190,12 +196,12 @@ function FileFrame(props: Readonly<{ editing?: boolean }>) {
                 statusLabel={props.editing ? null : t('detailsSurface.file.statusModified')}
                 diffStat={props.editing ? null : { added: 4, removed: 2 }}
                 notice={props.editing ? (
-                    <SurfaceFreshnessLine tone="warning" reason={t('files.fileChangedExternally')} />
+                    <SurfaceFreshnessLine tone="warning" reason={t('files.fileChangedExternally')} action={{ label: t('detailsSurface.file.compare'), onPress: () => showWorkspaceFileEditorComparison({ oldText: HOOK_TEXT.replace('never when the window resizes', 'only when the route changes'), newText: HOOK_TEXT, filePath: 'useSettingsRouteKey.ts' }) }} />
                 ) : null}
             />
             <View style={{ flex: 1, minHeight: 0 }}>
                 {props.editing ? (
-                    <CodeLinesView lines={HOOK_LINES} showLineNumbers wrapLines={false} />
+                    <CodeLinesView lines={HOOK_LINES} showLineNumbers wrapLines={false} syntaxHighlighting={syntaxHighlighting} />
                 ) : (
                     <DiffViewer mode="unified" unifiedDiff={SETTINGS_MODAL_DIFF} filePath="apps/ui/sources/components/settings/SettingsModal.tsx" showLineNumbers showPrefix wrapLines={false} />
                 )}
@@ -221,6 +227,7 @@ function CommitFrame() {
                         body: 'Resizing the window remounted SettingsModal because its key included the width, which threw away the draft and the scroll position. Key it by route through useSettingsRouteKey and cover resizing in the modal test.',
                     },
                 }}
+                actions={<><DiffPresentationStyleToggleButton presentation="segmented" /><WrapLinesToggleButton /></>}
             />
             <DetailsDiffSummaryRow label={t('detailsSurface.history.filesChanged', { count: 4 })} added={65} removed={5} />
             <View style={{ flex: 1, minHeight: 0 }}>
@@ -262,7 +269,15 @@ const ONE_DRAFT = DRAFTS.slice(0, 1);
  */
 function ReviewFrame(props: Readonly<{ open?: boolean }>) {
     const { theme } = useUnistyles();
-    const drafts = props.open ? DRAFTS : ONE_DRAFT;
+    const [drafts, setDrafts] = React.useState<readonly ReviewCommentDraft[]>(() => props.open ? DRAFTS : ONE_DRAFT);
+    // Fixture-local state follows the canonical store's id-preserving upsert/delete semantics,
+    // without writing lab comments into a real session or Account.
+    const upsertDraft = React.useCallback((draft: ReviewCommentDraft) => {
+        setDrafts((existing) => existing.some((item) => item.id === draft.id)
+            ? existing.map((item) => item.id === draft.id ? draft : item)
+            : [...existing, draft]);
+    }, []);
+    const deleteDraft = React.useCallback((id: string) => setDrafts((existing) => existing.filter((draft) => draft.id !== id)), []);
     return (
         <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
             <ChangedFilesReview
@@ -280,9 +295,12 @@ function ReviewFrame(props: Readonly<{ open?: boolean }>) {
                 onFilePress={NOOP}
                 reviewCommentsEnabled
                 reviewCommentDrafts={drafts}
+                onUpsertReviewCommentDraft={upsertDraft}
+                onDeleteReviewCommentDraft={deleteDraft}
+                renderFileActions={(file) => <IconButton variant="plain" size={24} onPress={NOOP} accessibilityRole="checkbox" checked={SPECIMEN_REVIEW_HEADER.isSelectedForCommit(file)} accessibilityLabel={t('files.commitSelection.addToCommit')} icon={<ScmCommitSelectionCheckGlyph state={SPECIMEN_REVIEW_HEADER.isSelectedForCommit(file) ? 'checked' : 'unchecked'} />} />}
                 fetchUnifiedDiffForPath={fetchSpecimenReviewDiff}
             />
-            <ReviewDraftSummary enabled drafts={drafts} onGoToComposer={NOOP} onDetachDraft={NOOP} composer={props.open ? SPECIMEN_ASK : null} />
+            <ReviewDraftSummary enabled drafts={drafts} onGoToComposer={NOOP} onDetachDraft={(draft) => upsertDraft({ ...draft, includeInPrompt: false })} composer={props.open ? SPECIMEN_ASK : null} />
         </View>
     );
 }
@@ -343,6 +361,10 @@ const FRAMES: ReadonlyArray<Readonly<{ id: string; title: string; render: () => 
                 pane={PANE}
                 group={group([], null)}
                 renderTabContent={() => null}
+                renderHeaderActions={() => <>
+                    <IconButton variant="plain" size={24} iconName="arrows-out" onPress={NOOP} accessibilityLabel={t('session.detailsPanel.enterFocusModeA11y')} />
+                    <IconButton variant="plain" size={24} iconName="x" onPress={PANE.closeDetails} accessibilityLabel={t('common.close')} />
+                </>}
                 renderEmptyState={() => (
                     <SurfaceStateCard
                         kind="empty"
@@ -350,6 +372,8 @@ const FRAMES: ReadonlyArray<Readonly<{ id: string; title: string; render: () => 
                         title={t('detailsSurface.chrome.emptyTitle')}
                         reason={t('detailsSurface.chrome.reviewChangesReason', { count: 4 })}
                         action={{ label: t('detailsSurface.chrome.reviewChanges', { count: 4 }), onPress: NOOP }}
+                        secondaryAction={{ label: t('detailsSurface.chrome.browseFiles'), onPress: NOOP }}
+                        note={t('detailsSurface.chrome.previewHint')}
                     />
                 )}
             />

@@ -52,6 +52,7 @@ function inventoryRow(id: string, port: number, command: string): LocalServiceIn
         workspaceAssociationConfidence: 'high',
         diagnostics: [],
         provenance: { process: { command } },
+        presentation: { displayName: command === 'vite' ? 'Vite' : 'Storybook', addressLabel: `localhost:${port}` },
     };
 }
 
@@ -91,7 +92,7 @@ const LAUNCHER = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherSta
     targets: [
         runningTarget('web', 'web', 5173, SESSION),
         runningTarget('storybook', 'storybook', 6006, undefined),
-        { id: 'package:docs:dev', source: 'package_script', machineId: MACHINE, title: 'docs', confidence: 'medium', state: 'available', actions: ['start'], commandPreview: 'yarn docs:dev' } as LocalServiceLaunchTarget,
+        { id: 'package:docs:dev', source: 'package_script', sourceClass: { kind: 'package_script', runTargetId: 'docs:dev', packageName: 'docs', scriptName: 'dev' }, machineId: MACHINE, title: 'docs', confidence: 'medium', state: 'available', actions: ['start'], commandPreview: 'yarn docs:dev' } as LocalServiceLaunchTarget,
     ],
 });
 

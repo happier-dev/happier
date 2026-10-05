@@ -17,8 +17,12 @@ import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { useNavigation } from '@/components/appShell/workspace/destinationRoute';
+import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import {
     hasConfiguredSecretStringValue,
+    WebhookNotificationChannelV1Schema,
     type NotificationChannelV1,
     type WebhookNotificationChannelV1,
 } from '@happier-dev/protocol';
@@ -45,16 +49,32 @@ function AccountNotificationWebhooksSection({
     setWebhookChannels,
 }: NotificationWebhooksSectionProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const navigation = useNavigation();
     // A webhook's settings open in place; a newly added one opens so it can be configured.
     const [expandedChannelId, setExpandedChannelId] = React.useState<string | null>(null);
     const [addingWebhook, setAddingWebhook] = React.useState(false);
+    const [newUrlDirty, setNewUrlDirty] = React.useState(false);
     const [editingUrlChannelId, setEditingUrlChannelId] = React.useState<string | null>(null);
+    const [editedUrlDirty, setEditedUrlDirty] = React.useState(false);
     const [editingSecretChannelId, setEditingSecretChannelId] = React.useState<string | null>(null);
     const [secretDraft, setSecretDraft] = React.useState('');
     const closeSecretEditor = () => {
         setSecretDraft('');
         setEditingSecretChannelId(null);
     };
+    const closeUrlEditor = () => {
+        setEditingUrlChannelId(null);
+        setEditedUrlDirty(false);
+    };
+    const discardDrafts = () => {
+        setAddingWebhook(false);
+        setNewUrlDirty(false);
+        closeUrlEditor();
+        closeSecretEditor();
+    };
+    useUnsavedDraftNavigationGuard({ navigation,
+        isDirty: newUrlDirty || editedUrlDirty || secretDraft !== '',
+        onDiscard: discardDrafts, tag: 'notification-webhook-draft' });
 
     const handleAddWebhook = (url: string) => {
         const nextChannels = addWebhookNotificationChannel({
@@ -65,6 +85,7 @@ function AccountNotificationWebhooksSection({
         const added = nextChannels.find((channel) => !webhookChannels.some((existing) => existing.id === channel.id));
         if (added) setExpandedChannelId(added.id);
         setAddingWebhook(false);
+        setNewUrlDirty(false);
     };
 
     const handleEditWebhook = (channel: WebhookNotificationChannelV1, url: string) => {
@@ -73,7 +94,7 @@ function AccountNotificationWebhooksSection({
             channelId: channel.id,
             patch: { url },
         }));
-        setEditingUrlChannelId(null);
+        closeUrlEditor();
     };
 
     const handleDeleteWebhook = React.useCallback(async (channel: WebhookNotificationChannelV1) => {
@@ -175,8 +196,9 @@ function AccountNotificationWebhooksSection({
                 <WebhookUrlEditor
                     testID="settings-notifications-webhook-new-url"
                     initialUrl=""
+                    onDirtyChange={setNewUrlDirty}
                     onSave={handleAddWebhook}
-                    onCancel={() => setAddingWebhook(false)}
+                    onCancel={() => { setAddingWebhook(false); setNewUrlDirty(false); }}
                 />
             ) : null}
             {webhookChannels.length === 0 && !addingWebhook ? (
@@ -197,9 +219,11 @@ function AccountNotificationWebhooksSection({
                             testID={`settings-notifications-webhook-${channel.id}-row`}
                             expanded={expandedChannelId === channel.id}
                             onExpandedChange={(next) => {
-                                setExpandedChannelId(next ? channel.id : null);
-                                setEditingUrlChannelId(null);
-                                closeSecretEditor();
+                                void runGuardedNavigation(() => {
+                                    setExpandedChannelId(next ? channel.id : null);
+                                    closeUrlEditor();
+                                    closeSecretEditor();
+                                });
                             }}
                             header={({ headerProps }) => (
                                 <Item
@@ -232,8 +256,9 @@ function AccountNotificationWebhooksSection({
                                 <WebhookUrlEditor
                                     testID={`settings-notifications-webhook-${channel.id}-url`}
                                     initialUrl={channel.url}
+                                    onDirtyChange={setEditedUrlDirty}
                                     onSave={(url) => handleEditWebhook(channel, url)}
-                                    onCancel={() => setEditingUrlChannelId(null)}
+                                    onCancel={closeUrlEditor}
                                 />
                             ) : <Item
                                 title={t('settingsNotifications.webhooks.urlPromptTitle')}
@@ -360,6 +385,7 @@ function AccountNotificationWebhooksSection({
 function WebhookUrlEditor(props: Readonly<{
     testID: string;
     initialUrl: string;
+    onDirtyChange: (dirty: boolean) => void;
     onSave: (url: string) => void;
     onCancel: () => void;
 }>) {
@@ -368,10 +394,7 @@ function WebhookUrlEditor(props: Readonly<{
     const save = () => {
         const url = draft.trim();
         if (!url) return;
-        try {
-            const parsed = new URL(url);
-            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('unsupported protocol');
-        } catch {
+        if (!WebhookNotificationChannelV1Schema.shape.url.safeParse(url).success) {
             setError(t('settingsNotifications.webhooks.invalidUrlSubtitle'));
             return;
         }
@@ -390,7 +413,7 @@ function WebhookUrlEditor(props: Readonly<{
                         accessibilityLabel={t('settingsNotifications.webhooks.urlPromptTitle')}
                         placeholder={t('settingsNotifications.webhooks.urlPromptPlaceholder')}
                         value={draft}
-                        onChangeText={(next) => { setDraft(next); setError(null); }}
+                        onChangeText={(next) => { setDraft(next); props.onDirtyChange(next !== props.initialUrl); setError(null); }}
                         onSubmitEditing={save}
                         error={error}
                         autoFocus

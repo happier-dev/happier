@@ -1,13 +1,14 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { classifyPairingLink } from '@/auth/pairing/classifyPairingLink';
 import { ADD_HOME_RESTORE_PATH } from '@/auth/pairing/homeQrEntryIntent';
 import { buildHomeQrInviteRestoreRoutePath } from '@/auth/pairing/pairingUrl';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { Icon } from '@/components/ui/icons/Icon';
 import type { EndpointReachabilityRemediation } from '@/components/serverReachability/remediation';
 import { ServerReachabilityRemediationCard } from '@/components/settings/server/sections/ServerReachabilityRemediationCard';
 import { useEndpointReachabilityRemediationController } from '@/components/settings/server/hooks/useEndpointReachabilityRemediationController';
@@ -16,6 +17,7 @@ import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 import { PaneHeader, PaneHelp, PaneLabel, PaneOrDivider } from './journeyPaneKit';
 import {
@@ -54,6 +56,8 @@ export function DirectHomePathPane(props: Readonly<{
     onAddressChange?: (address: string) => void;
 }>) {
     const router = useRouter();
+    const { theme } = useUnistyles();
+    const phone = useViewportClass() === 'compact';
     const [link, setLink] = React.useState('');
     const [linkError, setLinkError] = React.useState<string | null>(null);
     const [address, setAddress] = React.useState(props.initialAddress ?? '');
@@ -139,7 +143,7 @@ export function DirectHomePathPane(props: Readonly<{
             <PaneHeader title={t('homesJourneys.pathDirectTitle')} lead={t('homesJourneys.directLead')} />
             <View style={styles.group}>
                 <PaneLabel nativeID={LINK_LABEL_ID}>{t('homesJourneys.fromDeviceLabel')}</PaneLabel>
-                <PaneHelp>{t('homesJourneys.fromDeviceHelp')}</PaneHelp>
+                <PaneHelp>{t(phone ? 'homesJourneys.phone.fromDeviceHelp' : 'homesJourneys.fromDeviceHelp')}</PaneHelp>
                 <View style={styles.fieldRow}>
                     <FieldTextInput
                         testID="already-use-happier.home-link"
@@ -171,7 +175,8 @@ export function DirectHomePathPane(props: Readonly<{
                             testID="already-use-happier.use-camera"
                             size="small"
                             display="secondary"
-                            title={t('homesJourneys.useCamera')}
+                            title={t(phone ? 'homesJourneys.phone.scan' : 'homesJourneys.useCamera')}
+                            leading={<Icon name="camera" size={14} color={theme.colors.text.secondary} />}
                             onPress={() => leaveFor(ADD_HOME_RESTORE_PATH, 'AlreadyUseHappier.camera')}
                         />
                     )}

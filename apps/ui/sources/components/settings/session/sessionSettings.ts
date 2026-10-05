@@ -1,4 +1,19 @@
-import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
+import { defineSettingsPage, type SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
+import {
+    resolveSessionListLayoutChoice, resolveSessionListLayoutSettingsDelta, SESSION_LIST_LAYOUT_CHOICES, type SessionListLayoutChoice,
+} from '@/sync/domains/session/listing/sessionListLayout';
+
+const isSessionListLayoutChoice = (value: unknown): value is SessionListLayoutChoice =>
+    typeof value === 'string' && (SESSION_LIST_LAYOUT_CHOICES as readonly string[]).includes(value);
+
+/** Projects / Recent activity / Active and inactive, read and written by the layout owner (not a raw section key). */
+const sessionListLayoutStorageBinding: SettingStorageBinding = {
+    scope: 'account', kind: 'owner', access: 'read_write',
+    allowedValues: SESSION_LIST_LAYOUT_CHOICES,
+    read: settings => resolveSessionListLayoutChoice(settings),
+    parse: value => isSessionListLayoutChoice(value) ? { success: true, value } : { success: false },
+    mutate: (settings, value) => isSessionListLayoutChoice(value) ? resolveSessionListLayoutSettingsDelta(value, settings) : null,
+};
 
 /**
  * The Sessions page's searchable settings. Rows render their labels from these declarations. A row
@@ -46,6 +61,7 @@ export const SESSION_SETTINGS = defineSettingsPage({
                 layout: {
                     titleKey: 'settingsSession.sessionList.layoutTitle',
                     descriptionKey: 'settingsSession.sessionList.layoutSubtitle',
+                    storage: sessionListLayoutStorageBinding,
                 },
                 activeGrouping: {
                     titleKey: 'settingsFeatures.sessionListActiveGrouping',
@@ -98,6 +114,7 @@ export const SESSION_SETTINGS = defineSettingsPage({
                 attentionPromotion: {
                     titleKey: 'settingsSession.sessionList.attentionPromotionModeTitle',
                     descriptionKey: 'settingsSession.sessionList.attentionPromotionModeSubtitle',
+                    storage: { scope: 'account', key: 'sessionListAttentionPromotionModeV1', access: 'read_write' },
                 },
                 attentionStandingDefault: { titleKey: 'settingsSession.sessionList.attentionStandingDefaultTitle', storage: { scope: 'account', key: 'sessionListAttentionStandingDefaultV1', access: 'read_write' } },
                 workingPlacement: {

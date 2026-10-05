@@ -15,14 +15,8 @@ import {
   type SessionBoardItemPlacementParticipantV1, type SessionBoardLayoutV1,
   type SessionBoardReadProjectionEntryV1, type SessionBoardActionIdV1,
 } from '@happier-dev/protocol/sessions/board';
-import {
-  SessionSystemRecordListQuerySchema,
-  DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonContributionRegistryProjectionDescribeResponseSchema,
-  DaemonPluginUiTargetedSurfaceRendererAvailabilityV1Schema,
-} from '@happier-dev/protocol';
+import { SessionSystemRecordListQuerySchema } from '@happier-dev/protocol';
 import { classifyHomeDomainHttpMutationFailureV1, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
-import { isPluginUiInlineSurfaceBindingForSurfaceV1 } from '@happier-dev/protocol/plugins/ui';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -30,8 +24,6 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import { resolveCliFeatureDecision, resolveCliFeatureDecisionForServer } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
-import { resolveSessionOwningMachineId } from '@/session/services/resolveSessionOwningMachine';
 import { readSessionSystemRecordV1, listSessionSystemRecordsV1 } from '@/session/transport/http/sessionSystemRecordsHttp';
 import { openSessionSystemRecord, sealSessionSystemRecordContent, validateSessionSystemRecordOpenedContent } from '@/session/systemRecords/sessionSystemRecordCodec';
 import {
@@ -271,58 +263,6 @@ export function createSessionBoardActionDeps(options: Readonly<{
     if (current) {
       const previous = SessionSurfaceItemV1Schema.parse(openSessionSystemRecord(crypto, current).content);
       if (!isSessionSurfaceItemSourceCompatible(previous, args.item)) return createSessionBoardFailureV1('session_board_source_conflict');
-    }
-    if (args.item.source.kind === 'installedSurface' && !current) {
-      const owner = resolveSessionOwningMachineId({ credentials: options.credentials, rawSession });
-      // Each refusal below names its own cause through the Board family's existing
-      // closed vocabulary, which the shared presentation owner already renders as a
-      // distinct message. Collapsing them into `unsupported_action` told the author
-      // "that isn't supported" whether the plugin was absent, declared twice, unable
-      // to render here, or simply unreachable for a moment.
-      if (!owner.ok || !owner.machineId) return createSessionBoardFailureV1('not_found');
-      if (
-        context.externalActionExecutionAuthorization
-        && (!options.externalActionMachineInstallationId || !options.externalActionMachineRequestPrivateKey)
-      ) return createSessionBoardFailureV1('not_authenticated');
-      const response = DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(await callExactMachineRpc({
-        credentials: options.credentials, serverUrl, machineId: owner.machineId,
-        method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
-        request: DaemonContributionRegistryProjectionDescribeRequestSchema.parse({ machineId: owner.machineId }), signal,
-        ...(context.externalActionExecutionAuthorization
-          && options.externalActionMachineInstallationId
-          && options.externalActionMachineRequestPrivateKey
-          ? {
-              externalAction: {
-                context,
-                effectActionId: actionId,
-                installationId: options.externalActionMachineInstallationId,
-                privateKey: options.externalActionMachineRequestPrivateKey,
-              },
-            }
-          : {}),
-      }));
-      if (!response.success) return createSessionBoardFailureV1('invalid_response');
-      if (response.data.projection.v !== 2) return createSessionBoardFailureV1('unsupported_version');
-      const surface = args.item.source.surface;
-      const placements = Object.values(response.data.projection.familiesById.pluginUi?.entriesById ?? {}).filter((entry) => {
-        if (!entry || typeof entry !== 'object' || !('binding' in entry) || !entry.binding || entry.contributionKind !== 'surfacePlacement') return false;
-        return isPluginUiInlineSurfaceBindingForSurfaceV1(entry.binding, surface, 'widget');
-      });
-      const placement = placements[0];
-      if (placements.length !== 1 || !placement || placement.contributionKind !== 'surfacePlacement') return createSessionBoardFailureV1('session_board_invalid');
-      const availability = DaemonPluginUiTargetedSurfaceRendererAvailabilityV1Schema.safeParse(placement.availability);
-      if (!availability.success) return createSessionBoardFailureV1('invalid_response');
-      if (availability.data.state !== 'available') return createSessionBoardFailureV1('unsupported_action');
-      const latest = await fetchSessionById({
-        token: options.credentials.token,
-        serverUrl,
-        sessionId,
-        ...(serverSnapshot ? { serverFeaturesSnapshot: serverSnapshot } : {}),
-        resolveAuthorizationHeaders,
-        signal,
-      });
-      const latestOwner = latest?.id === sessionId ? resolveSessionOwningMachineId({ credentials: options.credentials, rawSession: latest }) : null;
-      if (!latestOwner?.ok || latestOwner.machineId !== owner.machineId) return createSessionBoardFailureV1('server_target_mismatch');
     }
     let layout: SessionBoardLayoutV1 | null = null;
     let expectedLayoutRevision: string | null = null;

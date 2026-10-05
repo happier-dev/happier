@@ -6,6 +6,7 @@ import type { RpcHandler, RpcHandlerRegistrar } from '../rpc/types';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createConnectedAccountPurposeBindingOwner, type ConnectedAccountPurposeBindingOwnerDependencies } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 
 
 const contribution = Object.freeze({ pluginId: 'happier.voice.openai', localId: 'realtime-openai' });
@@ -18,6 +19,7 @@ const materializationRequest = Object.freeze({
   headerNames: Object.freeze(['authorization', 'chatgpt-account-id']),
 });
 const DAEMON_REGISTRY_GENERATION = 12;
+let nextRegistryRevision = DAEMON_REGISTRY_GENERATION;
 
 function accountTarget(accountId: string) {
   return Object.freeze({
@@ -219,32 +221,41 @@ async function registerHandler(input: Readonly<{
   const { registerMachineVoiceClientMediatedCredentialRpcHandlers } = await import('./rpcHandlers.voiceClientMediatedCredentials');
   const { handlers, registrar } = manager();
   const retirement = new AbortController();
+  const registryRevision = Math.max(nextRegistryRevision, input.registryGeneration ?? 0);
+  nextRegistryRevision = registryRevision + 1;
+  const occurrenceId = createPluginRuntimeOccurrenceId(contribution.pluginId);
   // A prepared plugin module is the daemon composition input. Registry leasing,
   // publication and currentness stay on the real controller beneath this fixture.
   const registry: ResolvedExecutablePluginRuntimeRegistry = {
-      durableRevision: input.registryGeneration ?? DAEMON_REGISTRY_GENERATION,
+      durableRevision: registryRevision,
       contributes: {
         agents: [], providers: [], actions: [], resources: [], uiViewsV2: [],
         uiRenderersV2: [], uiTranslationsV2: [], activationTargets: [],
         catalogEntriesById: {}, agentDefinitionsById: new Map(), pluginDiagnosticsByPluginId: {},
         voiceProviders: [{
+        provenance: 'first_party',
+        source: { kind: 'bundled' },
         pluginId: contribution.pluginId,
+        manifestPath: '/plugins/openai/happier.plugin.json',
         identity: contribution,
         definition: manifest().contributes.voiceProviders[0],
       }] },
       hookHandlersByHookId: new Map(), agentRuntimesByAgentId: new Map(), scmHostingProvidersById: new Map(),
       pluginDiagnosticsByPluginId: {}, activatedPluginIds: new Set([contribution.pluginId]),
       activateContributionsOnDemand: async () => [], resolvePromptAssetBlocks: async () => [],
+      resolveCaptureSource: async () => null,
       addRuntimeDisposable: (_pluginId, disposable) => disposable,
       createAgentInvocationServices: async () => {
         const { createUnavailablePluginServices } = await import('@/plugins/runtime/invocation/services/unavailable');
         return createUnavailablePluginServices();
       },
-      retireConsumers: () => retirement.abort(), dispose: async () => retirement.abort(),
-      resolveVoiceProviderRuntimeLifecycle: (candidate: typeof contribution) => (
+      retireConsumers: () => retirement.abort(),
+      retirePluginConsumers: async () => retirement.abort(),
+      dispose: async () => retirement.abort(),
+      resolveVoiceProviderRuntimeLifecycle: (candidate) => (
         candidate.pluginId === contribution.pluginId && candidate.localId === contribution.localId
           ? {
-              generation: '12',
+              occurrenceId,
               isCurrent: () => pluginReloadController.isRuntimeRegistryCurrent(registry),
               retirementSignal: retirement.signal,
             }
@@ -255,7 +266,7 @@ async function registerHandler(input: Readonly<{
   const adopted = await pluginReloadController.adoptPreparedRuntimeRegistry({
     registry,
     changedPluginIds: [contribution.pluginId],
-    durableRevision: input.registryGeneration ?? DAEMON_REGISTRY_GENERATION,
+    durableRevision: registryRevision,
     runningSessionDisposition: 'retainRunningSessions',
   });
   if (!adopted.ok) throw new Error('fixture runtime adoption failed');
@@ -273,7 +284,9 @@ const ephemeralBody = JSON.stringify({ value: 'ephemeral-client-secret', expires
 const operationResponse = { status: 200, finalUrl: 'https://api.openai.com/v1/realtime/client_secrets', headers: { 'content-type': 'application/json' }, bodyBase64: Buffer.from(ephemeralBody).toString('base64') };
 
 describe('Voice client mediated Connected Account credential RPC', () => {
-  beforeEach(() => { vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(ephemeralBody, { status: 200, headers: { 'content-type': 'application/json' } })); });
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(ephemeralBody, { status: 200, headers: { 'content-type': 'application/json' } }));
+  });
   afterEach(() => { vi.restoreAllMocks(); });
   it('executes the declared mint on the machine and returns only its ephemeral response', async () => {
     const owner = connectedAccountsOwner({ resolvedAccountId: 'account-a' });

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { Pressable, View } from 'react-native';
 
 import type {
@@ -68,6 +69,8 @@ export type WorkflowInvocationDetailProps = Readonly<{
     contentUnavailable?: boolean;
     onOpenSession?: (sessionId: string) => void;
     onOpenExecutionRun?: (runId: string) => void;
+    /** Read the exact historical attempt; never selects its value for this attempt. */
+    onSelectInvocation?: (invocationId: string) => void;
     /**
      * Answers a request recorded for this invocation's detached Execution Run.
      * The host supplies it only while the exact evidence is confirmed; a
@@ -91,6 +94,7 @@ export type WorkflowInvocationDetailProps = Readonly<{
     uncertaintyAcknowledged?: boolean;
     onAcknowledgeUncertainPriorEffects?: () => void;
     onStartReviewedNewRun?: () => void;
+    onRunWithAnotherAgent?: () => void;
     onRestoreWorkspace?: () => void;
     /**
      * A durable Run operation the host issued is unsettled. Every durable
@@ -238,6 +242,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
         }
     ), [detachedExecutionRunId, pendingRequestIds, respondToRequest]);
     const attempt = props.progress === null ? null : describeWorkflowInvocationAttempt(props.progress.attempt);
+    const previousAttemptRecordId = props.progress?.previousAttemptRecordId;
     // A step that executed and reported no usage is explicitly unavailable
     // (UX-26), never zero and never silently absent. A container frame runs no
     // agent of its own, so it has no usage row; an unopened row has nothing to
@@ -278,6 +283,12 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                     {attempt.label}
                 </Text>
             ) : null}
+            {previousAttemptRecordId === undefined || props.onSelectInvocation === undefined ? null : (
+                <HappierPressable testID={`${testIDPrefix}-previous-attempt`} accessibilityRole="link"
+                    onPress={() => props.onSelectInvocation?.(previousAttemptRecordId)} style={styles.actionTarget}>
+                    <Text style={styles.action}>{t('workflows.review.previousAttempt')}</Text>
+                </HappierPressable>
+            )}
             {props.cause === undefined || props.cause === null ? null : (
                 <Text testID={`${testIDPrefix}-invocation-cause`} style={styles.provenance}>
                     {props.cause}
@@ -493,6 +504,13 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
               * beside the operation they gate — never as a blanket setting and
               * never inherited from a sibling selection.
               */}
+            {recovery.canRunWithAnotherAgent && props.onRunWithAnotherAgent ? (
+                <Pressable testID={`${testIDPrefix}-run-another-agent`} accessibilityRole="button"
+                    accessibilityState={durableActionState(true)} disabled={operationPending}
+                    onPress={props.onRunWithAnotherAgent} style={styles.actionTarget}>
+                    <Text style={styles.action}>{t('workflows.start.runWithAnotherAgent')}</Text>
+                </Pressable>
+            ) : null}
             {recovery.requiresUncertaintyAcknowledgement
                 && props.onAcknowledgeUncertainPriorEffects !== undefined ? (
                     <View testID={`${testIDPrefix}-uncertain-effects`} style={styles.section}>
