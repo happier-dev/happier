@@ -3,6 +3,9 @@
  * own module so the pool page's copy moves as one unit.
  */
 const en = {
+    strategyExpiryFirst: "Expiring first",
+    strategyExpiryFirstDescription: "Prefer ample quota whose long allowance resets or nonrenewing subscription ends sooner.",
+    leadExpiryFirst: "Expiring first.",
     membersOn: ({ service, on, total }: { service: string; on: number; total: number }) => `${service} · ${on} of ${total} members on`,
     rename: 'Rename',
     moreActions: 'More actions',
@@ -16,8 +19,6 @@ const en = {
     noActiveDetail: 'The pool picks one when a session starts.',
     leadLeastLimited: 'Least limited first.',
     leadInOrder: 'In order.',
-    nextOnRunOut: ({ name, next }: { name: string; next: string }) => `When ${name} runs out, the next turn moves to ${next}.`,
-    noNextOnRunOut: ({ name }: { name: string }) => `No other member has room to take over when ${name} runs out.`,
     fallbackOff: ({ name }: { name: string }) => `Automatic fallback is off, so sessions stay on ${name} when it runs out.`,
     manualStays: ({ name }: { name: string }) => `Manual: the pool stays on ${name} until you choose another member.`,
     switchTo: ({ name }: { name: string }) => `Switch to ${name}`,
@@ -99,6 +100,9 @@ const en = {
 type ConnectedServicesPoolCopy = typeof en;
 
 const ca: ConnectedServicesPoolCopy = {
+    strategyExpiryFirst: "Caduca abans",
+    strategyExpiryFirstDescription: "Prioritza una quota suficient amb un reinici del període llarg o un final de subscripció sense renovació més proper.",
+    leadExpiryFirst: "Primer el que caduca abans.",
     membersOn: ({ service, on, total }) => `${service} · ${on} de ${total} membres actius`,
     rename: 'Canvia el nom',
     moreActions: 'Més accions',
@@ -112,8 +116,6 @@ const ca: ConnectedServicesPoolCopy = {
     noActiveDetail: "El grup en tria un quan comença una sessió.",
     leadLeastLimited: 'Primer el menys limitat.',
     leadInOrder: 'En ordre.',
-    nextOnRunOut: ({ name, next }) => `Quan ${name} s'esgoti, el torn següent passarà a ${next}.`,
-    noNextOnRunOut: ({ name }) => `Cap altre membre té marge per substituir ${name} quan s'esgoti.`,
     fallbackOff: ({ name }) => `El canvi automàtic està desactivat; les sessions es queden a ${name} quan s'esgoti.`,
     manualStays: ({ name }) => `Manual: el grup es queda a ${name} fins que triïs un altre membre.`,
     switchTo: ({ name }) => `Canvia a ${name}`,
@@ -193,6 +195,9 @@ const ca: ConnectedServicesPoolCopy = {
 };
 
 const de: ConnectedServicesPoolCopy = {
+    strategyExpiryFirst: "Früher ablaufend",
+    strategyExpiryFirstDescription: "Bevorzuge genügend Kontingent mit früherem Reset des langen Zeitfensters oder früherem Ende eines nicht verlängernden Abos.",
+    leadExpiryFirst: "Früher ablaufend zuerst.",
     membersOn: ({ service, on, total }) => `${service} · ${on} von ${total} Mitgliedern aktiv`,
     rename: 'Umbenennen',
     moreActions: 'Weitere Aktionen',
@@ -206,8 +211,6 @@ const de: ConnectedServicesPoolCopy = {
     noActiveDetail: 'Der Pool wählt eines, wenn eine Sitzung startet.',
     leadLeastLimited: 'Am wenigsten begrenzt zuerst.',
     leadInOrder: 'Der Reihe nach.',
-    nextOnRunOut: ({ name, next }) => `Wenn ${name} aufgebraucht ist, wechselt der nächste Zug zu ${next}.`,
-    noNextOnRunOut: ({ name }) => `Kein anderes Mitglied hat Spielraum, wenn ${name} aufgebraucht ist.`,
     fallbackOff: ({ name }) => `Automatischer Wechsel ist aus, Sitzungen bleiben bei ${name}, wenn es aufgebraucht ist.`,
     manualStays: ({ name }) => `Manuell: Der Pool bleibt bei ${name}, bis du ein anderes Mitglied wählst.`,
     switchTo: ({ name }) => `Zu ${name} wechseln`,
@@ -287,6 +290,9 @@ const de: ConnectedServicesPoolCopy = {
 };
 
 const es: ConnectedServicesPoolCopy = {
+    strategyExpiryFirst: "Caduca antes",
+    strategyExpiryFirstDescription: "Prioriza una cuota suficiente cuyo periodo largo se reinicie o cuya suscripción sin renovación termine antes.",
+    leadExpiryFirst: "Primero lo que caduca antes.",
     membersOn: ({ service, on, total }) => `${service} · ${on} de ${total} miembros activos`,
     rename: 'Cambiar nombre',
     moreActions: 'Más acciones',
@@ -300,8 +306,6 @@ const es: ConnectedServicesPoolCopy = {
     noActiveDetail: 'El grupo elige uno cuando empieza una sesión.',
     leadLeastLimited: 'Primero el menos limitado.',
     leadInOrder: 'En orden.',
-    nextOnRunOut: ({ name, next }) => `Cuando ${name} se agote, el siguiente turno pasará a ${next}.`,
-    noNextOnRunOut: ({ name }) => `Ningún otro miembro tiene margen para relevar a ${name} cuando se agote.`,
     fallbackOff: ({ name }) => `El cambio automático está desactivado; las sesiones siguen en ${name} cuando se agote.`,
     manualStays: ({ name }) => `Manual: el grupo sigue en ${name} hasta que elijas otro miembro.`,
     switchTo: ({ name }) => `Cambiar a ${name}`,
@@ -381,6 +385,9 @@ const es: ConnectedServicesPoolCopy = {
 };
 
 const fr: ConnectedServicesPoolCopy = {
+    strategyExpiryFirst: "Expire bientôt",
+    strategyExpiryFirstDescription: "Privilégier un quota suffisant dont la période longue se réinitialise ou dont l’abonnement sans renouvellement se termine plus tôt.",
+    leadExpiryFirst: "Expiration la plus proche d’abord.",
     membersOn: ({ service, on, total }) => `${service} · ${on} membres actifs sur ${total}`,
     rename: 'Renommer',
     moreActions: "Plus d'actions",
@@ -394,8 +401,6 @@ const fr: ConnectedServicesPoolCopy = {
     noActiveDetail: 'Le groupe en choisit un au démarrage d’une session.',
     leadLeastLimited: "Le moins limité d'abord.",
     leadInOrder: 'Dans l’ordre.',
-    nextOnRunOut: ({ name, next }) => `Quand ${name} est épuisé, le tour suivant passe à ${next}.`,
-    noNextOnRunOut: ({ name }) => `Aucun autre membre n’a de marge pour prendre le relais quand ${name} est épuisé.`,
     fallbackOff: ({ name }) => `Le basculement automatique est désactivé : les sessions restent sur ${name} quand il est épuisé.`,
     manualStays: ({ name }) => `Manuel : le groupe reste sur ${name} jusqu’à ce que vous choisissiez un autre membre.`,
     switchTo: ({ name }) => `Passer à ${name}`,
@@ -475,6 +480,9 @@ const fr: ConnectedServicesPoolCopy = {
 };
 
 const it: ConnectedServicesPoolCopy = {
+    strategyExpiryFirst: "Scade prima",
+    strategyExpiryFirstDescription: "Preferisci una quota sufficiente con un ripristino del periodo lungo o una scadenza dell’abbonamento senza rinnovo più vicini.",
+    leadExpiryFirst: "Prima ciò che scade prima.",
     membersOn: ({ service, on, total }) => `${service} · ${on} di ${total} membri attivi`,
     rename: 'Rinomina',
     moreActions: 'Altre azioni',
@@ -488,8 +496,6 @@ const it: ConnectedServicesPoolCopy = {
     noActiveDetail: 'Il gruppo ne sceglie uno quando inizia una sessione.',
     leadLeastLimited: 'Prima il meno limitato.',
     leadInOrder: 'In ordine.',
-    nextOnRunOut: ({ name, next }) => `Quando ${name} si esaurisce, il turno successivo passa a ${next}.`,
-    noNextOnRunOut: ({ name }) => `Nessun altro membro ha margine per subentrare quando ${name} si esaurisce.`,
     fallbackOff: ({ name }) => `Il cambio automatico è disattivato: le sessioni restano su ${name} quando si esaurisce.`,
     manualStays: ({ name }) => `Manuale: il gruppo resta su ${name} finché non scegli un altro membro.`,
     switchTo: ({ name }) => `Passa a ${name}`,
@@ -569,6 +575,9 @@ const it: ConnectedServicesPoolCopy = {
 };
 
 const ja: ConnectedServicesPoolCopy = {
+    strategyExpiryFirst: "期限優先",
+    strategyExpiryFirstDescription: "十分な残量があるアカウントのうち、長期枠のリセットまたは自動更新なしの契約終了が近いものを優先します。",
+    leadExpiryFirst: "期限の近いものを優先。",
     membersOn: ({ service, on, total }) => `${service} · ${total} 人中 ${on} 人がオン`,
     rename: '名前を変更',
     moreActions: 'その他の操作',
@@ -582,8 +591,6 @@ const ja: ConnectedServicesPoolCopy = {
     noActiveDetail: 'セッション開始時にプールが 1 つを選びます。',
     leadLeastLimited: '残量の多い順。',
     leadInOrder: '順番どおり。',
-    nextOnRunOut: ({ name, next }) => `${name} が上限に達すると、次のターンは ${next} に移ります。`,
-    noNextOnRunOut: ({ name }) => `${name} が上限に達したとき、代わりになる余裕のあるメンバーがいません。`,
     fallbackOff: ({ name }) => `自動切り替えはオフのため、${name} が上限に達してもセッションはそのままです。`,
     manualStays: ({ name }) => `手動：別のメンバーを選ぶまで ${name} のままです。`,
     switchTo: ({ name }) => `${name} に切り替え`,
@@ -663,6 +670,9 @@ const ja: ConnectedServicesPoolCopy = {
 };
 
 const pl: ConnectedServicesPoolCopy = {
+    strategyExpiryFirst: "Wygasa wcześniej",
+    strategyExpiryFirstDescription: "Preferuj wystarczający zapas z wcześniejszym resetem długiego okresu lub końcem subskrypcji bez odnowienia.",
+    leadExpiryFirst: "Najpierw najbliższy termin.",
     membersOn: ({ service, on, total }) => `${service} · ${on} z ${total} członków włączonych`,
     rename: 'Zmień nazwę',
     moreActions: 'Więcej działań',
@@ -676,8 +686,6 @@ const pl: ConnectedServicesPoolCopy = {
     noActiveDetail: 'Pula wybiera jednego, gdy zaczyna się sesja.',
     leadLeastLimited: 'Najpierw najmniej ograniczone.',
     leadInOrder: 'Po kolei.',
-    nextOnRunOut: ({ name, next }) => `Gdy ${name} się wyczerpie, następna tura przejdzie do ${next}.`,
-    noNextOnRunOut: ({ name }) => `Żaden inny członek nie ma zapasu, by zastąpić ${name}, gdy się wyczerpie.`,
     fallbackOff: ({ name }) => `Automatyczne przełączanie jest wyłączone, więc sesje zostają na ${name}, gdy się wyczerpie.`,
     manualStays: ({ name }) => `Ręcznie: pula zostaje na ${name}, dopóki nie wybierzesz innego członka.`,
     switchTo: ({ name }) => `Przełącz na ${name}`,
@@ -757,6 +765,9 @@ const pl: ConnectedServicesPoolCopy = {
 };
 
 const pt: ConnectedServicesPoolCopy = {
+    strategyExpiryFirst: "Expira antes",
+    strategyExpiryFirstDescription: "Prefira uma quota suficiente cujo período longo reinicie ou cuja assinatura sem renovação termine mais cedo.",
+    leadExpiryFirst: "Primeiro o que expira antes.",
     membersOn: ({ service, on, total }) => `${service} · ${on} de ${total} membros ativos`,
     rename: 'Renomear',
     moreActions: 'Mais ações',
@@ -770,8 +781,6 @@ const pt: ConnectedServicesPoolCopy = {
     noActiveDetail: 'O grupo escolhe um quando uma sessão começa.',
     leadLeastLimited: 'Primeiro o menos limitado.',
     leadInOrder: 'Em ordem.',
-    nextOnRunOut: ({ name, next }) => `Quando ${name} se esgotar, o próximo turno passa para ${next}.`,
-    noNextOnRunOut: ({ name }) => `Nenhum outro membro tem folga para assumir quando ${name} se esgotar.`,
     fallbackOff: ({ name }) => `A troca automática está desativada, então as sessões ficam em ${name} quando se esgotar.`,
     manualStays: ({ name }) => `Manual: o grupo fica em ${name} até você escolher outro membro.`,
     switchTo: ({ name }) => `Trocar para ${name}`,
@@ -851,6 +860,9 @@ const pt: ConnectedServicesPoolCopy = {
 };
 
 const ru: ConnectedServicesPoolCopy = {
+    strategyExpiryFirst: "Скорее истекает",
+    strategyExpiryFirstDescription: "Предпочитать достаточный запас с более ранним сбросом длительного лимита или окончанием подписки без продления.",
+    leadExpiryFirst: "Сначала ближайший срок.",
     membersOn: ({ service, on, total }) => `${service} · включено ${on} из ${total}`,
     rename: 'Переименовать',
     moreActions: 'Другие действия',
@@ -864,8 +876,6 @@ const ru: ConnectedServicesPoolCopy = {
     noActiveDetail: 'Пул выбирает одного при запуске сессии.',
     leadLeastLimited: 'Сначала наименее ограниченный.',
     leadInOrder: 'По порядку.',
-    nextOnRunOut: ({ name, next }) => `Когда ${name} исчерпается, следующий ход перейдёт к ${next}.`,
-    noNextOnRunOut: ({ name }) => `Ни у одного другого участника нет запаса, чтобы сменить ${name}, когда он исчерпается.`,
     fallbackOff: ({ name }) => `Автопереключение выключено, поэтому сессии остаются на ${name}, когда он исчерпается.`,
     manualStays: ({ name }) => `Вручную: пул остаётся на ${name}, пока вы не выберете другого участника.`,
     switchTo: ({ name }) => `Переключить на ${name}`,
@@ -945,6 +955,9 @@ const ru: ConnectedServicesPoolCopy = {
 };
 
 const zhHans: ConnectedServicesPoolCopy = {
+    strategyExpiryFirst: "即将到期优先",
+    strategyExpiryFirstDescription: "优先选择额度充足且长期额度重置或不续订的订阅结束时间更近的账号。",
+    leadExpiryFirst: "即将到期优先。",
     membersOn: ({ service, on, total }) => `${service} · ${total} 个成员中 ${on} 个已开启`,
     rename: '重命名',
     moreActions: '更多操作',
@@ -958,8 +971,6 @@ const zhHans: ConnectedServicesPoolCopy = {
     noActiveDetail: '会话开始时，池会选择一个。',
     leadLeastLimited: '剩余最多的优先。',
     leadInOrder: '按顺序。',
-    nextOnRunOut: ({ name, next }) => `${name} 用完后，下一轮会切换到 ${next}。`,
-    noNextOnRunOut: ({ name }) => `${name} 用完时，没有其他成员有余量接替。`,
     fallbackOff: ({ name }) => `自动切换已关闭，${name} 用完后会话仍留在它上面。`,
     manualStays: ({ name }) => `手动：在你选择其他成员之前，池会一直使用 ${name}。`,
     switchTo: ({ name }) => `切换到 ${name}`,
@@ -1039,6 +1050,9 @@ const zhHans: ConnectedServicesPoolCopy = {
 };
 
 const zhHant: ConnectedServicesPoolCopy = {
+    strategyExpiryFirst: "即將到期優先",
+    strategyExpiryFirstDescription: "優先選擇額度充足且長期額度重設或不續訂的訂閱結束時間更近的帳號。",
+    leadExpiryFirst: "即將到期優先。",
     membersOn: ({ service, on, total }) => `${service} · ${total} 個成員中 ${on} 個已開啟`,
     rename: '重新命名',
     moreActions: '更多操作',
@@ -1052,8 +1066,6 @@ const zhHant: ConnectedServicesPoolCopy = {
     noActiveDetail: '工作階段開始時，池會選擇一個。',
     leadLeastLimited: '剩餘最多的優先。',
     leadInOrder: '依順序。',
-    nextOnRunOut: ({ name, next }) => `${name} 用完後，下一輪會切換到 ${next}。`,
-    noNextOnRunOut: ({ name }) => `${name} 用完時，沒有其他成員有餘量接手。`,
     fallbackOff: ({ name }) => `自動切換已關閉，${name} 用完後工作階段仍留在它上面。`,
     manualStays: ({ name }) => `手動：在你選擇其他成員之前，池會一直使用 ${name}。`,
     switchTo: ({ name }) => `切換到 ${name}`,

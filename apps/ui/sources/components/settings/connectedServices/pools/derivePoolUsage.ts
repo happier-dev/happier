@@ -1,5 +1,4 @@
 import type {
-    ConnectedServiceAuthGroupPolicyV1,
     ConnectedServiceQuotaMeterV1,
 } from '@happier-dev/protocol';
 
@@ -148,30 +147,17 @@ export function derivePoolUsage(input: Readonly<{
 }
 
 /**
- * The member the pool moves to next, as the selection strategy would pick it: in order, the next member
- * that is on and not waiting; least limited, the one with the most left (unknown ranks last); manual,
- * the next member in order (a switch by hand). Null when no other member is on.
+ * Suggest a target for the user's explicit "Switch to" action, in the user's member order.
+ * This does not predict automatic selection: the daemon owns that decision with fresh runtime evidence.
  */
-export function resolvePoolNextMember(input: Readonly<{
-    strategy: ConnectedServiceAuthGroupPolicyV1['strategy'];
+export function resolvePoolManualSwitchSuggestion(input: Readonly<{
     activeAccountId: string | null;
     members: ReadonlyArray<Readonly<{ accountId: string; enabled: boolean; priority: number }>>;
     roomByAccountId: Readonly<Record<string, PoolMemberRoom>>;
-    lowestRemainingByAccountId: Readonly<Record<string, number | null>>;
 }>): string | null {
     const candidates = [...input.members]
-        .filter((member) => member.enabled && member.accountId !== input.activeAccountId)
+        .filter((member) => member.enabled && member.accountId !== input.activeAccountId
+            && input.roomByAccountId[member.accountId] !== 'waiting')
         .sort((left, right) => left.priority - right.priority || left.accountId.localeCompare(right.accountId));
-    if (candidates.length === 0) return null;
-    if (input.strategy === 'manual') return candidates[0].accountId;
-    const usable = candidates.filter((member) => input.roomByAccountId[member.accountId] !== 'waiting');
-    if (usable.length === 0) return null;
-    if (input.strategy === 'priority') return usable[0].accountId;
-    let best = usable[0];
-    for (const member of usable) {
-        const score = input.lowestRemainingByAccountId[member.accountId] ?? -1;
-        const bestScore = input.lowestRemainingByAccountId[best.accountId] ?? -1;
-        if (score > bestScore) best = member;
-    }
-    return best.accountId;
+    return candidates[0]?.accountId ?? null;
 }
