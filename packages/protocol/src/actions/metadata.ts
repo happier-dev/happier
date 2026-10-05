@@ -29,7 +29,7 @@ export type ActionRequiredAuthority = z.infer<typeof ActionRequiredAuthoritySche
 /**
  * Canonical owner used by external ingress to resolve an Action's execution
  * target. The target itself remains host routing metadata rather than Action
- * input; `client` deliberately reports placement unavailable to remote APIs.
+ * input; `client` executes through the connected app after canonical admission.
  */
 export const ActionExecutionPlacementSchema = z.enum(['account', 'machine', 'session', 'client']);
 export type ActionExecutionPlacement = z.infer<typeof ActionExecutionPlacementSchema>;

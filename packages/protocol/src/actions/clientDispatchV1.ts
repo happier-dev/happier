@@ -14,7 +14,7 @@ export const UiActionDispatchRequestV1Schema = z.object({
     authority: ActionRequiredAuthoritySchema,
     defaultSessionId: z.string().min(1).optional(),
     defaultSessionMachineId: z.string().min(1).optional(),
-    workspaceWrites: z.enum(['allow', 'deny']).optional(),
+    agentStartWorkspaceWrites: z.enum(['allow', 'deny']).optional(),
   }).strict(),
 }).strict().superRefine((request, ctx) => {
   const spec = getActionSpec(request.actionId);
