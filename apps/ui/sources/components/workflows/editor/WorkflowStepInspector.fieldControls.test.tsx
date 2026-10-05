@@ -3,6 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { AgentInputChipPickerPopover } from '@/components/sessions/agentInput/components/AgentInputChipPickerPopover';
+import * as inspector from './WorkflowStepInspector';
+import * as controls from './workflowStepFieldControls';
+import * as draftModule from '@/sync/domains/workflows/workflowEditorDraft';
+import * as edits from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 /**
  * The inspector can now edit a step's Session-authoring values, not only show
@@ -14,8 +19,8 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
  */
 
 vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeNativeMock({ platformOS: 'ios' });
 });
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('react-native-unistyles', async () => {
@@ -30,13 +35,6 @@ vi.mock('@/components/ui/icons/Icon', async (importOriginal) => ({
     ...(await importOriginal<Record<string, unknown>>()),
     Icon: (props: Record<string, unknown>) => React.createElement('Icon', props),
 }));
-// The popover shell is a platform boundary (portal + window measurement). The
-// option descriptors it is handed are the behaviour under test.
-vi.mock('@/components/sessions/agentInput/components/AgentInputSelectionListPopover', () => ({
-    AgentInputSelectionListPopover: (props: Record<string, unknown>) =>
-        React.createElement('AgentInputSelectionListPopoverStub', props, null),
-}));
-
 vi.mock('@/components/ui/popover/Popover', () => ({
     Popover: (props: { open: boolean; children: (render: unknown) => React.ReactNode }) =>
         (props.open ? React.createElement(React.Fragment, null, props.children({})) : null),
@@ -52,12 +50,6 @@ const AGENT_TARGET = {
 };
 
 async function loadHarness() {
-    const [inspector, controls, draftModule, edits] = await Promise.all([
-        import('./WorkflowStepInspector'),
-        import('./workflowStepFieldControls'),
-        import('@/sync/domains/workflows/workflowEditorDraft'),
-        import('@happier-dev/protocol/workflows/workflowDefinitionEditV1'),
-    ]);
     return { ...inspector, ...controls, ...draftModule, ...edits };
 }
 
@@ -93,6 +85,21 @@ function InspectorHarness(props: Readonly<{
 }
 
 describe('workflow step inspector field controls', () => {
+    it('presents an authored engine once and resets its whole arm to the workflow default', async () => {
+        const draft = draftModule.createWorkflowEditorDraft({ draftId: 'engine', name: 'Review' });
+        const step = draft.blocks[0]!;
+        if (step.kind !== 'step') throw new Error('Invalid step fixture');
+        const reset = vi.fn();
+        const screen = await renderScreen(<inspector.WorkflowStepInspector draft={draft}
+            step={{ ...step, execution: { engine: { role: 'reviewer' } } }}
+            renderFieldControl={params => React.createElement('Control', { field: params.field })}
+            onChangeFields={() => {}} onChangeEngine={() => {}} onResetEngine={reset}
+            onResetField={() => {}} onChangeField={() => {}} />);
+        expect(screen.root.findAllByType('Control').filter(node => ['agentTarget', 'modelSelection', 'acpSessionModeId', 'sessionConfigOptionOverrides'].includes(node.props.field))).toHaveLength(1);
+        expect(screen.findByTestId('workflow-inspector-agentTarget-state')?.props.children).toBe('workflows.a11y.overridden');
+        await screen.pressByTestIdAsync('workflow-inspector-agentTarget-reset');
+        expect(reset).toHaveBeenCalledOnce();
+    });
     it('supplies a real editable control for a field the Agent can offer', async () => {
         const harness = await loadHarness();
         const onChangeField = vi.fn();
@@ -111,14 +118,8 @@ describe('workflow step inspector field controls', () => {
         expect(chip).toBeTruthy();
 
         await act(async () => { screen.pressByTestId('workflow-inspector-control-permissionMode'); });
-        const rootStep = screen.root.findAll(
-            (node) => Boolean(node.props?.open) && node.props?.rootStep !== undefined,
-            { deep: true },
-        ).at(-1)?.props?.rootStep as {
-            sections: Array<{ options: Array<{ id: string; onSelect?: () => void }> }>;
-        };
-        const option = rootStep.sections.flatMap((section) => section.options).find((entry) => entry.id === 'yolo');
-        await act(async () => { option?.onSelect?.(); });
+        const picker = screen.root.findAllByType(AgentInputChipPickerPopover).find(node => node.props.open)!;
+        await act(async () => { picker.props.onSelect('yolo'); });
 
         expect(onChangeField).toHaveBeenCalledWith('permissionMode', 'yolo');
         await screen.unmount();

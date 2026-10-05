@@ -559,8 +559,7 @@ describe('workflow editor body', () => {
         const harness = await loadHarness();
         const changed = vi.fn();
         const withoutFacts = await renderBody(harness);
-        expect(withoutFacts.findByTestId('workflow-editor-defaults-agentTarget-unavailable')).not.toBeNull();
-        expect(withoutFacts.findByTestId('workflow-editor-defaults-agentTarget')).toBeNull();
+        expect(withoutFacts.findByTestId('workflow-editor-defaults-agentTarget')?.props.accessibilityLabel).toContain('workflows.input.unavailable');
         await withoutFacts.unmount();
 
         const screen = await renderBody(harness, {
@@ -581,7 +580,6 @@ describe('workflow editor body', () => {
             },
         });
 
-        expect(screen.findByTestId('workflow-editor-defaults-agentTarget-unavailable')).toBeNull();
         const chip = screen.findByTestId('workflow-editor-defaults-agentTarget');
         expect(chip).not.toBeNull();
         expect(chip?.props.accessibilityLabel).toContain('Claude Code');

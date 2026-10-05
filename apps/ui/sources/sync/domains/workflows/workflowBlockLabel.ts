@@ -1,5 +1,5 @@
 import type { WorkflowBlock, WorkflowDefinitionV1, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
-import { workflowStepPromptLabel } from '@happier-dev/protocol/workflows';
+export { workflowBlockReferenceLabel } from '@happier-dev/protocol/workflows';
 
 function workflowStepFirstPromptLine(step: WorkflowStep): string | null {
   return step.document.text
@@ -42,10 +42,4 @@ function firstWorkflowStep(blocks: readonly WorkflowBlock[]): WorkflowStep | nul
 export function workflowDefinitionPromptTitle(definition: WorkflowDefinitionV1): string | null {
   const step = firstWorkflowStep(definition.blocks);
   return step === null ? null : workflowStepFirstPromptLine(step);
-}
-
-/** Exact ids remain the fallback for reference pickers, where identity matters. */
-export function workflowBlockReferenceLabel(block: WorkflowBlock): string {
-  if (block.kind === 'step' || block.kind === 'wait') return workflowStepPromptLabel(block) ?? block.id;
-  return block.id;
 }

@@ -11,7 +11,10 @@ import {
     WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS,
     type WorkflowStep,
     type WorkflowStepExecutionSelection,
+    type WorkflowEngineSelectionV1,
+    type WorkflowSessionAuthoringSelection,
 } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowRoleV1 } from '@happier-dev/protocol';
 
 import {
     findSessionAuthoringAgentTargetOption,
@@ -115,8 +118,15 @@ export function WorkflowStepInspector(props: Readonly<{
         effective: WorkflowStepExecutionSelection;
         inheritance: 'inherited' | 'override';
         onChange: (value: WorkflowStepExecutionSelection[WorkflowStepInspectorFieldId] | undefined) => void;
+        onChangeFields?: (fields: Partial<WorkflowSessionAuthoringSelection>) => void;
+        engine?: WorkflowEngineSelectionV1;
+        onChangeEngine?: (engine: WorkflowEngineSelectionV1) => void;
+        workflowRoles?: readonly WorkflowRoleV1[];
     }>) => React.ReactNode;
     onResetField: (field: WorkflowStepInspectorFieldId) => void;
+    onChangeFields?: (fields: Partial<WorkflowSessionAuthoringSelection>) => void;
+    onChangeEngine?: (engine: WorkflowEngineSelectionV1) => void;
+    onResetEngine?: () => void;
     onChangeField: (
         field: WorkflowStepInspectorFieldId,
         value: WorkflowStepExecutionSelection[WorkflowStepInspectorFieldId] | undefined,
@@ -139,6 +149,11 @@ export function WorkflowStepInspector(props: Readonly<{
     const { theme } = useUnistyles();
     const testIDPrefix = props.testIDPrefix ?? 'workflow-inspector';
     const fields = props.fields ?? WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS;
+    const engineField = props.onChangeFields === undefined ? undefined
+        : fields.find(field => field === 'agentTarget' || field === 'modelSelection');
+    const engineOverridden = props.step.execution?.engine !== undefined
+        || ['agentTarget', 'modelSelection', 'acpSessionModeId', 'sessionConfigOptionOverrides']
+            .some(field => Object.hasOwn(props.step.execution ?? {}, field));
     const effective = React.useMemo(
         () => resolveEffectiveWorkflowStepExecution(props.draft, props.step),
         [props.draft, props.step],
@@ -163,13 +178,20 @@ export function WorkflowStepInspector(props: Readonly<{
             )}
 
             {fields.map((field) => {
-                const inheritance = resolveWorkflowStepFieldInheritance(props.step, field);
+                if (engineField !== undefined && (field === 'acpSessionModeId' || field === 'sessionConfigOptionOverrides'
+                    || ((field === 'agentTarget' || field === 'modelSelection') && field !== engineField))) return null;
+                const inheritance = field === engineField ? (engineOverridden ? 'override' : 'inherited')
+                    : resolveWorkflowStepFieldInheritance(props.step, field);
                 const fieldId = `${testIDPrefix}-${field}`;
                 const control = props.renderFieldControl?.({
                     field,
                     effective,
                     inheritance,
                     onChange: (value) => props.onChangeField(field, value),
+                    onChangeFields: props.onChangeFields,
+                    engine: props.step.execution?.engine ?? props.draft.defaults.engine,
+                    onChangeEngine: props.onChangeEngine,
+                    workflowRoles: props.draft.roles,
                 });
 
                 return (
@@ -180,7 +202,7 @@ export function WorkflowStepInspector(props: Readonly<{
                                 runtime copy wins over the localized generic
                                 fallback. */}
                             <Text testID={fieldId} style={styles.fieldName}>
-                                {resolveSessionAuthoringFieldTitle(field, selectedAgentTarget) ?? field}
+                                {field === engineField ? t('workflows.page.sections.agentTitle') : resolveSessionAuthoringFieldTitle(field, selectedAgentTarget) ?? field}
                             </Text>
                             <Text
                                 testID={`${fieldId}-state`}
@@ -195,7 +217,8 @@ export function WorkflowStepInspector(props: Readonly<{
                                     testID={`${fieldId}-reset`}
                                     accessibilityRole="button"
                                     accessibilityLabel={t('workflows.editor.useWorkflowDefault')}
-                                    onPress={() => props.onResetField(field)}
+                                    onPress={() => field === engineField && props.onResetEngine !== undefined
+                                        ? props.onResetEngine?.() : props.onResetField(field)}
                                     style={(state) => [
                                         workflowEditorStyles.actionTarget,
                                         workflowPressFeedbackStyle(state, theme.colors.border.focus),

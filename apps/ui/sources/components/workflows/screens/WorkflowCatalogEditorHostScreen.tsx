@@ -146,9 +146,9 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
             view={view} onChangeView={setView}
             {...(sessionBound && builtin !== null
                 ? { runNowAction: <WorkflowBuiltinSessionButton entry={builtin} testID={`${prefix}-run-now`} /> }
-                : { onRunNow: () => { runId.current = null; setOpen(true); }, runNowAnchorRef })}
+                : { onRunNow: () => { runId.current = null; setOpen(true); }, runNowAnchorRef: runAnchorRef })}
             onDuplicate={duplicate} onExportJson={() => { void exportSource(); }}
-            menuActions={[{ id: 'export', label: t('workflows.exportJson'), onPress: () => { void exportSource(); } }]}
+            menuActions={[{ id: 'export', title: t('workflows.exportJson'), onSelect: () => { void exportSource(); } }]}
             description={plugin.description}
             headerMeta={[{ key: 'catalog', text: builtin === null ? `${plugin.pluginId} · ${plugin.version}` : t('workflows.page.blocks.builtin') }]}
             authoringFacts={host.authoringFacts} composerScope={host.composerScope}

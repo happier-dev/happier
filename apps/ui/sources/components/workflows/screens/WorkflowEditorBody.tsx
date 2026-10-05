@@ -1195,7 +1195,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                                 <SessionAuthoringControls
                                     disabled={!documentEditable}
                                     fields={HEADER_ENGINE_FIELDS}
-                                    values={defaultAuthoringValues} engine={draft.defaults.engine}
+                                    values={defaultAuthoringValues} engine={draft.defaults.engine} workflowRoles={draft.roles}
                                     onChangeEngine={(engine) => { if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) }); }}
                                     onChangeFields={(fields) => { if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngineFields(draft.defaults, fields) }); }}
                                     overriddenFields="all"
@@ -1295,7 +1295,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 <SessionAuthoringControls
                     disabled={!documentEditable}
                     fields={HEADER_ENGINE_FIELDS}
-                    values={defaultAuthoringValues} engine={draft.defaults.engine}
+                    values={defaultAuthoringValues} engine={draft.defaults.engine} workflowRoles={draft.roles}
                     onChangeEngine={(engine) => { if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) }); }}
                     onChangeFields={(fields) => { if (documentEditable) onChange({ ...draft, defaults: withWorkflowAuthoringEngineFields(draft.defaults, fields) }); }}
                     overriddenFields="all"

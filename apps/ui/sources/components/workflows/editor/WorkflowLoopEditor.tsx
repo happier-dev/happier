@@ -27,7 +27,8 @@ import { formatWorkflowConditionSentence, WorkflowConditionEditor } from './Work
 import { WorkflowContainerSummary } from './WorkflowContainerSummary';
 import { WorkflowFailurePolicyControl, WorkflowMaxConcurrentControl } from './WorkflowGroupEditor';
 import { WorkflowNumberField } from './WorkflowNumberField';
-import { formatWorkflowValueReference, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
+import { formatWorkflowValueReference, WorkflowReferenceSentence, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
+import { collectWorkflowConditionValueReferences } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
 
 type LoopBlock = Extract<WorkflowBlock, Readonly<{ kind: 'loop' }>>;
@@ -348,6 +349,10 @@ export function WorkflowLoopEditor(props: Readonly<{
             />
             <WorkflowContainerSummary
                 sentence={formatWorkflowLoopSentence(props.draft, block)}
+                sentenceContent={<WorkflowReferenceSentence draft={props.draft} sentence={formatWorkflowLoopSentence(props.draft, block)}
+                    references={block.repetition.kind === 'count' ? [block.repetition.count]
+                        : block.repetition.kind === 'items' ? [block.repetition.items]
+                            : block.repetition.kind === 'until' ? collectWorkflowConditionValueReferences(block.repetition.stopWhen) : []} />}
                 {...(props.onOpenOptions === undefined ? {} : { onOpenOptions: props.onOpenOptions })}
                 optionsLabel={t('workflows.page.inspector.options')}
                 testID={`${idPrefix}-summary`}

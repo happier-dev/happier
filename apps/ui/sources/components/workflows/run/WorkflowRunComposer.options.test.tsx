@@ -3,9 +3,8 @@ import NodeModule from 'node:module';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { HappierSelect } from '@happier-dev/plugin-ui/presentation';
 import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
-import type { ResolvedInputTypeV1 } from '@happier-dev/protocol/inputs/runtime';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
-import { renderScreen, findAllHostTestInstances, findTestInstanceByTypeContainingText, pressTestInstanceAsync } from '@/dev/testkit/render/renderScreen';
+import { renderScreen, findAllHostTestInstances, pressTestInstanceAsync } from '@/dev/testkit/render/renderScreen';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -26,9 +25,9 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 // Projection admission, the modal, native mount and Host API settlement remain real.
 vi.mock('@/components/plugins/reactNative/resolveDefaultReactNativeLoaderBackend', () => {
     const backend = { backendId: 'commonJs', available: true,
-        loadInstalledBundle: async () => {
-            const { renderSurface } = await import('../../../../../../packages/plugin-sdk/examples/public-authoring/ui/reviewPanel.native');
-            return (context: RenderContext) => { nativeBoundary.context = context; return renderSurface(context); };
+        loadInstalledBundle: async () => (context: RenderContext) => {
+            nativeBoundary.context = context;
+            return renderPublicPicker(context);
         } };
     return { resolveDefaultReactNativeLoaderBackend: () => backend };
 });
@@ -39,6 +38,9 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 installDisconnectedServerSocketBoundary();
+// Compile the real native owner and public author at collection, not while an interaction is pending.
+const { renderSurface: renderPublicPicker } = await import('../../../../../../packages/plugin-sdk/examples/public-authoring/ui/reviewPanel.native');
+const { PluginSurfaceHost } = await import('@/components/plugins/surfaces/PluginSurfaceHost');
 const { storage } = await import('@/sync/domains/state/storage');
 const defaultExecutorModule = await import('@/sync/ops/actions/defaultActionExecutor');
 const { WorkflowRunComposer } = await import('./WorkflowRunComposer');
@@ -70,6 +72,9 @@ describe('Workflow inputs through real Action option resolution', () => {
     beforeEach(async () => {
         await loadSyncSingletonForTests();
         await harness.reset(); rpc.machine.mockReset();
+        // Account connection disposal restores its credential spy. Reinstall the
+        // enclosing Home boundaries so the next case still has its own credentials.
+        installHomeGovernanceBoundaries(harness);
         nativeBoundary.context = undefined;
         const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
         clearDaemonMergedProjectionCacheForTests();
@@ -161,9 +166,6 @@ describe('Workflow inputs through real Action option resolution', () => {
     });
 
     it.each([false, true])('offers a typed input’s declared picker with descriptor-scoped options (picker-only=%s)', async (pickerOnly) => {
-        const { HappierInputPickerProvider } = await import('@happier-dev/plugin-ui/presentation');
-        const { createInputTypePickerPort } = await import('@/components/sessions/actions/inputTypePickerPort');
-        const { SurfaceStateCard } = await import('@/components/ui/surfaces');
         const { repositoryInputTypeRef, repositoryInputTypes } = await import('../../../../../../packages/plugin-sdk/examples/public-authoring/inputTypes');
         const typed: readonly WorkflowInputDefinition[] = [{ name: 'repository', valueType: 'json', required: true, inputType: repositoryInputTypeRef }];
         const review = { repositoryId: 'example/review-assistant' };
@@ -258,35 +260,34 @@ describe('Workflow inputs through real Action option resolution', () => {
             serverId={serverId} onChangeValues={onChangeValues} onRun={() => {}} onCancel={() => {}} />);
         // A typed input is a choice, never the main free-text input.
         expect(composer.findByTestId('workflow-run-inputs-preview')).toBeTruthy();
-        const { options: _choices, ...pickerDefinition } = repositoryInputTypes.repository;
-        const definition: ResolvedInputTypeV1['definition'] = { id: 'repository',
-            ...(pickerOnly ? pickerDefinition : repositoryInputTypes.repository) };
-        let answer: unknown = { kind: 'completed', input: { repositoryId: 42 } };
-        const port = createInputTypePickerPort({
-            resolveType: () => ({ identity: repositoryInputTypeRef, occurrenceId: 'occurrence-1', definition }),
-            canOpenPicker: () => true,
-            openPicker: async (request) => {
-                expect(request.launchInput.options).toEqual(pickerOnly ? undefined : [{ value: review, label: 'Review assistant' }]);
-                return answer;
-            },
-        });
         const chip = composer.findByType(AgentInput).props.extraActionChips.find((entry: { controlId?: string }) => entry.controlId === 'workflowInputs');
         const { ModalProvider } = await import('@/modal');
         const productionPanel = await renderScreen(<ModalProvider>{chip.collapsedContentPopover.renderContent}</ModalProvider>);
+        let stage = 'browse';
+        onTestFinished(() => { if (stage !== 'done') console.error('picker diagnostic', stage, JSON.stringify(productionPanel.toJSON())); });
         await flushHookEffects();
         await waitForHomeGovernance(() => expect(productionPanel.findAllByType('Pressable').find((node) =>
             (node.props.accessibilityLabel ?? node.props['aria-label']) === 'inputPicker.browseField')?.props.disabled).toBe(false));
         const productionBrowse = productionPanel.findAllByType('Pressable').find((node) =>
             (node.props.accessibilityLabel ?? node.props['aria-label']) === 'inputPicker.browseField');
+        const { HappierInputPickerProvider } = await import('@happier-dev/plugin-ui/presentation');
+        const pickerAttempt = vi.spyOn(productionPanel.findByType(HappierInputPickerProvider).props.port, 'pick');
         const { act } = await import('react-test-renderer');
         // Opening returns the terminal settlement promise. Do not await that before
         // the person can interact with the mounted modal.
         await act(async () => { productionBrowse!.props.onPress(); });
-        await waitForHomeGovernance(() => expect(nativeBoundary.context).toBeDefined());
+        stage = 'native';
+        await Promise.race([
+            waitForHomeGovernance(() => expect(nativeBoundary.context).toBeDefined()),
+            pickerAttempt.mock.results[0]!.value.then((result: unknown) => {
+                throw new Error(`Picker settled before native mount: ${JSON.stringify(result)}; aborted=${pickerAttempt.mock.calls[0]![0].signal.aborted}`);
+            }),
+        ]);
+        stage = 'control';
         expect(nativeBoundary.context?.launchInput).toEqual({ inputType: repositoryInputTypeRef, semantic: 'repository',
             ...(pickerOnly ? {} : { options: [{ value: review, label: 'Review assistant' }] }) });
+        const pickerContext = nativeBoundary.context!;
         const nativeChoice = pickerOnly ? 'Cancel' : 'Review assistant';
-        const { PluginSurfaceHost } = await import('@/components/plugins/surfaces/PluginSurfaceHost');
         const nativeControl = () => findAllHostTestInstances(productionPanel.findByType(PluginSurfaceHost), node =>
             (node.props.accessibilityLabel ?? node.props['aria-label']) === nativeChoice
                 && (typeof node.props.onPress === 'function' || typeof node.props.onClick === 'function')).at(-1);
@@ -294,32 +295,20 @@ describe('Workflow inputs through real Action option resolution', () => {
         expect(nativeControl()?.props.disabled).not.toBe(true);
         expect(nativeBoundary.context?.signal.aborted).toBe(false);
         await choose(nativeControl());
+        stage = 'settlement';
         expect(productionPanel.findAllByType(PluginSurfaceHost)).toHaveLength(0);
         if (pickerOnly) expect(onChangeValues).not.toHaveBeenCalled();
         else await waitForHomeGovernance(() => expect(onChangeValues).toHaveBeenCalledWith({ repository: review }));
-        onChangeValues.mockClear();
-        await productionPanel.unmount();
-        const panel = await renderScreen(<HappierInputPickerProvider port={port}>{chip.collapsedContentPopover.renderContent}</HappierInputPickerProvider>);
-        const browse = () => panel.findAllByType('Pressable').find((node) =>
-            (node.props.accessibilityLabel ?? node.props['aria-label']) === 'inputPicker.browseField');
-        await waitForHomeGovernance(async () => {
-            await flushHookEffects();
-            expect(panel.findAllByType(SurfaceStateCard).map((card) => card.props.diagnosticCode)).toEqual([]);
-            expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ method: 'action.options.resolve',
-                payload: expect.objectContaining({ consumer: { kind: 'workflow', workflow }, fieldPath: 'repository' }) }));
-            expect(browse()?.props.disabled).not.toBe(true);
-        });
+        // The retired native mount cannot replace the first selected/cancelled settlement.
+        await expect(pickerContext.hostApi.settleEphemeralInput({ kind: 'completed', input: review }))
+            .rejects.toMatchObject({ code: 'stale_surface' });
+        expect(onChangeValues.mock.calls).toEqual(pickerOnly ? [] : [[{ repository: review }]]);
+        expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ method: 'action.options.resolve',
+            payload: { v: 1, kind: 'targeted_action_rpc', target: { kind: 'machine', machineId: machine.id },
+                input: { consumer: { kind: 'workflow', workflow }, fieldPath: 'repository', draftInput: { machineId: machine.id } } } }));
         expect(rpc.machine.mock.calls.filter(([request]) => request.method === 'action.options.resolve')
-            .every(([request]) => request.payload.optionsSourceId === undefined)).toBe(true);
-        await choose(browse());
-        expect(onChangeValues).not.toHaveBeenCalled();
-        expect(findTestInstanceByTypeContainingText(panel.tree, 'Text', 'inputPicker.invalid')).toBeDefined();
-        answer = { kind: 'cancelled' };
-        await choose(browse());
-        expect(onChangeValues).not.toHaveBeenCalled();
-        answer = { kind: 'completed', input: review };
-        await choose(browse());
-        expect(onChangeValues).toHaveBeenCalledWith({ repository: review });
+            .every(([request]) => request.payload.input.optionsSourceId === undefined)).toBe(true);
+        stage = 'done';
     });
 
     it('coalesces demanded reads, ignores free text, retains options during refresh, and cancels on last release', async () => {

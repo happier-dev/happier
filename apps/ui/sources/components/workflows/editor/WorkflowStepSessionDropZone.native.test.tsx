@@ -44,7 +44,8 @@ describe('native Workflow Session target geometry', () => {
         let y = 0;
         const screen = await renderScreen(<WorkflowStepSessionDropZone stepId="review" label="Review" sessionDrop={sessionDrop} testID="step-drop">
             <React.Fragment />
-        </WorkflowStepSessionDropZone>, { createNodeMock: element => element.props.testID === 'step-drop'
+        </WorkflowStepSessionDropZone>, { createNodeMock: element => typeof element.props === 'object' && element.props !== null
+            && 'testID' in element.props && element.props.testID === 'step-drop'
             ? { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(0, y, 100, 100) }
             : null });
         await act(async () => { screen.findByTestId('step-drop')?.props.onLayout(); });

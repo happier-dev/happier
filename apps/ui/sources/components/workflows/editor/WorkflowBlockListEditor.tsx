@@ -46,6 +46,8 @@ import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBl
 import type { WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
 import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
 import { WorkflowContainerSummary } from './WorkflowContainerSummary';
+import { WorkflowReferenceSentence } from './WorkflowStepDataEditor';
+import { collectWorkflowConditionValueReferences } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { WorkflowBlockHeading } from './WorkflowBlockHeading';
 import { duplicateWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { workflowEditorStyles } from './workflowEditorStyles';
@@ -553,6 +555,9 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                     sentence={t('workflows.page.inspector.ifSentence', {
                                         condition: formatWorkflowConditionSentence(draft, block.when),
                                     })}
+                                    sentenceContent={<WorkflowReferenceSentence draft={draft}
+                                        sentence={t('workflows.page.inspector.ifSentence', { condition: formatWorkflowConditionSentence(draft, block.when) })}
+                                        references={collectWorkflowConditionValueReferences(block.when)} />}
                                     {...(editable ? {
                                         onOpenOptions: (anchorRef: React.RefObject<View | null>) => onCustomize(block.id, anchorRef),
                                     } : {})}

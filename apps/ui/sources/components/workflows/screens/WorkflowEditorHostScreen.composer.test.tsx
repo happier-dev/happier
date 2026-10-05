@@ -74,7 +74,9 @@ describe('editor workflow composer', () => {
     it('reads a builtin through the editor with settings, Run now and Duplicate instead of Save', async () => {
         const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol');
         const builtin = getBuiltinWorkflowCatalogV1().find(entry => entry.requiresOriginSession !== true)!;
-        const screen = await renderScreen(<AppPaneProvider><WorkflowBuiltinEditorHostScreen workflow={builtin.id} intent="run" /></AppPaneProvider>);
+        const screen = await renderScreen(<AppPaneProvider><WorkflowBuiltinEditorHostScreen workflow={builtin.id} intent="run" /></AppPaneProvider>, {
+            createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
+        });
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const body = screen.root.findByType(WorkflowEditorBody);
         expect(body.props.documentPresentation).toMatchObject({ editable: false });
@@ -83,12 +85,31 @@ describe('editor workflow composer', () => {
         expect(screen.findByTestId('workflow-builtin-settings-toggle')).not.toBeNull();
         expect(screen.findByTestId('workflow-builtin-duplicate')).not.toBeNull();
         expect(screen.findByTestId('workflow-builtin-run-now')).not.toBeNull();
-        expect(screen.findByTestId('workflow-run-inputs-preview')).not.toBeNull();
-        expect(screen.root.findAllByType(AgentInput).filter(input => input.props.onSend === undefined).every(input => input.props.disabled === true)).toBe(true);
+        const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
+        expect(screen.root.findAllByType(WorkflowRunComposer)).toHaveLength(1);
+        expect(body.findAllByType(AgentInput).every(input => input.props.disabled === true)).toBe(true);
+        const { walkWorkflowBlocks } = await import('@happier-dev/protocol/workflows/workflowDefinitionEditV1');
+        const step = walkWorkflowBlocks(builtin.definition.blocks).find(block => block.kind === 'step');
+        if (!step || step.kind !== 'step') throw new Error('The shipped builtin must contain an Agent prompt');
+        expect(body.findAll(node => String(node.type) === 'Text' && node.props.selectable === true && node.children.includes(step.document.text))).not.toHaveLength(0);
+        expect(body.findAll(node => String(node.type) === 'MultiTextInput')).toHaveLength(0);
+        expect(body.findAll(node => typeof node.props.testID === 'string' && /(?:composer-send|dictation|voice-composer)/u.test(node.props.testID))).toHaveLength(0);
+        await screen.pressByTestIdAsync('workflow-builtin-settings-toggle');
+        const { WorkflowInspector } = await import('../editor/WorkflowInspector');
+        expect(screen.root.findAllByType(WorkflowInspector).some(inspector => inspector.props.documentEditable === false)).toBe(true);
+        expect(screen.findByTestId('workflow-builtin-group-agent')).not.toBeNull();
     });
 
     it('opens the real native engine panel from the step composer and only edits authoring values', async () => {
         const definitionId = '8fab3a81-5e64-4000-8000-000000000001';
+        const definition = createWorkflowDefinitionFixture({ roles: [{ roleId: 'local-reviewer', name: 'Local reviewer',
+            instructions: 'Review this workflow', runsAs: { kind: 'session' } }] });
+        transport.mockImplementation(async (action: string) => {
+            if (action === 'workflow.definition.get') return { ok: true, result: { definitionId, definition, access: 'owner',
+                revision: { headerVersion: 3, bodyVersion: 3 }, metadata: { title: 'Saved draft' } } };
+            return action === 'workflow.trigger.list' ? { ok: true, result: { sets: [] } }
+                : { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        });
         const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>, {
             createNodeMock: () => ({ getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }),
                 addEventListener: () => {}, removeEventListener: () => {},
@@ -97,15 +118,46 @@ describe('editor workflow composer', () => {
         const composer = screen.root.findAllByType(AgentInput)[0]!;
         expect(composer.props.onAgentClick).toBeTypeOf('function');
         expect(composer.props.extraActionChips.some((chip: { key: string }) => chip.key === 'workflow-step-engine')).toBe(false);
-        await act(async () => composer.props.onAgentClick());
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
         const panel = screen.root.findByType(AgentInputChipPickerPanel);
-        const option = panel.props.options.find((candidate: { disabled?: boolean }) => !candidate.disabled);
+        const option = panel.props.options.find((candidate: { id: string; disabled?: boolean }) => candidate.id !== 'roles' && !candidate.disabled);
         expect(option).toBeDefined();
         await act(async () => option.onSelectImmediate());
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const body = screen.root.findByType(WorkflowEditorBody);
-        expect(body.props.draft.blocks[0].execution?.agentTarget).toBeDefined();
+        expect(body.props.draft.blocks[0].execution?.engine?.agentTarget).toBeDefined();
+        expect(body.props.draft.blocks[0].execution?.agentTarget).toBeUndefined();
+        expect(body.props.draft.blocks[0].execution?.modelSelection).toBeUndefined();
+        await act(async () => body.props.onChange({ ...body.props.draft, blocks: [{ ...body.props.draft.blocks[0],
+            execution: { ...body.props.draft.blocks[0].execution, sessionConfigOptionOverrides: { v: 1, updatedAt: 1,
+                overrides: { budget: { value: 42, updatedAt: 1 } } } } }] }));
+        const { NewSessionEngineOptionDetail } = await import('@/components/sessions/new/components/NewSessionEngineOptionDetail');
+        await screen.pressByTestIdAsync(`agent-input-chip-picker.option:${option.id}`);
+        const detail = screen.root.findByType(NewSessionEngineOptionDetail);
+        await act(async () => detail.props.onSelectionChange({ modelId: 'selected-model', sessionModeId: null,
+            configOverrides: { reasoning_effort: 'high' } }));
+        expect(body.props.draft.blocks[0].execution.engine).toMatchObject({
+            modelSelection: { ref: { modelId: 'selected-model' } }, effort: 'high',
+        });
+        expect(detail.props.selectedModelId).toBe('selected-model');
+        expect(detail.props.selectedConfigOverrides.reasoning_effort).toBe('high');
+        expect(body.props.draft.blocks[0].execution.sessionConfigOptionOverrides.overrides.budget?.value).toBe(42);
+        const { validateWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowAuthoring');
+        expect(validateWorkflowEditorDraft(body.props.draft).valid).toBe(true);
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:roles');
+        await screen.pressByTestIdAsync('roles-rail-option:local-reviewer');
+        expect(body.props.draft.blocks[0].execution.engine).toEqual({ role: 'local-reviewer' });
+        expect(body.props.draft.blocks[0].execution.agentTarget).toBeUndefined();
+        expect(body.props.draft.blocks[0].execution.modelSelection).toBeUndefined();
+        expect(validateWorkflowEditorDraft(body.props.draft).valid).toBe(true);
         expect(transport.mock.calls.filter(([action]) => ['session.spawn', 'workflow.run.start', 'workflow.definition.update'].includes(action))).toHaveLength(0);
+        await screen.pressByTestIdAsync(`workflow-editor-step-${body.props.draft.blocks[0].id}-customize`);
+        const { WorkflowStepInspector } = await import('../editor/WorkflowStepInspector');
+        const inspector = screen.root.findByType(WorkflowStepInspector);
+        await screen.pressByTestIdAsync(`${inspector.props.testIDPrefix}-agentTarget-reset`);
+        expect(body.props.draft.blocks[0].execution.engine).toBeUndefined();
+        expect(body.props.draft.blocks[0].execution.acpSessionModeId).toBeUndefined();
+        expect(body.props.draft.blocks[0].execution.sessionConfigOptionOverrides).toBeUndefined();
     });
 
     it('makes a Can-use recipient’s personal triggers reachable and saves them through the real page without definition.update', async () => {

@@ -228,7 +228,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                     disabled={readOnly}
                     presentation="fields"
                     fields={WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS}
-                    values={defaultAuthoringValues} engine={draft.defaults.engine}
+                    values={defaultAuthoringValues} engine={draft.defaults.engine} workflowRoles={draft.roles}
                     onChangeEngine={(engine) => { if (!readOnly) onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) }); }}
                     onChangeFields={(fields) => {
                         if (readOnly) return;

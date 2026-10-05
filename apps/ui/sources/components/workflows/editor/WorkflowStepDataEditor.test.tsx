@@ -5,6 +5,7 @@ import { act, type ReactTestInstance } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { setWorkflowInputs } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { createWorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 // Load the real owner during collection, not against the first interaction's timeout.
@@ -80,6 +81,22 @@ function selectTrigger(root: ReactTestInstance, testID: string): ReactTestInstan
 }
 
 describe('WorkflowStepDataEditor field selects', () => {
+    it('reads every reference kind without a wire-object fallback and labels unavailable values', () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'references', name: 'Review' });
+        const producer = { blockId: draft.blocks[0]!.id, scope: { kind: 'outer', levels: 1 } } as const;
+        const references: WorkflowValueReference[] = [
+            { kind: 'literal', value: { kind: 'exhausted', rounds: 3 } },
+            { kind: 'input', name: 'files' }, { kind: 'result', producer, path: ['verdict'] },
+            { kind: 'loop_trailing_count', producer, path: ['verdict'], equals: true },
+            { kind: 'workspace', producer, field: 'checkoutRootPath' },
+            { kind: 'item', field: 'value', path: ['name'] }, { kind: 'iteration', field: 'stopReason' },
+            { kind: 'session_context', recentTurns: 2 }, { kind: 'session_context_field', field: 'goal.tokenBudget' },
+        ];
+        for (const reference of references) expect(formatWorkflowValueReference(draft, reference)).not.toContain('"kind"');
+        expect(formatWorkflowValueReference(draft, references[4]!)).toContain('workflows.input.checkoutRoot');
+        // External/future values may be unavailable to this reader; never expose their native bag.
+        expect(formatWorkflowValueReference(draft, { kind: 'future', data: { secret: 'hidden' } } as unknown as WorkflowValueReference)).toBe('workflows.input.unavailableValue');
+    });
     it('reads builtin loop conditions as human reference labels, including typed stop reasons', () => {
         const definition = getBuiltinWorkflowCatalogV1().find(entry => entry.id === 'builtin:keep-going')!.definition;
         const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'keep-going', name: 'Keep going', definition });

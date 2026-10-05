@@ -39,19 +39,22 @@ import type {
     WorkflowStep,
 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowCondition } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import { WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS } from '@happier-dev/protocol/workflows/workflowV1';
+import { SessionAuthoringControls } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 
 import type { WorkflowRunAsTargetKind } from '../run/workflowRunAsTargets';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
 import { formatWorkflowConditionSentence, WorkflowConditionEditor } from './WorkflowConditionEditor';
-import { WorkflowContinuityControls } from './WorkflowContinuityControls';
-import { WorkflowGroupOptions } from './WorkflowGroupEditor';
+import { formatWorkflowContinuitySummary, WorkflowContinuityControls } from './WorkflowContinuityControls';
+import { formatWorkflowGroupSentence, WorkflowGroupOptions } from './WorkflowGroupEditor';
 import type { WorkflowInspectorProps } from './WorkflowInspector';
-import { WorkflowLoopOptions } from './WorkflowLoopEditor';
+import { formatWorkflowLoopSentence, WorkflowLoopOptions } from './WorkflowLoopEditor';
 import { formatWorkflowResultSummary } from './WorkflowStepDataEditor';
 import { WorkflowStepInspector, WorkflowStepTimeoutField } from './WorkflowStepInspector';
 import { useWorkflowStepFieldControlRenderer } from './workflowStepFieldControls';
 import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
 import { NO_DISCLOSURE, WorkflowInspectorGroup } from './workflowInspectorGroup';
+import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
 
 /**
  * Step options: the block subject of the one inspector content (04 §5.2), for
@@ -215,6 +218,17 @@ function MainPage(props: WorkflowInspectorProps & Readonly<{
     onOpenPage: (page: OptionsPage) => void;
 }>): React.ReactElement {
     const { block, draft, onChange, testIDPrefix } = props;
+    if (props.documentEditable === false && block.kind !== 'step') return <ItemGroup>
+        {block.kind === 'loop' || block.kind === 'parallel' ? <SectionContentRow>
+            <Text style={workflowEditorStyles.metaText}>{block.kind === 'loop' ? formatWorkflowLoopSentence(draft, block) : formatWorkflowGroupSentence(block)}</Text>
+        </SectionContentRow> : null}
+        {(block.kind === 'wait' || block.kind === 'action' || block.kind === 'workflow') ? <Item
+            title={t('workflows.page.inspector.resultTitle')} subtitle={'result' in block ? formatWorkflowResultSummary(block.result) : t('workflows.page.inspector.resultFromWorkflow', { workflow: workflowBlockReferenceLabel(block) })}
+            mode="info" /> : null}
+        <SectionContentRow><WorkflowConditionEditor editable={false}
+            label={block.kind === 'if' ? t('workflows.condition.ifWhen') : t('workflows.condition.onlyWhen')}
+            condition={blockCondition(block)} draft={draft} consumerBlockId={block.id} onChange={() => {}} testIDPrefix={`${testIDPrefix}-condition`} /></SectionContentRow>
+    </ItemGroup>;
     const onlyRunWhen = (
         <ItemGroup>
             <OnlyRunWhenRow draft={draft} block={block} onOpen={() => props.onOpenPage('condition')} testIDPrefix={testIDPrefix} />
@@ -387,6 +401,27 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
         testIDPrefix: `${testIDPrefix}-control`,
     });
     const effectiveExecution = resolveEffectiveWorkflowStepExecution(draft, step);
+    if (props.documentEditable === false) return <>
+        <ItemGroup title={t('workflows.page.sections.conversationTitle')}><SectionContentRow>
+            <Text style={workflowEditorStyles.metaText}>{formatWorkflowContinuitySummary({ draft,
+                conversation: effectiveExecution.conversation, workspace: effectiveExecution.workspace, existingSessions: props.existingSessions })}</Text>
+        </SectionContentRow></ItemGroup>
+        <ItemGroup title={t('workflows.page.sections.agentTitle')}>
+            <SessionAuthoringControls presentation="fields" disabled fields={WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS}
+                values={effectiveExecution} engine={step.execution?.engine ?? draft.defaults.engine} workflowRoles={draft.roles}
+                onChangeField={() => {}} onChangeFields={() => {}} onChangeEngine={() => {}}
+                facts={props.authoringFacts} testIDPrefix={`${testIDPrefix}-control`} />
+        </ItemGroup>
+        <ItemGroup>
+            <Item title={t('workflows.page.inspector.runsIn')} subtitle={runsInLabel(step.execution?.executionTarget?.kind ?? props.executionTarget ?? 'session')} mode="info" />
+            <Item title={t('workflows.page.inspector.reviewTitle')} subtitle={t(step.pauseForReview ? 'common.yes' : 'common.no')} mode="info" />
+            <Item title={t('workflows.page.inspector.resultTitle')} subtitle={formatWorkflowResultSummary(step.result)} mode="info" />
+            <SectionContentRow><WorkflowConditionEditor editable={false} label={t('workflows.condition.onlyWhen')}
+                condition={step.onlyWhen} draft={draft} consumerBlockId={step.id} onChange={() => {}} testIDPrefix={`${testIDPrefix}-condition`} /></SectionContentRow>
+            <Item title={t('workflows.editor.timeoutTitle')} subtitle={step.timeoutMs === undefined ? t('workflows.editor.noDeadline')
+                : t('workflows.page.inspector.deadline', { ms: step.timeoutMs })} mode="info" />
+        </ItemGroup>
+    </>;
 
     // Runs in (U5 precedence): an explicit step choice; else a session-bound
     // conversation decides; else the workflow default.
@@ -425,6 +460,15 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                         draft={draft}
                         step={step}
                         renderFieldControl={renderStepFieldControl}
+                        onChangeFields={(fields) => onChange(updateWorkflowBlock(draft, step.id, current => current.kind === 'step'
+                            ? { ...current, execution: withWorkflowAuthoringEngineFields(current.execution ?? {}, fields) } : current))}
+                        onChangeEngine={(engine) => onChange(updateWorkflowBlock(draft, step.id, current => current.kind === 'step'
+                            ? { ...current, execution: withWorkflowAuthoringEngine(current.execution ?? {}, engine) } : current))}
+                        onResetEngine={() => onChange(updateWorkflowBlock(draft, step.id, current => {
+                            if (current.kind !== 'step') return current;
+                            const { engine, agentTarget, modelSelection, acpSessionModeId, sessionConfigOptionOverrides, ...execution } = current.execution ?? {};
+                            return { ...current, execution };
+                        }))}
                         onResetField={(field) => onChange(setWorkflowStepExecutionField(draft, step.id, field, undefined))}
                         onChangeField={(field, value) => {
                             let next = setWorkflowStepExecutionField(draft, step.id, field, value);

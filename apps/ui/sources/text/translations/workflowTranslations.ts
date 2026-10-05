@@ -7,6 +7,7 @@ import { workflowStartTranslations } from './workflowStartTranslations';
 import { workflowRunListTranslations } from './workflowRunListTranslations';
 import { workflowPluginTranslations } from './workflowPluginTranslations';
 import { workflowAgentAuthoringTranslations } from './workflowAgentAuthoringTranslations';
+import { workflowValueReferenceTranslations } from './workflowValueReferenceTranslations';
 
 const workflowReferenceScopeTranslations = {
     scopeCurrent: 'This scope',
@@ -196,6 +197,7 @@ const en = {
 
     input: {
         ...workflowReferenceScopeTranslations,
+        ...workflowValueReferenceTranslations.en,
         label: 'Input',
         result: 'Result',
         change: 'Change',
@@ -605,14 +607,14 @@ const en = {
 };
 
 type WorkflowTranslatedLocale = Omit<typeof en, 'input'> & Readonly<{
-    input: Omit<typeof en.input, keyof typeof workflowReferenceScopeTranslations>
+    input: Omit<typeof en.input, keyof typeof workflowReferenceScopeTranslations | keyof typeof workflowValueReferenceTranslations.en>
         & Partial<typeof workflowReferenceScopeTranslations>;
 }>;
 
-function translated(value: WorkflowTranslatedLocale): typeof en {
+function translated(locale: Exclude<keyof typeof workflowValueReferenceTranslations, 'en'>, value: WorkflowTranslatedLocale): typeof en {
     return {
         ...value,
-        input: { ...workflowReferenceScopeTranslations, ...value.input },
+        input: { ...workflowReferenceScopeTranslations, ...workflowValueReferenceTranslations[locale], ...value.input },
     };
 }
 
@@ -635,7 +637,7 @@ function pluralRu(count: number, one: string, few: string, many: string): string
     return many;
 }
 
-const de = translated({
+const de = translated('de', {
     title: 'Workflows',
     newWorkflow: 'Neuer Workflow',
     copyName: ({ name }: { name: string }) => `${name} Kopie`,
@@ -1211,7 +1213,7 @@ const de = translated({
     },
 });
 
-const es = translated({
+const es = translated('es', {
     title: 'Flujos de trabajo',
     newWorkflow: 'Nuevo flujo de trabajo',
     copyName: ({ name }: { name: string }) => `${name} copia`,
@@ -1787,7 +1789,7 @@ const es = translated({
     },
 });
 
-const fr = translated({
+const fr = translated('fr', {
     title: 'Flux de travail',
     newWorkflow: 'Nouveau flux de travail',
     copyName: ({ name }: { name: string }) => `${name} copie`,
@@ -2363,7 +2365,7 @@ const fr = translated({
     },
 });
 
-const it = translated({
+const it = translated('it', {
     title: 'Flussi di lavoro',
     newWorkflow: 'Nuovo flusso di lavoro',
     copyName: ({ name }: { name: string }) => `${name} copia`,
@@ -2939,7 +2941,7 @@ const it = translated({
     },
 });
 
-const pt = translated({
+const pt = translated('pt', {
     title: 'Fluxos de trabalho',
     newWorkflow: 'Novo fluxo de trabalho',
     copyName: ({ name }: { name: string }) => `${name} cópia`,
@@ -3515,7 +3517,7 @@ const pt = translated({
     },
 });
 
-const ca = translated({
+const ca = translated('ca', {
     title: 'Fluxos de treball',
     newWorkflow: 'Nou flux de treball',
     copyName: ({ name }: { name: string }) => `${name} còpia`,
@@ -4091,7 +4093,7 @@ const ca = translated({
     },
 });
 
-const pl = translated({
+const pl = translated('pl', {
     title: 'Przepływy pracy',
     newWorkflow: 'Nowy przepływ pracy',
     copyName: ({ name }: { name: string }) => `${name} kopia`,
@@ -4668,7 +4670,7 @@ const pl = translated({
     },
 });
 
-const ru = translated({
+const ru = translated('ru', {
     title: 'Рабочие процессы',
     newWorkflow: 'Новый рабочий процесс',
     copyName: ({ name }: { name: string }) => `${name} копия`,
@@ -5245,7 +5247,7 @@ const ru = translated({
     },
 });
 
-const ja = translated({
+const ja = translated('ja', {
     title: 'ワークフロー',
     newWorkflow: '新しいワークフロー',
     copyName: ({ name }: { name: string }) => `${name} コピー`,
@@ -5818,7 +5820,7 @@ const ja = translated({
     },
 });
 
-const zhHans = translated({
+const zhHans = translated('zh', {
     title: '工作流',
     newWorkflow: '新建工作流',
     copyName: ({ name }: { name: string }) => `${name} 副本`,
@@ -6389,7 +6391,7 @@ const zhHans = translated({
     },
 });
 
-const zhHant = translated({
+const zhHant = translated('zh-Hant', {
     title: '工作流程',
     newWorkflow: '新增工作流程',
     copyName: ({ name }: { name: string }) => `${name} 副本`,

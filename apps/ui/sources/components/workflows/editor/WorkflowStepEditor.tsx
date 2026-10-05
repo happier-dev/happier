@@ -21,6 +21,7 @@ import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput
 import { t } from '@/text';
 
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { WorkflowEngineSelectionV1, WorkflowStep, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring/controls/useSessionAuthoringEnginePicker';
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
@@ -229,27 +230,35 @@ export function WorkflowStepEditor(props: Readonly<{
     const kindMark = agentId !== null && hasAgentIconMark(agentId, theme)
         ? <AgentIcon agentId={agentId} size={16} /> : <Icon name="robot" size={16} />;
     const engine = step.execution?.engine ?? props.draft.defaults.engine;
+    const engineChangeRef = React.useRef({ fields: props.onChangeExecutionFields, engine: props.onChangeEngine });
+    engineChangeRef.current = { fields: props.onChangeExecutionFields, engine: props.onChangeEngine };
+    const changeEngineFields = React.useCallback((fields: Partial<WorkflowStepExecutionSelection>) => engineChangeRef.current.fields?.(fields), []);
     const roleSelection = React.useMemo(() => ({
         value: engine && 'role' in engine ? engine.role : null,
-        onChange: (role: string) => { if (editable) props.onChangeEngine?.({ role }); },
-    }), [editable, engine, props.onChangeEngine]);
+        workflowRoles: props.draft.roles,
+        onChange: (role: string) => { if (editable) engineChangeRef.current.engine?.({ role }); },
+    }), [editable, engine, props.draft.roles]);
     const enginePicker = useSessionAuthoringEnginePicker({ values: effective, facts: props.authoringFacts,
-        disabled: !editable, onChangeFields: props.onChangeExecutionFields, roleSelection });
+        disabled: !editable, onChangeFields: changeEngineFields, roleSelection });
+    const permissionMode = isPermissionMode(effective.permissionMode) ? effective.permissionMode : undefined;
     const agentInputContext = React.useMemo(() => ({
         agentType: enginePicker.agentId ?? agentId ?? undefined,
         agentLabel: engine && 'role' in engine
-            ? props.draft.roles?.find(role => role.roleId === engine.role && 'name' in role)?.name ?? engine.role
+            ? props.draft.roles?.flatMap(role => role.roleId === engine.role && 'name' in role ? [role.name] : [])[0] ?? engine.role
             : enginePicker.label,
+        engineLabel: engine && 'role' in engine
+            ? props.draft.roles?.flatMap(role => role.roleId === engine.role && 'name' in role ? [role.name] : [])[0] ?? engine.role
+            : !editable ? [enginePicker.label, effective.modelSelection?.ref.modelId].filter(Boolean).join(' · ') : undefined,
         modelMode: effective.modelSelection?.ref.modelId,
-        permissionMode: effective.permissionMode,
-        agentPickerOptions: enginePicker.options,
+        permissionMode,
+        agentPickerOptions: editable ? enginePicker.options : [],
         agentPickerSelectedOptionId: enginePicker.selectedOptionId,
         onAgentPickerSelect: enginePicker.onSelect,
         // The native AgentInput owns opening its options. This presence also keeps
         // the effective engine chip visible in a read-only document.
         onAgentClick: enginePicker.onAgentClick,
-    }), [agentId, effective.modelSelection, effective.permissionMode, enginePicker.agentId,
-        engine, props.draft.roles, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId]);
+    }), [agentId, effective.modelSelection, permissionMode, enginePicker.agentId,
+        editable, engine, props.draft.roles, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId]);
     const composerChips = React.useMemo(() => [stepOptionsChip], [stepOptionsChip]);
     const promptFrameRef = React.useRef<View>(null);
     const issues = workflowIssuesForBlock(validation, step.id, props.draft);

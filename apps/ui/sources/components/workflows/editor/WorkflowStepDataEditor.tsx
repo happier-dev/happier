@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import type { JsonValue } from '@happier-dev/protocol';
+import { WorkflowLoopOutcomeV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowReferenceScope, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowResultContract, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 
@@ -75,22 +76,79 @@ export function formatWorkflowValueReference(draft: WorkflowEditorDraft, referen
     const withPath = (label: string, path: readonly (string | number)[] | undefined) => (
         path === undefined || path.length === 0 ? label : `${label} · ${path.join('.')}`
     );
+    const producerLabel = (producer: Readonly<{ blockId: string; scope: WorkflowReferenceScope }>) => (
+        producer.scope.kind === 'current' ? blockLabel(producer.blockId) : `${blockLabel(producer.blockId)} · ${scopeLabel(producer.scope)}`
+    );
     switch (reference.kind) {
         case 'literal':
-            return typeof reference.value === 'string' ? `“${reference.value}”` : JSON.stringify(reference.value);
+            return formatWorkflowLiteralValue(reference.value);
         case 'input':
             return t('workflows.input.workflowInput', { name: reference.name });
         case 'result':
-            return withPath(t('workflows.input.previousResult', { block: blockLabel(reference.producer.blockId) }), reference.path);
+            return withPath(t('workflows.input.previousResult', { block: producerLabel(reference.producer) }), reference.path);
         case 'loop_trailing_count':
-            return withPath(t('workflows.input.previousResult', { block: blockLabel(reference.producer.blockId) }), reference.path);
+            return t('workflows.input.trailingCount', {
+                source: withPath(t('workflows.input.previousResult', { block: producerLabel(reference.producer) }), reference.path),
+                value: formatWorkflowLiteralValue(reference.equals),
+            });
         case 'workspace':
-            return `${t('workflows.workspace.title')} · ${blockLabel(reference.producer.blockId)}`;
+            return `${t('workflows.workspace.title')} · ${producerLabel(reference.producer)} · ${t(reference.field === 'directory' ? 'workflows.workspace.projectCheckout' : 'workflows.input.checkoutRoot')}`;
         case 'item':
             return withPath(t(`workflows.input.itemField.${reference.field}`), reference.path);
+        case 'iteration':
+            return t(`workflows.input.iterationField.${reference.field}`);
+        case 'session_context':
+            return t('workflows.input.sessionContext', { turns: reference.recentTurns });
+        case 'session_context_field':
+            return reference.field === 'usage.tokensUsed' ? t('workflows.input.tokensUsed') : t('workflows.input.goalTokenBudget');
         default:
-            return referenceKindLabel(reference.kind);
+            return t('workflows.input.unavailableValue');
     }
+}
+
+/** Literal data is readable too; typed loop outcomes never leak their wire objects. */
+function formatWorkflowLiteralValue(value: JsonValue): string {
+    const outcome = WorkflowLoopOutcomeV1Schema.safeParse(value);
+    if (outcome.success) {
+        switch (outcome.data.kind) {
+            case 'stop_condition': return outcome.data.arm === undefined ? t('workflows.input.stopCondition')
+                : t('workflows.input.stopConditionArm', { arm: outcome.data.arm + 1 });
+            case 'exhausted': return t('workflows.input.roundLimit', { rounds: outcome.data.rounds });
+            case 'decision': return `${t('workflows.input.decision')} · ${outcome.data.value}${outcome.data.reason ? ` · ${outcome.data.reason}` : ''}`;
+        }
+    }
+    if (typeof value === 'string') return `“${value}”`;
+    if (typeof value === 'boolean') return t(value ? 'common.yes' : 'common.no');
+    if (value === null) return t('workflows.page.inspector.none');
+    if (typeof value === 'number') return String(value);
+    if (Array.isArray(value)) return value.length === 0 ? t('workflows.page.inspector.none') : value.map(formatWorkflowLiteralValue).join(', ');
+    const entries = Object.entries(value);
+    return entries.length === 0 ? t('workflows.page.inspector.none')
+        : entries.map(([name, nested]) => `${name}: ${formatWorkflowLiteralValue(nested)}`).join('; ');
+}
+
+/** The document's reference token, including in a loop/condition sentence. */
+export function WorkflowValueReferenceToken(props: Readonly<{ draft: WorkflowEditorDraft; reference: WorkflowValueReference; testID?: string }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    return <Text testID={props.testID} style={{ color: theme.colors.text.link, backgroundColor: theme.colors.surface.elevated,
+        borderRadius: theme.borderRadius.sm }} selectable>{`↵ ${formatWorkflowValueReference(props.draft, props.reference)}`}</Text>;
+}
+
+/** Keeps the localized sentence intact while its references use the same token owner. */
+export function WorkflowReferenceSentence(props: Readonly<{ draft: WorkflowEditorDraft; sentence: string; references: readonly WorkflowValueReference[] }>): React.ReactElement {
+    const labels = props.references.map(reference => ({ reference, label: formatWorkflowValueReference(props.draft, reference) }))
+        .filter(item => item.label.length > 0).sort((a, b) => b.label.length - a.label.length);
+    const parts: React.ReactNode[] = [];
+    let offset = 0;
+    while (offset < props.sentence.length) {
+        const next = labels.map(item => ({ ...item, at: props.sentence.indexOf(item.label, offset) }))
+            .filter(item => item.at >= 0).sort((a, b) => a.at - b.at)[0];
+        if (!next) { parts.push(props.sentence.slice(offset)); break; }
+        parts.push(props.sentence.slice(offset, next.at));
+        parts.push(<WorkflowValueReferenceToken key={next.at} draft={props.draft} reference={next.reference} />);
+        offset = next.at + next.label.length;
+    }
+    return <>{parts}</>;
 }
 
 /** What a result contract returns, in the footer and in Step options' Result row. */
@@ -391,9 +449,7 @@ export function WorkflowStepDataEditor(props: Readonly<{
     return (
         <View>
             {props.step.input.map((reference, index) => !editable ? (
-                <Text key={index} testID={`${id}-input-${index}`} style={workflowEditorStyles.metaText} selectable>
-                    {formatWorkflowValueReference(props.draft, reference)}
-                </Text>
+                <WorkflowValueReferenceToken key={index} draft={props.draft} reference={reference} testID={`${id}-input-${index}`} />
             ) : (
                 <WorkflowValueReferenceEditor
                     key={index}

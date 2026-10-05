@@ -215,8 +215,8 @@ it('puts Step options in the step composer as one chip that names only what diff
     const composer = screen.findByTestId('composer:engine');
     const chip = composer?.findAll((node) => node.props?.testID === 'workflow-editor-step-engine-customize')[0];
     expect(chip, 'the Step options chip sits in the composer chip row').toBeDefined();
-    // The engine chip leads the same row (04 §4.3).
-    expect(composer?.findAll((node) => node.props?.testID === 'workflow-editor-step-engine-engine')[0], 'engine chip').toBeDefined();
+    // The native AgentInput engine chip owns that picker; there is no parallel extra chip.
+    expect(composer?.findAll((node) => node.props?.testID === 'workflow-editor-step-engine-engine')).toHaveLength(0);
     expect(screen.findByTestId('workflow-editor-step-engine-inheritance')?.props.children).toBe('workflows.page.blocks.workflowDefaults');
     expect(screen.findByTestId('workflow-editor-step-review-inheritance')?.props.children).toBe('workflows.page.inspector.reviewsBeforeContinuing');
     expect(screen.getTextContent()).not.toContain('workflows.a11y.overridden');
@@ -369,10 +369,10 @@ describe('workflow block list editor', () => {
             },
         });
 
-        // Nothing edits: no Add row, no block menus, no Step options.
+        // Nothing edits: no Add row or block menus. Step options stay readable.
         expect(screen.findHostByTestId('workflow-editor-add-root')).toBeNull();
         expect(screen.findHostByTestId('workflow-editor-step-analyze-actions')).toBeNull();
-        expect(screen.findHostByTestId('workflow-editor-step-analyze-customize')).toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-step-analyze-customize')).not.toBeNull();
         // The composer is the same one, rendered not editable.
         expect(screen.root.findAll((node) => (
             node.props?.editable === false && node.props?.custody !== undefined

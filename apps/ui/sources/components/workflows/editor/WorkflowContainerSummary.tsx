@@ -15,6 +15,7 @@ import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEdit
  */
 export function WorkflowContainerSummary(props: Readonly<{
     sentence: string;
+    sentenceContent?: React.ReactNode;
     /** Opens the container's options; absent in a read-only document. */
     onOpenOptions?: (anchorRef: React.RefObject<View | null>) => void;
     optionsLabel: string;
@@ -24,7 +25,7 @@ export function WorkflowContainerSummary(props: Readonly<{
     const anchorRef = React.useRef<View>(null);
     const { onOpenOptions } = props;
     if (onOpenOptions === undefined) {
-        return <Text testID={props.testID} style={workflowEditorStyles.groupSummary}>{props.sentence}</Text>;
+        return <Text testID={props.testID} style={workflowEditorStyles.groupSummary}>{props.sentenceContent ?? props.sentence}</Text>;
     }
     return (
         <View ref={anchorRef} collapsable={false} style={workflowEditorStyles.containerSummaryAnchor}>
@@ -39,7 +40,7 @@ export function WorkflowContainerSummary(props: Readonly<{
                     workflowPressFeedbackStyle(state, theme.colors.border.focus),
                 ]}
             >
-                <Text style={workflowEditorStyles.metaAction}>{props.sentence}</Text>
+                <Text style={workflowEditorStyles.metaAction}>{props.sentenceContent ?? props.sentence}</Text>
             </HappierPressable>
         </View>
     );

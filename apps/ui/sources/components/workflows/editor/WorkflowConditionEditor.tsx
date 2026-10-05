@@ -5,6 +5,7 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import {
     WORKFLOW_COMPARE_OPERATORS,
+    collectWorkflowConditionValueReferences,
     type WorkflowCompareOperator,
     type WorkflowCondition,
 } from '@happier-dev/protocol/workflows/workflowReferenceV1';
@@ -15,7 +16,7 @@ import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEdito
 import { t } from '@/text';
 
 import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
-import { formatWorkflowValueReference, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
+import { formatWorkflowValueReference, WorkflowReferenceSentence, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
 
 const DEFAULT_CONDITION: WorkflowCondition = { kind: 'exists', value: { kind: 'literal', value: true } };
 const CONDITION_KINDS = ['exists', 'compare', 'all', 'any', 'not'] as const;
@@ -233,9 +234,16 @@ export function WorkflowConditionEditor(props: Readonly<{
     /** True for a loop's after-each-round condition (`stopWhen`), which resolves inside the body. */
     continuation?: boolean;
     required?: boolean;
+    editable?: boolean;
     onChange: (condition: WorkflowCondition | undefined) => void;
     testIDPrefix: string;
 }>): React.ReactElement {
+    if (props.editable === false) return <View testID={props.testIDPrefix}>
+        <Text style={workflowEditorStyles.metaText}>{props.label}</Text>
+        <Text style={workflowEditorStyles.metaText}>{props.condition === undefined ? t('workflows.condition.always')
+            : <WorkflowReferenceSentence draft={props.draft} sentence={formatWorkflowConditionSentence(props.draft, props.condition)}
+                references={collectWorkflowConditionValueReferences(props.condition)} />}</Text>
+    </View>;
     return (
         <View testID={props.testIDPrefix}>
             <View style={workflowEditorStyles.metaRow}>
