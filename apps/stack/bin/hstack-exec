@@ -534,7 +534,12 @@ run_local() {
   if [ -z "$heavyweight_local_class" ]; then
     heavyweight_local_class=$(heavyweight_command_class "$@" || true)
   fi
-  if [ -n "$heavyweight_local_class" ] && [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
+  # CI owns its local executor's capacity. Only automatic local CI execution
+  # skips development admission; placed workers and explicit admission
+  # descendants retain their existing resource guard and escalation.
+  if [ -n "$heavyweight_local_class" ] \
+    && { [ -z "${CI-}" ] || [ "${HAPPIER_DEV_TARGET_EXECUTION-}" = 1 ] || [ -n "${HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN-}" ]; } \
+    && [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
     heavyweight_local_root=$(resolve_heavyweight_admission_root) || {
       printf '%s\n' '[preferred-execution] heavyweight admission has no machine state directory' >&2
       exit 1
