@@ -95,6 +95,29 @@ function createRegistry(
 }
 
 describe('target action invocation registry', () => {
+    it('executes a waived dangerous agent Action without a present-user requester', async () => {
+        const registry = createRegistry({ actions: [{
+            ...action({ dangerLevel: 'destructive', surfaces: ['agent'], confirmation: { title: 'Delete' } }),
+            handler: async () => ({ echoed: 'executed' }),
+        }] });
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'agent',
+            isApprovalRequiredByActionSettings: () => false,
+        })).resolves.toEqual({ status: 'executed', value: { echoed: 'executed' } });
+        registry.dispose();
+    });
+
+    it('fails closed even for a safe Action when its settings read throws', async () => {
+        const registry = createRegistry({ actions: [{
+            ...action({ dangerLevel: 'safe', surfaces: ['agent'] }),
+            handler: async () => ({ echoed: 'must-not-run' }),
+        }] });
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'agent',
+            isApprovalRequiredByActionSettings: () => { throw new Error('settings unreadable'); },
+        })).resolves.toMatchObject({ status: 'unavailable', actionHandlerInvocation: 'notStarted' });
+        registry.dispose();
+    });
     it('keeps a prepared handler inert when retirement occurs during host custody admission', async () => {
         const handler = vi.fn(async () => ({ echoed: 'value' }));
         let transitions = 0;
@@ -121,13 +144,13 @@ describe('target action invocation registry', () => {
                 value: String((input as Readonly<Record<string, unknown>>).value),
             }),
         }));
-        const revalidateConnectedAccountActionFormInput = vi.fn(async () => null);
+        const revalidateActionFormInput = vi.fn(async () => null);
         const handler = vi.fn(async (input: JsonValue) => {
             const record = isJsonRecord(input) ? input : {};
             return { echoed: String(record.value) };
         });
         const registry = createRegistry({
-            revalidateConnectedAccountActionFormInput,
+            revalidateActionFormInput,
             actions: [{
                 ...action({
                     inputSchema: {
@@ -150,7 +173,7 @@ describe('target action invocation registry', () => {
         })).resolves.toEqual({ status: 'executed', value: { echoed: 'normalized' } });
 
         expect(inputParser).toHaveBeenCalledOnce();
-        expect(revalidateConnectedAccountActionFormInput).toHaveBeenCalledWith(expect.objectContaining({
+        expect(revalidateActionFormInput).toHaveBeenCalledWith(expect.objectContaining({
             input: { value: 'normalized' },
         }));
         expect(handler).toHaveBeenCalledWith(

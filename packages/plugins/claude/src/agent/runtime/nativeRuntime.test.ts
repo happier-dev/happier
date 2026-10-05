@@ -214,6 +214,12 @@ describe('createClaudeNativeRuntime', () => {
     }
     // The opener must consume admitted selection, not today's mutable account setting.
     settingsValues.claudeUnifiedTerminalEnabled = !unifiedTerminalEnabled;
+    const retainedSelection = await runtime.sessions.resolveTerminalPresentation({
+      cwd: '/tmp/claude-project',
+      runtimeDescriptorV1: selected.runtimeDescriptorV1,
+      launchEnvironment: { values: { CLAUDE_CONFIG_DIR: '/isolated/selected-claude' }, unset: ['ANTHROPIC_API_KEY'] },
+    }, { settings: selectedContext.services.settings, features: selectedContext.session.services.features });
+    expect(retainedSelection).toEqual(selected);
     const session = await runtime.sessions.open({
       kind: 'resume', sessionId: 'selected-session', cwd: '/tmp/claude-project', providerSessionId: 'provider-claude',
       runtimeDescriptorV1: selected.runtimeDescriptorV1,

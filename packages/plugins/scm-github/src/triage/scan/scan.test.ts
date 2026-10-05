@@ -130,7 +130,9 @@ describe('GitHub triage scan', () => {
       : emptyPage() });
     expect(result.kind).toBe('complete');
     if (result.kind === 'failed') throw new Error('scan failed');
-    expect(result.observations[0]?.snapshot.state).toEqual({ presentation: 'resolved', nativeLabel: 'Merged' });
+    const observation = result.observations[0];
+    if (observation?.kind !== 'present') throw new Error('expected a present observation');
+    expect(observation.snapshot.state).toEqual({ presentation: 'resolved', nativeLabel: 'Merged' });
   });
   it('sends one request per involvement lane with explicit base qualifiers and no since window', async () => {
     const { transport } = await runScan({ respond: () => emptyPage() });

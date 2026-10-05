@@ -670,9 +670,8 @@ function createGithubPlugin() {
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: readGithubChecks,
     },
-    // PR writes retain provider-native danger levels and confirmations. The
-    // central Action gate requires live approval on agent/MCP/CLI ingress.
-    // Issue writes remain UI-only; direct plugin/voice writes remain unavailable.
+    // PR and issue writes retain provider-native danger levels and confirmations.
+    // The shared Action policy requires approval by default on agent/MCP/CLI.
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge]: {
       title: 'Merge this pull request',
       description: 'Merges one GitHub pull request at the exact head revision you are looking at,'
@@ -849,7 +848,7 @@ function createGithubPlugin() {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueComment]: {
       title: 'Comment on this GitHub issue',
       description: 'Publishes one canonical Happier proposal into the exact GitHub issue conversation.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -996,7 +995,7 @@ function createGithubPlugin() {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueClose]: {
       title: 'Close this issue',
       description: 'Closes one open GitHub issue with the reason you choose, which everyone watching it sees.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -1022,7 +1021,7 @@ function createGithubPlugin() {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueReopen]: {
       title: 'Reopen this issue',
       description: 'Reopens one closed GitHub issue.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -1048,7 +1047,7 @@ function createGithubPlugin() {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeAdd]: {
       title: 'Assign people to this issue',
       description: 'Assigns exactly the named GitHub users to this issue, leaving everyone somebody else assigned untouched.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -1074,7 +1073,7 @@ function createGithubPlugin() {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeRemove]: {
       title: 'Unassign people from this issue',
       description: 'Unassigns exactly the named GitHub users from this issue, leaving everyone you did not name untouched.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -1100,7 +1099,7 @@ function createGithubPlugin() {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelAdd]: {
       title: 'Add labels to this issue',
       description: 'Adds exactly the named labels to this issue, leaving every label somebody else added untouched.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -1126,7 +1125,7 @@ function createGithubPlugin() {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelRemove]: {
       title: 'Remove a label from this issue',
       description: 'Removes exactly one named label from this issue, leaving every other label untouched.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {

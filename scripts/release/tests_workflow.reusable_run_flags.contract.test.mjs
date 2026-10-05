@@ -54,7 +54,7 @@ test('reusable tests callers explicitly select jobs without inheriting caller ev
 
   const defaultJobs = {
     'ui-e2e': 'run_ui_e2e',
-    ui: ['run_ui', true],
+    ui: 'run_ui',
     'shared-packages-unit': 'run_shared_packages',
     'plugin-workspaces-unit': 'run_plugin_workspaces',
     server: 'run_server',

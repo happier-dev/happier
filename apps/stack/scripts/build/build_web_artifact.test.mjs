@@ -5,10 +5,38 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
+  buildWebArtifact,
   ensureWebUiDependencies,
   exportWebPayloadToArtifactPayloadDir,
   resolveWebExportStagingRootDir,
 } from './build_web_artifact.mjs';
+import { readReusableArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
+import { resolveLatestComponentArtifact } from './resolve_latest_component_artifact.mjs';
+
+test('web reuse requires a non-empty entrypoint and its local referenced assets', async (t) => {
+  const root = createTempDir('stack-web-reuse-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const artifactDir = join(root, 'artifacts', 'web', 'web');
+  const payloadDir = join(artifactDir, 'payload');
+  mkdirSync(payloadDir, { recursive: true });
+  writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify({
+    version: 1, component: 'web', artifactFingerprint: 'web',
+    sourceFingerprint: 'source', payloadDir: 'payload', entrypoint: 'index.html',
+  }));
+  const html = '<script src="/chunk.js?v=1&amp;x=2"></script><link rel="stylesheet" href="./style.css"><a href="/sessions">sessions</a><img src="https://example.com/icon.png">';
+  writeFileSync(join(payloadDir, 'index.html'), html);
+  assert.equal(await readReusableArtifactManifest({ artifactDir, artifactFingerprint: 'web' }), null);
+  writeFileSync(join(payloadDir, 'chunk.js'), 'bundle');
+  assert.equal(await readReusableArtifactManifest({ artifactDir, artifactFingerprint: 'web' }), null);
+  writeFileSync(join(payloadDir, 'style.css'), 'style');
+  assert.ok(await readReusableArtifactManifest({ artifactDir, artifactFingerprint: 'web' }));
+  assert.equal((await resolveLatestComponentArtifact({ stackBaseDir: root, component: 'web' })).artifactDir, artifactDir);
+  assert.equal((await buildWebArtifact({ artifactDir, artifactFingerprint: 'web' })).artifactDir, artifactDir);
+  writeFileSync(join(payloadDir, 'index.html'), '');
+  assert.equal(await readReusableArtifactManifest({ artifactDir, artifactFingerprint: 'web' }), null);
+  assert.equal(await resolveLatestComponentArtifact({ stackBaseDir: root, component: 'web' }), null);
+  await assert.rejects(buildWebArtifact({ artifactDir, artifactFingerprint: 'web' }));
+});
 
 function createTempDir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));

@@ -60,10 +60,12 @@ export async function runWorkspacePackageBuild({
     built: [...new Set(results.flatMap((result) => result.built ?? []))],
     skipped: [...new Set(results.flatMap((result) => result.skipped ?? []))],
   };
+  const refreshed = [...new Set(results.flatMap((result) => result.refreshed ?? []))];
+  if (refreshed.length > 0) result.refreshed = refreshed;
   if (result.ok) {
     const published = await publishBundledPluginArtifactsAfterWorkspaceBuildImpl({
       repoRoot,
-      workspaceNames: result.built,
+      workspaceNames: [...new Set([...result.built, ...refreshed])],
       env,
       // This adapter owns preparation of the current checkout. A remote replica
       // must publish projections for its target-local ignored dist bytes instead
@@ -80,7 +82,7 @@ export async function runWorkspacePackageBuild({
       // pass. Reuse the canonical invalidation owner before reporting success.
       await rebuildWorkspacesInvalidatedByBundledPluginPublicationImpl({
         repoRoot,
-        workspaceNames: result.built,
+        workspaceNames: [...new Set([...result.built, ...refreshed])],
         env,
       });
     }
@@ -109,6 +111,7 @@ export async function main(argv = process.argv.slice(2)) {
   const result = await runWorkspacePackageBuild(parseWorkspaceBuildArgs(argv));
   const built = result.built.length > 0 ? result.built.join(', ') : 'none (already current)';
   process.stdout.write(`[workspace-build] built: ${built}\n`);
+  if (result.refreshed?.length > 0) process.stdout.write(`[workspace-build] refreshed: ${result.refreshed.join(', ')}\n`);
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

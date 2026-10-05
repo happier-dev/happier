@@ -31,11 +31,13 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
   const virtual = declarations.size > 0;
   const declarationRoot = virtual ? protocolRoot : resolve(repoRoot, 'packages/plugin-sdk/src/actions');
   const indexPath = resolve(declarationRoot, virtual ? 'actions/pluginActionDtos.ts' : 'actionTypeMap.generated.ts');
-  // These two JSON vocabularies already have SDK-owned public declarations.
-  // Project references to that owner rather than publishing support copies.
+  // Reuse the SDK-owned public declarations instead of publishing support copies.
   const canonicalSdkTypes = new Map(['JsonValue', 'PluginJsonValueV2'].map((name) => [name, {
     path: resolve(repoRoot, 'packages/plugin-sdk/src/identity.ts'), name,
   }]));
+  canonicalSdkTypes.set('ScmComparisonSource', {
+    path: resolve(repoRoot, 'packages/plugin-sdk/src/scm/projections.ts'), name: 'ScmComparisonSource',
+  });
   const sources = new Map();
   const sourceTexts = new Map();
   const selected = new Map();

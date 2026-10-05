@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { TriageEntryRefV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import { MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1, type TriageEntryRefV1, type TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
 import { CORPUS_USER_MARKS_INDEX_ID } from '../collections/ids.js';
 import type { CorpusUserMarkRowV1 } from '../collections/rows.js';
@@ -16,6 +16,7 @@ import {
     type TriageFixPullRequestPresentationV1,
 } from './fixPullRequests.js';
 import { setFixPullRequest, setPinned } from './setPinned.js';
+import { readTriageFixPullRequests } from '../../actions/fixPullRequests.js';
 
 const SENTRY = { pluginId: 'happier.sentry', localId: 'errors' } as const;
 const GITHUB = { pluginId: 'happier.scm-github', localId: 'github' } as const;
@@ -64,6 +65,66 @@ async function resolve(
 }
 
 describe('fix pull request links', () => {
+    it('returns every durable explicit choice rather than applying the relationship query page to intent', async () => {
+        const fixture = createTestkitCorpusCollections();
+        const choices = 2 * MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1;
+        for (let i = 0; i < choices; i += 1) {
+            expect(await setFixPullRequest({ collections: fixture.collections,
+                entryRef: ERROR_REF, displayAtMark: ERROR_DISPLAY, fixPullRequest: githubPr(String(i)),
+                linked: true, displayAtLink: ERROR_DISPLAY, nowMs: i,
+            })).toEqual({ status: 'linked' });
+        }
+        const result = await readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
+            collections: fixture.collections, nowMs: () => choices + 1,
+            projection: { workflowSubjectOf, presentationOf: () => 'active' },
+        });
+        expect(result.candidates).toHaveLength(choices);
+        expect(result.incomplete).toBe(false);
+    });
+    it('keeps link and unlink available after dismissal history exceeds a relationship query page', async () => {
+        const fixture = createTestkitCorpusCollections();
+        const dismissals = MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1;
+        for (let i = 0; i < dismissals; i += 1) {
+            expect(await setFixPullRequest({
+                collections: fixture.collections, entryRef: ERROR_REF, displayAtMark: ERROR_DISPLAY,
+                fixPullRequest: githubPr(String(i)), linked: false, nowMs: i,
+            })).toEqual({ status: 'unlinked' });
+        }
+        expect(await setFixPullRequest({
+            collections: fixture.collections, entryRef: ERROR_REF, displayAtMark: ERROR_DISPLAY,
+            fixPullRequest: githubPr('new'), linked: true, displayAtLink: ERROR_DISPLAY, nowMs: dismissals + 1,
+        })).toEqual({ status: 'linked' });
+        expect((await resolve(fixture)).primary?.entryRef).toEqual(githubPr('new'));
+        const sources = await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF });
+        expect(sources.dismissed).toHaveLength(dismissals);
+    });
+    it('returns the owner-resolved public read, excluding non-PR siblings and keeping closed PRs out of primary', async () => {
+        const fixture = createTestkitCorpusCollections();
+        await link(fixture, ERROR_REF, 'session-a', 1_000);
+        await link(fixture, githubPr('41'), 'session-a', 2_000);
+        await link(fixture, githubPr('42'), 'session-a', 3_000);
+        await link(fixture, GITHUB_ISSUE, 'session-a', 4_000);
+
+        const result = await readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
+            collections: fixture.collections,
+            nowMs: () => 5_000,
+            projection: {
+                workflowSubjectOf,
+                presentationOf: async (ref: TriageEntryRefV1) => ref.entryId === '41' ? 'closed' : 'resolved',
+            },
+        });
+
+        expect(result).toEqual({
+            v: 1,
+            candidates: [
+                { entryRef: githubPr('42'), origins: ['session'], status: 'merged', display: { displayPath: 'acme/web 42' } },
+                { entryRef: githubPr('41'), origins: ['session'], status: 'closed', display: { displayPath: 'acme/web 41' } },
+            ],
+            primary: { entryRef: githubPr('42'), origins: ['session'], status: 'merged', display: { displayPath: 'acme/web 42' } },
+            incomplete: false,
+        });
+    });
+
     it('derives a cross-source fix PR from a Session linked to both the error and the PR, and nothing else', async () => {
         const fixture = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
         await link(fixture, ERROR_REF, 'session-a', 1_000);
@@ -83,6 +144,28 @@ describe('fix pull request links', () => {
         }]);
         expect(resolved.primary?.entryRef).toEqual(githubPr('41'));
         expect(resolved.incomplete).toBe(false);
+    });
+
+    it('keeps a linked PR unknown when its source is unavailable, while cancellation aborts the read', async () => {
+        const fixture = createTestkitCorpusCollections();
+        await link(fixture, ERROR_REF, 'session-a', 1_000);
+        await link(fixture, githubPr('41'), 'session-a', 2_000);
+        const result = await readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
+            collections: fixture.collections,
+            nowMs: () => 5_000,
+            projection: { workflowSubjectOf, presentationOf: async () => { throw new Error('Source unreachable'); } },
+        });
+        expect(result.primary).toMatchObject({ entryRef: githubPr('41'), status: 'unknown' });
+        const controller = new AbortController();
+        await expect(readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
+            collections: fixture.collections,
+            nowMs: () => 5_000,
+            signal: controller.signal,
+            projection: { workflowSubjectOf, presentationOf: async () => {
+                controller.abort();
+                throw controller.signal.reason;
+            } },
+        })).rejects.toThrow();
     });
 
     it('records an explicit link on the error mark without pinning it, and keeps an existing pin', async () => {
@@ -125,6 +208,36 @@ describe('fix pull request links', () => {
         const kept = (await fixture.collections.userMarks.get(markTag))?.value as unknown as CorpusUserMarkRowV1;
         expect(kept.pinned).toBe(false);
         expect((await resolve(fixture)).candidates.map((c) => c.entryRef)).toEqual([pr]);
+    });
+
+    it('does not select a known non-PR explicit target, but retains a link when its descriptor is unavailable', async () => {
+        const fixture = createTestkitCorpusCollections();
+        await setFixPullRequest({
+            collections: fixture.collections, entryRef: ERROR_REF, displayAtMark: ERROR_DISPLAY,
+            linked: true, fixPullRequest: GITHUB_ISSUE,
+            displayAtLink: { title: 'Another issue', scopeLabel: 'acme/web' }, nowMs: 1000,
+        });
+        const sources = await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF });
+        expect(resolveFixPullRequests(sources, { workflowSubjectOf, presentationOf: () => 'active' }))
+            .toEqual({ candidates: [], primary: null, incomplete: false });
+        // A stale display projection cannot stand in for an unavailable source descriptor.
+        const unavailable = resolveFixPullRequests(sources, { workflowSubjectOf: () => null, presentationOf: () => 'active' });
+        expect(unavailable.primary).toMatchObject({ entryRef: GITHUB_ISSUE, status: 'unknown' });
+    });
+
+    it('refuses a known non-PR link before writing, while unavailable descriptors preserve explicit intent', async () => {
+        const fixture = createTestkitCorpusCollections();
+        const input = {
+            collections: fixture.collections, entryRef: ERROR_REF, displayAtMark: ERROR_DISPLAY,
+            linked: true as const, fixPullRequest: GITHUB_ISSUE,
+            displayAtLink: { title: 'Another issue', scopeLabel: 'acme/web' }, nowMs: 1000,
+            fixPullRequestWorkflowSubject: 'issue' as const,
+        };
+        await expect(setFixPullRequest(input)).rejects.toMatchObject({ name: 'PluginError', code: 'triage_fix_pull_request_kind_invalid' });
+        expect((await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF })).linked).toEqual([]);
+        expect(await setFixPullRequest({ ...input, fixPullRequestWorkflowSubject: null })).toEqual({ status: 'linked' });
+        expect((await readFixPullRequestSources({ collections: fixture.collections, entryRef: ERROR_REF })).linked)
+            .toEqual([expect.objectContaining({ entryRef: GITHUB_ISSUE })]);
     });
 
     it('unlinks a derived candidate without touching the Session link, and relinking restores it', async () => {

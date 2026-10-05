@@ -57,9 +57,11 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['node', '--experimental-strip-types', 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', '--mode', 'check'] },
     { args: ['node', '--experimental-strip-types', 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', '--mode=write'] },
     { args: ['node', '--experimental-strip-types', 'other/generateBundledPluginEntries.ts', '--mode=check'] },
-    { args: ['tsc', '-p', 'apps/cli/tsconfig.json'] },
+    { args: ['tsc', '-p', 'apps/cli/tsconfig.json'], expectedHeavyClass: 'compilation' },
     { args: ['tsc', '-p', 'apps\\cli\\tsconfig.json'] },
-    { args: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '--project=apps/cli/tsconfig.json'] },
+    { args: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '--project=apps/cli/tsconfig.json'], expectedHeavyClass: 'compilation' },
+    { args: ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck'], expectedHeavyClass: 'compilation' },
+    { args: ['--script=build:local'], expectedHeavyClass: 'compilation' },
     { args: ['yarn', '-s', 'lint'] },
     { args: ['--script=lint:local'] },
     { args: ['git', 'status'] },
@@ -77,8 +79,9 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['yarn', 'install'] },
     { args: ['nodejs', 'node_modules\\vitest\\vitest.mjs', 'run'], cwd: 'apps/cli' },
   ];
-  for (const { args, cwd = '.' } of cases) {
+  for (const { args, cwd = '.', expectedHeavyClass } of cases) {
     const policy = resolveRemoteCommandPolicy(args, { cwd });
+    if (expectedHeavyClass) assert.equal(policy.heavyClass, expectedHeavyClass, args.join(' '));
     const keys = Object.keys(policy);
     const artifactWord = "'" + fileURLToPath(artifact).replaceAll("'", "'\"'\"'") + "'";
     const body = 'repo_root=$1; invoked_cwd="$1/$2"; shift 2; . ' + artifactWord

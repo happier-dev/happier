@@ -52,7 +52,7 @@ vi.mock('node:fs', async (importOriginal) => {
     ...fs,
     // This source-level external-plugin fixture has no failed bundled publication.
     // Substitute only that installed filesystem record; manifest/catalog projection stays real.
-    readFileSync: vi.fn<typeof fs.readFileSync>((path, options) => {
+    readFileSync: vi.fn((path: Parameters<typeof fs.readFileSync>[0], options?: Parameters<typeof fs.readFileSync>[1]) => {
       if (typeof path === 'string'
         && path.replaceAll('\\', '/').endsWith(`/${BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH}`)
         && options === 'utf8') return '[]';
@@ -611,9 +611,9 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       expect(reloadController.getState().activeRegistry).not.toBe(incumbent);
       const agent = reloadController.getState().activeRegistry?.contributes.agents
         .find((entry) => entry.pluginId === fixture.input.pluginId);
-      const surfaces = await agent?.catalogEntry.resolveHostAgentRuntimeSurfaces?.();
+      const surfaces = await agent?.catalogEntry?.resolveHostAgentRuntimeSurfaces?.();
       await expect(surfaces?.attach?.evaluateAvailability?.({
-        sessionId: 'session-managed', metadata: {}, depth: 'live', hasLocalAttachmentInfo: true,
+        operation: 'attach', sessionId: 'session-managed', metadata: {}, depth: 'live', hasLocalAttachmentInfo: true,
       })).resolves.toEqual({ available: true });
       expect(requests).toEqual(['/health']);
     } finally {

@@ -77,14 +77,14 @@ type CodexAppServerErrorPayload = Readonly<{
 
 class CodexAppServerTurnFailure extends Error {
     readonly isAuthAccountChanged: boolean;
-    readonly isContextWindowExhausted: boolean;
+    readonly contextWindowExhaustionEvidence: 'structured' | 'message' | null;
     readonly isTemporaryRecoverableTurnFailure: boolean;
     readonly runtimeAuthClassification: unknown | null;
     readonly isWorkspaceRoutingUnauthorized: boolean;
 
     constructor(message: string, options: Readonly<{
         isAuthAccountChanged: boolean;
-        isContextWindowExhausted: boolean;
+        contextWindowExhaustionEvidence: 'structured' | 'message' | null;
         isTemporaryRecoverableTurnFailure: boolean;
         runtimeAuthClassification: unknown | null;
         isWorkspaceRoutingUnauthorized: boolean;
@@ -92,7 +92,7 @@ class CodexAppServerTurnFailure extends Error {
         super(message);
         this.name = 'CodexAppServerTurnFailure';
         this.isAuthAccountChanged = options.isAuthAccountChanged;
-        this.isContextWindowExhausted = options.isContextWindowExhausted;
+        this.contextWindowExhaustionEvidence = options.contextWindowExhaustionEvidence;
         this.isTemporaryRecoverableTurnFailure = options.isTemporaryRecoverableTurnFailure;
         this.runtimeAuthClassification = options.runtimeAuthClassification;
         this.isWorkspaceRoutingUnauthorized = options.isWorkspaceRoutingUnauthorized;
@@ -218,16 +218,25 @@ function textMatchesCodexContextWindowExhaustedMessage(value: string | null): bo
     return CODEX_APP_SERVER_CONTEXT_WINDOW_EXHAUSTED_MESSAGE_MARKERS.every((marker) => normalized.includes(marker));
 }
 
-function isCodexAppServerContextWindowExhaustedPayload(payload: CodexAppServerErrorPayload): boolean {
-    return normalizeCodexErrorInfo(payload.codexErrorInfo) === 'contextwindowexceeded'
-        || [payload.message, payload.additionalDetails].some(textMatchesCodexContextWindowExhaustedMessage);
+function readCodexAppServerContextWindowExhaustionEvidence(
+    payload: CodexAppServerErrorPayload,
+): 'structured' | 'message' | null {
+    if (normalizeCodexErrorInfo(payload.codexErrorInfo) === 'contextwindowexceeded') return 'structured';
+    return [payload.message, payload.additionalDetails].some(textMatchesCodexContextWindowExhaustedMessage)
+        ? 'message'
+        : null;
 }
 
-export function isCodexAppServerContextWindowExhaustedError(error: unknown): boolean {
+export function isCodexAppServerContextWindowExhaustedError(
+    error: unknown,
+    options?: Readonly<{ structuredOnly: boolean }>,
+): boolean {
     if (error instanceof CodexAppServerTurnFailure) {
-        return error.isContextWindowExhausted;
+        return options?.structuredOnly
+            ? error.contextWindowExhaustionEvidence === 'structured'
+            : error.contextWindowExhaustionEvidence !== null;
     }
-    if (!(error instanceof Error)) return false;
+    if (options?.structuredOnly || !(error instanceof Error)) return false;
     return textMatchesCodexContextWindowExhaustedMessage(error.message);
 }
 
@@ -288,7 +297,7 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
         CODEX_APP_SERVER_TURN_FAILURE_MESSAGE,
         {
             isAuthAccountChanged: payload ? isCodexAppServerAuthAccountChangedPayload(payload) : false,
-            isContextWindowExhausted: payload ? isCodexAppServerContextWindowExhaustedPayload(payload) : false,
+            contextWindowExhaustionEvidence: payload ? readCodexAppServerContextWindowExhaustionEvidence(payload) : null,
             isTemporaryRecoverableTurnFailure: runtimeAuthClassification?.kind === 'capacity',
             runtimeAuthClassification: sanitizeCodexAppServerRuntimeAuthClassification(runtimeAuthClassification),
             isWorkspaceRoutingUnauthorized: isCodexWorkspaceRoutingUnauthorizedFailure(params.value),

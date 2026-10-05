@@ -198,9 +198,13 @@ export const createOpenCodeAgentRuntime: AgentRuntimeFactory = () => {
       async resolveTerminalPresentation(selection) {
         const backendMode = readOpenCodeNativeMode(selection);
         const source = selection.runtimeDescriptorV1;
+        const startingMode = selection.requestedHost === 'herdr'
+          || selection.requestedHost === 'zellij'
+          || selection.requestedHost === 'tmux'
+          ? 'terminal' : 'remote';
         return {
           kind: backendMode === 'server' ? 'provider_attach' : 'none',
-          ...(backendMode === 'server' ? { startingMode: 'terminal' as const } : {}),
+          ...(backendMode === 'server' ? { startingMode } : {}),
           runtimeDescriptorV1: {
             ...(source?.agentId === 'opencode' ? source : {}), v: 1, agentId: 'opencode',
             agent: { ...(source?.agentId === 'opencode' ? source.agent : {}), backendMode },

@@ -2218,11 +2218,11 @@ fn configure_windows_hosted_artifact_view<R: Runtime>(
     view_id: &str,
 ) -> Result<(), String> {
     use webview2_com::{
-        callback::{HistoryChangedEventHandler, ProcessFailedEventHandler},
         Microsoft::Web::WebView2::Win32::{
             COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
             COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
         },
+        HistoryChangedEventHandler, ProcessFailedEventHandler,
     };
     use wry::WebViewExtWindows;
 

@@ -166,9 +166,9 @@ const SENTRY_SOURCE_DESCRIPTOR = {
     detailTabs: [
       { kind: 'shared' as const, id: 'overview' as const },
       { kind: 'shared' as const, id: 'activity' as const },
-      { kind: 'source' as const, id: 'stack-trace', title: 'Stack trace' },
-      { kind: 'source' as const, id: 'occurrences', title: 'Occurrences' },
-      { kind: 'source' as const, id: 'release', title: 'Release' },
+      { kind: 'source' as const, id: 'stack-trace', title: 'Stack trace', titleKey: 'plugins.sentry.ui.tab.stackTrace' },
+      { kind: 'source' as const, id: 'occurrences', title: 'Occurrences', titleKey: 'plugins.sentry.ui.tab.occurrences' },
+      { kind: 'source' as const, id: 'release', title: 'Release', titleKey: 'plugins.sentry.ui.tab.release' },
     ],
   }],
 };
@@ -357,11 +357,9 @@ export const SENTRY_PLUGIN = definePlugin({
       title: 'Read one Sentry issue projection',
       description: 'Reads the live summary, the tag distribution, or the recorded activity of'
         + ' one Sentry issue.',
-      // Only this source's own mounted detail body invokes these source-native
-      // reads, through the mounted Plugin UI host — present-user authority.
-      // The explicit empty list keeps global placement discovery from offering
-      // them a destination while the mounted invocation stays untouched.
-      surfaces: ['ui'],
+      // Native reads share the configured-account owner across UI and agent
+      // surfaces; the empty list only removes global placement discovery.
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: [],
       inputSchema: SentryReadIssueInputV1Schema.jsonSchema,
       resultSchema: SentryReadIssueResultV1Schema.jsonSchema,
@@ -373,7 +371,7 @@ export const SENTRY_PLUGIN = definePlugin({
       title: 'Read retained Sentry occurrences',
       description: 'Reads one page of the events Sentry retained for one issue in the queried'
         + ' window.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: [],
       inputSchema: SentryIssueEventsInputV1Schema.jsonSchema,
       resultSchema: SentryIssueEventsResultV1Schema.jsonSchema,
@@ -385,7 +383,7 @@ export const SENTRY_PLUGIN = definePlugin({
       title: 'Read one Sentry occurrence',
       description: 'Reads the representative or one selected occurrence of a Sentry issue as a'
         + ' redacted projection.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: [],
       inputSchema: SentryReadEventInputV1Schema.jsonSchema,
       resultSchema: SentryReadEventResultV1Schema.jsonSchema,
@@ -396,7 +394,7 @@ export const SENTRY_PLUGIN = definePlugin({
     [SENTRY_ACTION_IDS.listTagValues]: {
       title: 'Read one Sentry tag distribution',
       description: 'Reads one page of the value distribution of a single tag key on one issue.',
-      surfaces: ['ui'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: [],
       inputSchema: SentryTagValuesInputV1Schema.jsonSchema,
       resultSchema: SentryTagValuesResultV1Schema.jsonSchema,

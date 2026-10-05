@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { assertHostCanExcludeBundledPlugin, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH, parseBundledPluginPublicationFailures } from '../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
+import { BuildInputDriftError, WorkspacePackageBuildError } from './buildInputConvergence.mjs';
 
 export { assertHostCanExcludeBundledPlugin } from '../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 
@@ -80,7 +81,16 @@ export function createBundledPluginPublicationFailure({
   code = 'plugin_package_build_failed',
   error,
 }) {
-  assertHostCanExcludeBundledPlugin(repoRoot, packageName, error);
+  // Moving inputs are a phase failure, not optional-plugin unavailability.
+  if (error instanceof BuildInputDriftError) throw error;
+  try {
+    assertHostCanExcludeBundledPlugin(repoRoot, packageName, error);
+  } catch (requiredPluginError) {
+    // Keep the host policy's diagnostic while preserving the command's
+    // terminal classification for the enclosing generator request.
+    if (error instanceof WorkspacePackageBuildError) throw new WorkspacePackageBuildError(requiredPluginError);
+    throw requiredPluginError;
+  }
   return Object.freeze({
     packageName,
     pluginId,

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi } from '@happier-dev/plugin-ui';
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import { usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
 import type {
   TriageEntryPresentationStateV1,
   TriageEntryRefV1,
+  TriageFixPullRequestV1,
   TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -18,10 +20,7 @@ import {
   type TriageSetFixPullRequestResultV1,
 } from '../../actions/fixPullRequestsProtocol.js';
 import type { CorpusCollectionsV1 } from '../../corpus/collections/bindCorpusCollections.js';
-import {
-  resolveFixPullRequests,
-  type TriageFixPullRequestV1,
-} from '../../corpus/marks/fixPullRequests.js';
+import type { TriageFixPullRequestProjectionV1 } from '../../corpus/marks/fixPullRequests.js';
 import { useTriageDurableAccount } from '../durable/accountDurableState.js';
 import { sameTriageEntryRefV1 } from '../state/surface.js';
 
@@ -34,9 +33,9 @@ import { sameTriageEntryRefV1 } from '../state/surface.js';
  * none — so the answer refreshes on selection, after this mount's own writes,
  * and on `retry`.
  *
- * The storage read is transport-neutral; which co-linked entry is a pull
- * request and whether it is open, merged or closed come from the caller's
- * admitted descriptors and device projection, through the one pure resolver.
+ * Both transports return the owner-resolved answer. A direct mounted read
+ * supplies its admitted descriptors and device projection to that private owner;
+ * a daemon read resolves those facts through its admitted source reads.
  */
 
 type Display = Readonly<{ title: string; scopeLabel: string }>;
@@ -58,8 +57,8 @@ export type TriageFixPullRequestsStateV1 =
     primary: TriageFixPullRequestV1 | null;
     incomplete: boolean;
     busy: boolean;
-    /** The last write was refused as a conflict or a full list; `null` otherwise. */
-    refusal: 'conflict' | 'full' | 'failed' | null;
+    /** The last write conflicted or failed; `null` otherwise. */
+    refusal: 'conflict' | 'failed' | null;
     link(pullRequest: Readonly<{ entryRef: TriageEntryRefV1; display: Display }>): void;
     unlink(entryRef: TriageEntryRefV1): void;
   }>;
@@ -70,12 +69,16 @@ type FixHostV1 = Readonly<{
 
 export type TriageFixPullRequestsTransportV1 = Readonly<{
   read(entryRef: TriageEntryRefV1, options?: PluginCancellationOptions): Promise<TriageReadFixPullRequestsResultV1>;
-  write(input: TriageSetFixPullRequestInputV1, options?: PluginCancellationOptions): Promise<TriageSetFixPullRequestResultV1>;
+  /** Null is a declined direct UI decision, not a domain write outcome. */
+  write(input: TriageSetFixPullRequestInputV1, options?: PluginCancellationOptions): Promise<TriageSetFixPullRequestResultV1 | null>;
 }>;
 
 export function createDirectTriageFixPullRequestsTransport(
   collections: Pick<CorpusCollectionsV1, 'userMarks' | 'sessionLinks'>,
-  nowMs: () => number = () => Date.now(),
+  projection: TriageFixPullRequestProjectionV1,
+  nowMs: () => number,
+  host: Pick<PluginUiHostApi, 'confirm'>,
+  confirmationMessage: (linked: boolean) => string,
 ): TriageFixPullRequestsTransportV1 {
   const deps = (options?: PluginCancellationOptions) => ({
     collections,
@@ -83,8 +86,14 @@ export function createDirectTriageFixPullRequestsTransport(
     ...(options?.signal ? { signal: options.signal } : {}),
   });
   return Object.freeze({
-    read: async (entryRef, options) => await readTriageFixPullRequests({ v: 1, entryRef }, deps(options)),
-    write: async (input, options) => await setTriageFixPullRequest(input, deps(options)),
+    read: async (entryRef, options) => await readTriageFixPullRequests({ v: 1, entryRef }, { ...deps(options), projection }),
+    write: async (input, options) => {
+      if (!await host.confirm(confirmationMessage(input.linked), {
+        action: TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1,
+        ...(options?.signal ? { signal: options.signal } : {}),
+      })) return null;
+      return await setTriageFixPullRequest(input, { ...deps(options), workflowSubjectOf: projection.workflowSubjectOf });
+    },
   });
 }
 
@@ -110,22 +119,28 @@ export function createActionTriageFixPullRequestsTransport(host: FixHostV1): Tri
 type Settled =
   | Readonly<{ kind: 'reading' }>
   | Readonly<{ kind: 'unreachable' }>
-  | Readonly<{ kind: 'read'; entryRef: TriageEntryRefV1; sources: TriageReadFixPullRequestsResultV1 }>;
+  | Readonly<{ kind: 'read'; entryRef: TriageEntryRefV1; resolved: TriageReadFixPullRequestsResultV1 }>;
 
 export function useTriageFixPullRequests(
   input: TriageFixPullRequestsInputV1 | null,
 ): TriageFixPullRequestsStateV1 | null {
   const hostApi = usePluginHostApi();
+  const text = usePluginTranslation();
   const durable = useTriageDurableAccount();
+  const workflowSubjectOf = input?.workflowSubjectOf;
+  const presentationOf = input?.presentationOf;
   const transport = useMemo<TriageFixPullRequestsTransportV1>(
-    () => durable.collections === null
+    () => durable.collections === null || workflowSubjectOf === undefined || presentationOf === undefined
       ? createActionTriageFixPullRequestsTransport(hostApi)
-      : createDirectTriageFixPullRequestsTransport(durable.collections),
-    [durable.collections, hostApi],
+      : createDirectTriageFixPullRequestsTransport(durable.collections, { workflowSubjectOf, presentationOf },
+          () => Date.now(), hostApi, (linked) => linked
+            ? text('plugins.triage.surface.detail.fixPr.link', 'Link fix PR')
+            : text('plugins.triage.surface.detail.fixPr.unlink', 'Unlink')),
+    [durable.collections, hostApi, presentationOf, text, workflowSubjectOf],
   );
   const [settled, setSettled] = useState<Settled>({ kind: 'reading' });
   const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<'conflict' | 'full' | 'failed' | null>(null);
+  const [refusal, setRefusal] = useState<'conflict' | 'failed' | null>(null);
   const [readGeneration, setReadGeneration] = useState(0);
   const generation = useRef(0);
 
@@ -142,8 +157,6 @@ export function useTriageFixPullRequests(
   entryRefRef.current = input?.entryRef;
   const entryRef = input?.entryRef;
   const display = input?.display;
-  const workflowSubjectOf = input?.workflowSubjectOf;
-  const presentationOf = input?.presentationOf;
 
   useEffect(() => {
     const entryRef = entryRefRef.current;
@@ -157,7 +170,7 @@ export function useTriageFixPullRequests(
     void (async () => {
       let next: Settled;
       try {
-        next = { kind: 'read', entryRef, sources: await transport.read(entryRef, { signal: controller.signal }) };
+        next = { kind: 'read', entryRef, resolved: await transport.read(entryRef, { signal: controller.signal }) };
       } catch {
         next = { kind: 'unreachable' };
       }
@@ -173,7 +186,7 @@ export function useTriageFixPullRequests(
     void (async () => {
       try {
         const result = await transport.write(intent);
-        if (result.status === 'conflict' || result.status === 'full') setRefusal(result.status);
+        if (result?.status === 'conflict') setRefusal(result.status);
       } catch {
         setRefusal('failed');
       } finally {
@@ -190,7 +203,7 @@ export function useTriageFixPullRequests(
       || workflowSubjectOf === undefined || presentationOf === undefined) return null;
     if (settled.kind === 'unreachable') return { kind: 'unreachable', retry };
     if (settled.kind !== 'read' || !sameTriageEntryRefV1(settled.entryRef, entryRef)) return { kind: 'reading' };
-    const resolved = resolveFixPullRequests(settled.sources, { workflowSubjectOf, presentationOf });
+    const resolved = settled.resolved;
     return {
       kind: 'ready',
       candidates: resolved.candidates,

@@ -20,6 +20,11 @@ const LOADING: SessionStateReadV1 = Object.freeze({ status: 'loading', state: nu
 const UNAVAILABLE: SessionStateReadV1 = Object.freeze({ status: 'unavailable', state: null });
 const UNSUPPORTED: SessionStateReadV1 = Object.freeze({ status: 'unsupported', state: null });
 
+export type SessionStatesReadV1 = Readonly<{
+  sessions: ReadonlyMap<string, SessionStateReadV1>;
+  refresh(): void;
+}>;
+
 /**
  * Read and follow the live state of one Session — typically one linked to this
  * plugin's own entry — through the mounted host.
@@ -31,62 +36,82 @@ const UNSUPPORTED: SessionStateReadV1 = Object.freeze({ status: 'unsupported', s
  * that serves reads but not watches yields a truthful one-shot snapshot.
  */
 export function useSessionState(sessionId: string | null): SessionStateReadV1 {
+  const ids = React.useMemo(() => sessionId === null ? [] : [sessionId], [sessionId]);
+  return useSessionStates(ids).sessions.get(sessionId ?? '') ?? UNAVAILABLE;
+}
+
+/**
+ * Read and follow a set of Sessions through the same mounted lifecycle as
+ * `useSessionState`. Repeated ids share one read/watch; input order has no
+ * meaning. This is a mount-local projection, with no polling or persistence.
+ */
+export function useSessionStates(sessionIds: readonly string[]): SessionStatesReadV1 {
   const host = usePluginHostApi();
   const methods = host.version().methods;
   const canRead = methods.includes('readSession');
   const canWatch = methods.includes('watchSession');
-  const [read, setRead] = React.useState<SessionStateReadV1>(LOADING);
+  const ids = Array.from(new Set(sessionIds)).sort();
+  const sessionKey = JSON.stringify(ids);
+  const [reads, setReads] = React.useState<ReadonlyMap<string, SessionStateReadV1>>(() => new Map());
+  const [demand, setDemand] = React.useState(0);
+  const refresh = React.useCallback(() => setDemand((value) => value + 1), []);
+  const previousHost = React.useRef(host);
 
   React.useEffect(() => {
-    if (sessionId === null) {
-      setRead(UNAVAILABLE);
-      return;
-    }
-    if (!canRead) {
-      setRead(UNSUPPORTED);
-      return;
-    }
     let current = true;
     const cancellation = new AbortController();
-    let subscription: Readonly<{ dispose(): void }> | null = null;
-    // A snapshot belongs to the Session it was read for.
-    setRead(LOADING);
-
-    const refresh = async (): Promise<void> => {
-      try {
-        const state = await host.readSession(sessionId, { signal: cancellation.signal });
-        if (current) setRead(state ? Object.freeze({ status: 'ready', state }) : UNAVAILABLE);
-      } catch {
-        if (current) setRead(UNAVAILABLE);
-      }
+    const subscriptions: Readonly<{ dispose(): void }>[] = [];
+    const retain = previousHost.current === host;
+    previousHost.current = host;
+    const snapshots = new Map(ids.map((id) => [id, !canRead ? UNSUPPORTED
+      : retain && reads.get(id)?.status === 'ready' ? reads.get(id)! : LOADING]));
+    setReads(new Map(snapshots));
+    const publish = (sessionId: string, read: SessionStateReadV1): void => {
+      if (!current) return;
+      snapshots.set(sessionId, read);
+      setReads(new Map(snapshots));
     };
-
-    void (async () => {
-      if (canWatch) {
+    if (canRead) for (const sessionId of ids) {
+      const refresh = async (): Promise<void> => {
         try {
-          const established = await host.watchSession(sessionId, (event) => {
-            if (!current) return;
-            if (event.kind === 'invalidated') void refresh();
-            else setRead(UNAVAILABLE);
-          }, { signal: cancellation.signal });
-          if (!current) {
-            established.dispose();
-            return;
-          }
-          subscription = established;
+          const state = await host.readSession(sessionId, { signal: cancellation.signal });
+          publish(sessionId, state ? Object.freeze({ status: 'ready', state }) : UNAVAILABLE);
         } catch {
-          // An unreachable Session refuses its watch; the read below reports it.
+          publish(sessionId, UNAVAILABLE);
         }
-      }
-      await refresh();
-    })();
+      };
+      void (async () => {
+        if (canWatch) {
+          try {
+            const established = await host.watchSession(sessionId, (event) => {
+              if (!current) return;
+              if (event.kind === 'invalidated') void refresh();
+              else publish(sessionId, UNAVAILABLE);
+            }, { signal: cancellation.signal });
+            if (!current) {
+              established.dispose();
+              return;
+            }
+            subscriptions.push(established);
+          } catch {
+            // An unreachable Session refuses its watch; the read below reports it.
+          }
+        }
+        await refresh();
+      })();
+    }
 
     return () => {
       current = false;
       cancellation.abort();
-      subscription?.dispose();
+      for (const subscription of subscriptions) subscription.dispose();
     };
-  }, [canRead, canWatch, host, sessionId]);
+    // The key encodes the deduplicated set, so equivalent input arrays do not
+    // retire and recreate the host subscriptions.
+  }, [canRead, canWatch, demand, host, sessionKey]);
 
-  return read;
+  const sessions = React.useMemo(() => new Map(ids.map((id) => [
+    id, reads.get(id) ?? (canRead ? LOADING : UNSUPPORTED),
+  ])), [canRead, reads, sessionKey]);
+  return React.useMemo(() => ({ sessions, refresh }), [refresh, sessions]);
 }

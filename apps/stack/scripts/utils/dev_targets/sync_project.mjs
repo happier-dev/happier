@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { runCaptureResult } from '../proc/proc.mjs';
+import { loadDevTargetsConfig } from './config.mjs';
 import {
   buildMutagenProjectArgs,
   isEquivalentMutagenProject,
@@ -208,6 +209,7 @@ async function ensureDevTargetSyncProjectUnlocked(
   const desiredProject = renderMutagenProject({
     sourceDir,
     targets,
+    config: (await loadDevTargetsConfig({ path: join(stackBaseDir, 'dev-targets.json') })).config,
     ownerId: borrowingIndependentProject ? INDEPENDENT_DEV_TARGET_SYNC_OWNER : ownerId,
   });
 

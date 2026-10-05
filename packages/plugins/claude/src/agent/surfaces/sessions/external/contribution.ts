@@ -238,6 +238,7 @@ function mapCandidate(candidate: Readonly<{
     archived?: boolean;
     details?: unknown;
     candidateIndexState?: AgentExternalSessionCandidate['candidateIndexState'];
+    match?: AgentExternalSessionCandidate['match'];
 }>): AgentExternalSessionCandidate {
     const details = isPlainObject(candidate.details) ? candidate.details : null;
     const projectId = typeof details?.projectId === 'string' ? details.projectId : null;
@@ -247,6 +248,7 @@ function mapCandidate(candidate: Readonly<{
         updatedAtMs: candidate.updatedAtMs,
         ...(candidate.createdAtMs !== undefined ? { createdAtMs: candidate.createdAtMs } : {}),
         ...(candidate.archived !== undefined ? { archived: candidate.archived } : {}),
+        ...(candidate.match ? { match: candidate.match } : {}),
         ...(projectId ? { linkData: { projectId } } : {}),
         ...(candidate.candidateIndexState === undefined
             ? {}
@@ -293,6 +295,8 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                     limit: request.maxItems,
                     searchTerm: request.searchTerm,
                     searchMode: request.searchMode,
+                    searchTarget: request.searchTarget,
+                    ripgrep: request.ripgrep,
                     signal: request.signal,
                     ...(request.readCandidateIndexState
                         ? {
@@ -311,6 +315,9 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                                 nextCursor,
                                 ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
                                 ...(preparation !== undefined ? { preparation } : {}),
+                                // The complete envelope is one byte larger
+                                // than partial, so either real page fits.
+                                ...(request.searchTarget === 'content' ? { contentCoverage: 'complete' } : {}),
                             })) <= request.maxSerializedBytes;
                         },
                     },
@@ -322,6 +329,7 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                     nextCursor: listed.nextCursor,
                     ...(listed.searchIncomplete !== undefined ? { searchIncomplete: listed.searchIncomplete } : {}),
                     ...(listed.preparation !== undefined ? { preparation: listed.preparation } : {}),
+                    ...(listed.contentCoverage !== undefined ? { contentCoverage: listed.contentCoverage } : {}),
                 });
             } catch (error) {
                 const after = invocationFailure(request);

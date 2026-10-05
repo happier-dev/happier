@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import {
     type PluginMachineMaterializationRefV1,
     type RehydratedPluginContributionPointOperationV1,
@@ -186,6 +187,7 @@ function executableRegistry(params: Readonly<{
         activatedPluginIds: new Set(),
         activateContributionsOnDemand: params.activateContributionsOnDemand,
         createAgentInvocationServices: async () => createUnavailablePluginServices(),
+        resolveCaptureSource: unexpectedCaptureSourceResolution,
         resolvePromptAssetBlocks: async () => [],
         retireConsumers: () => {},
         retainPluginActivationComponent: () => null,

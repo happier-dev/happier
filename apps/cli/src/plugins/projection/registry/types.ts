@@ -23,6 +23,9 @@ import type {
   PluginExecutionRunProfileContributionV2,
   PluginRoleDeclarationV1,
   PluginWorkflowContributionV1,
+  PluginInputTypeContributionV1,
+  PluginDragSourceContributionV1,
+  PluginDropTargetContributionV1,
   PluginSessionHeaderActionDescriptorV1,
   PluginTranscriptActivityContributionV1,
   PluginSessionInfoSectionContributionV1,
@@ -118,6 +121,13 @@ export type ResolvedComposerReferenceContribution = ResolvedTargetUiContribution
 >;
 export type ResolvedRoleContribution = ResolvedTargetUiContribution<PluginRoleDeclarationV1>;
 export type ResolvedWorkflowContribution = ResolvedTargetUiContribution<PluginWorkflowContributionV1>;
+export type ResolvedInputTypeContribution = ResolvedTargetUiContribution<PluginInputTypeContributionV1>;
+export type ResolvedClientExecutableContribution<T> = ResolvedTargetUiContribution<T> & Readonly<{
+    pluginRootPath: string;
+    generatedUiArtifactsManifest?: PluginUiArtifactsManifestV2;
+}>;
+export type ResolvedDragSourceContribution = ResolvedClientExecutableContribution<PluginDragSourceContributionV1>;
+export type ResolvedDropTargetContribution = ResolvedClientExecutableContribution<PluginDropTargetContributionV1>;
 export type ResolvedSearchProviderContribution = ResolvedTargetUiContribution<
     PluginSearchProviderContributionV1
 >;
@@ -839,6 +849,9 @@ export type ResolvedContributionInputs = Readonly<{
     executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
     roles?: readonly ResolvedRoleContribution[];
     workflows?: readonly ResolvedWorkflowContribution[];
+    inputTypes?: readonly ResolvedInputTypeContribution[];
+    dragSources?: readonly ResolvedDragSourceContribution[];
+    dropTargets?: readonly ResolvedDropTargetContribution[];
     mcpServers?: readonly ResolvedMcpServerContribution[];
     mcpDiscoverySources?: readonly ResolvedMcpDiscoverySourceContribution[];
     managedDependencies?: readonly ResolvedInstallableContribution[];
@@ -897,6 +910,9 @@ export type ResolvedContributionRegistry = Readonly<{
     executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
     roles?: readonly ResolvedRoleContribution[];
     workflows?: readonly ResolvedWorkflowContribution[];
+    inputTypes?: readonly ResolvedInputTypeContribution[];
+    dragSources?: readonly ResolvedDragSourceContribution[];
+    dropTargets?: readonly ResolvedDropTargetContribution[];
     mcpServers?: readonly ResolvedMcpServerContribution[];
     mcpDiscoverySources?: readonly ResolvedMcpDiscoverySourceContribution[];
     managedDependencies?: readonly ResolvedInstallableContribution[];

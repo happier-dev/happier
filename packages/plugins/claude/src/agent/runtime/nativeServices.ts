@@ -145,6 +145,9 @@ export function createClaudeNativeAgentSdkContext(
         },
       },
       transcripts: {
+        async reconcileSourceIdentities(request) {
+          return await services.transcripts.reconcileSourceIdentities(request);
+        },
         async followSource(input) {
           if (!services.transcripts.followSource) {
             throw new Error('Claude terminal requires ordered source transcript following');

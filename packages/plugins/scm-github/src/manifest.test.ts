@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import * as tar from 'tar';
-import { ingestPluginManifestV2, PluginActionContributionV2Schema } from '@happier-dev/protocol';
+import { createPluginActionPresentUserGate, ingestPluginManifestV2, PluginActionContributionV2Schema } from '@happier-dev/protocol';
 import { assertTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -175,19 +175,20 @@ describe('GitHub SCM manifest', () => {
     }
   });
 
-  it('declares the exact mounted-only placement for its seven UI-reachable reads', () => {
+  it('declares the exact mounted-only placement for its UI-reachable reads', () => {
     const actions = new Map(
       (PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]),
     );
 
     // Discovery and the authoritative read keep their Protocol-owned `plugin`
     // + `ui` surfaces — the Triage daemon consumes `plugin` — while the five
-    // source-native detail reads stay `ui`-only. All seven declare the same
+    // source-native detail reads also admit agents. All reads declare the same
     // mounted-only placement: the explicit empty list withdraws them from
     // global placement discovery without disabling any invocation surface.
     const mountedOnly = [
       GITHUB_TRIAGE_ACTION_IDS_V1.listInstances,
       GITHUB_TRIAGE_ACTION_IDS_V1.get,
+      GITHUB_TRIAGE_ACTION_IDS_V1.readPullRequestStatus,
       ...Object.values(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1),
     ];
     for (const id of mountedOnly) {
@@ -267,11 +268,8 @@ describe('GitHub SCM manifest', () => {
       const action = actions.get(id);
       if (!action) throw new Error(`the mutation '${id}' must be declared`);
 
-      // PR writes require central live approval on agent/MCP/CLI ingress;
-      // issue writes retain their UI-only reachability contract. Neither
-      // admits direct plugin or voice writes.
-      expect(action.surfaces).toEqual(id.startsWith('github/pull-request/')
-        ? ['ui', 'agent', 'mcp', 'cli'] : ['ui']);
+      // Every native write reaches the shared approval owner on agent/MCP/CLI ingress.
+      expect(action.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
       // The one placement is the details panel the write lives in; global
       // placement discovery is offered no other destination.
       expect(action.placementBindings).toEqual(['detailsPanel']);
@@ -332,6 +330,40 @@ describe('GitHub SCM manifest', () => {
     ).toEqual([...declared].sort());
   });
 
+  it('admits an agent detail read and requires current intent for an agent issue write', async () => {
+    // Feed the real admission owner its parsed declaration, not the author DSL's broad record type.
+    const actions = new Map((PLUGIN_MANIFEST.contributes.actions ?? [])
+      .map((action) => [action.id, PluginActionContributionV2Schema.parse(action)]));
+    const read = actions.get(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline);
+    const write = actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueClose);
+    if (!read || !write) throw new Error('Native read and issue write must be declared');
+    const gateFor = (action: typeof read, approved = false) => createPluginActionPresentUserGate({
+      resolve: () => ({
+        status: 'resolved' as const,
+        action,
+        policy: {
+          qualifiedId: `${PLUGIN_MANIFEST.id}/${action.id}`,
+          occurrenceId: 'source-occurrence',
+          dangerLevel: action.dangerLevel,
+          scopes: action.scopes,
+          surfaces: action.surfaces,
+          ...(action.confirmation === undefined ? {} : { confirmation: action.confirmation }),
+          authorization: {
+            generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+            resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [],
+          },
+        },
+      }),
+      ...(approved ? { requestCurrentIntent: async ({ fingerprint }: { fingerprint: string }) => ({ status: 'approved' as const, fingerprint }) } : {}),
+    });
+    const invocation = { surface: 'agent', invocationSurface: 'agent', input: {} };
+    await expect(gateFor(read).admit(invocation)).resolves.toMatchObject({ status: 'admitted', action: read });
+    await expect(gateFor(write).admit(invocation)).resolves.toMatchObject({
+      status: 'unavailable', code: 'plugin_action_current_intent_unavailable',
+    });
+    await expect(gateFor(write, true).admit(invocation)).resolves.toMatchObject({ status: 'admitted', action: write });
+  });
+
   it('admits exactly the verbs the declared Actions consume on the one github-api grant', () => {
     const grants = (PLUGIN_MANIFEST.hostAccess?.required ?? [])
       .filter((request) => request.id === 'github-api');
@@ -347,7 +379,7 @@ describe('GitHub SCM manifest', () => {
   });
 
   it('declares and packages the official GitHub brand mark through the generic Resource owner', async () => {
-    expect(PLUGIN_MANIFEST.brand).toEqual({ iconResourceId: GITHUB_BRAND_RESOURCE_ID });
+    expect(PLUGIN_MANIFEST.brand).toEqual({ iconResourceId: GITHUB_BRAND_RESOURCE_ID, monochrome: true });
     expect(PLUGIN_MANIFEST.contributes.resources).toEqual([{
       id: GITHUB_BRAND_RESOURCE_ID,
       kind: 'asset',

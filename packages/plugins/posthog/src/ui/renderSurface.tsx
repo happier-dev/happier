@@ -22,7 +22,7 @@
 
 import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
-import { TriageDetailPanel, useTriageEvidenceDisclosure } from '@happier-dev/triage-sources/ui';
+import { TriageDetailInstance, TriageDetailPanel, TriageDetailStory, TriageDetailActivity, useTriageEvidenceDisclosure } from '@happier-dev/triage-sources/ui';
 import {
     Badge,
     Banner,
@@ -36,7 +36,6 @@ import {
     Metadata,
     Row,
     Screen,
-    ScrollArea,
     Stack,
     Status,
     Tabs,
@@ -68,7 +67,6 @@ import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../posthogContracts.js';
 import { PosthogNativeOverviewResultV1Schema } from '../source/detail/nativeOverviewContract.js';
 import { createPosthogEvidenceCandidate } from '../composer/candidate.js';
 import {
-    buildPosthogDetailGetRequest,
     projectPosthogDetailSurface,
     type PosthogDetailFieldV1,
     type PosthogDetailLiveReadV1,
@@ -80,6 +78,7 @@ import {
     type PosthogActivityControllerV1,
 } from './detail/activityController.js';
 import {
+    usePosthogDetailRequest,
     usePosthogOccurrenceController,
     type PosthogOccurrenceControllerV1,
 } from './detail/occurrenceController.js';
@@ -135,7 +134,7 @@ const LIVE_RESULT_UNREADABLE: TriageSourceFailureV1 = Object.freeze({
  *
  * The applied observation is a bounded list projection that may already be stale, so the
  * detail body always asks the source for the current entry. It runs once per exact
- * instance/entry and is aborted with the surface: a late result cannot replace the body
+ * instance/entry, pausing unfinished work with the root interval: a late result cannot replace the body
  * of a detail the reader has already left. A read that did not answer names itself, in
  * the same typed vocabulary the sampled panels use.
  */
@@ -149,9 +148,17 @@ function useLiveEntry(
     );
     const { execute } = useExecutePluginAction(action);
     const [live, setLive] = React.useState<PosthogDetailLiveReadV1>({ kind: 'pending' });
-    const request = React.useMemo(() => buildPosthogDetailGetRequest(input), [input]);
+    const { overview: request } = usePosthogDetailRequest(input);
+    const { active, activeSignal } = useTabPanelActivity();
+    const previousRequest = React.useRef(request);
+    const settledRequest = React.useRef<typeof request | null>(null);
+    if (previousRequest.current !== request) {
+        previousRequest.current = request;
+        setLive({ kind: 'pending' });
+    }
 
     React.useEffect(() => {
+        if (!active || activeSignal.aborted || signal.aborted || settledRequest.current === request) return undefined;
         if (request.kind !== 'ready') {
             setLive({ kind: 'failed', failure: LIVE_READ_REFUSED });
             return undefined;
@@ -161,9 +168,11 @@ function useLiveEntry(
             controller.abort();
         };
         signal.addEventListener('abort', abort);
+        activeSignal.addEventListener('abort', abort);
         void (async () => {
             const execution = await execute(request.input, { signal: controller.signal });
             if (controller.signal.aborted) return;
+            settledRequest.current = request;
             if (execution.status !== 'success') {
                 setLive({
                     kind: 'failed',
@@ -183,9 +192,10 @@ function useLiveEntry(
         })();
         return () => {
             signal.removeEventListener('abort', abort);
+            activeSignal.removeEventListener('abort', abort);
             controller.abort();
         };
-    }, [execute, request, signal]);
+    }, [active, activeSignal, execute, request, signal]);
 
     return live;
 }
@@ -228,10 +238,12 @@ function OverviewPanel({
     model,
     locale,
     nowMs,
+    story = false,
 }: Readonly<{
     model: PosthogDetailSurfaceModelV1;
     locale: string;
     nowMs: number;
+    story?: boolean;
 }>): React.ReactElement {
     const text = usePluginTranslation();
     const projected = useActiveDerivation(() => {
@@ -255,8 +267,7 @@ function OverviewPanel({
     }, [locale, model, nowMs]);
 
     return (
-        <ScrollArea>
-            <Stack gap="large">
+            <TriageDetailStory kind={story ? 'report' : undefined}>
                 {/*
                     Anything but a settled live read leaves these facts unconfirmed, and
                     a body that says nothing presents them as current. `unavailable`
@@ -375,8 +386,7 @@ function OverviewPanel({
                             }]),
                     ]}
                 />
-            </Stack>
-        </ScrollArea>
+            </TriageDetailStory>
     );
 }
 
@@ -1028,7 +1038,7 @@ function PosthogDetailBody({
     );
 
     const panels: Readonly<Record<PosthogDetailTabIdV1, React.ReactNode>> = {
-        overview: <OverviewPanel model={model} locale={locale} nowMs={nowMs} />,
+        overview: <OverviewPanel model={model} locale={locale} nowMs={nowMs} story={input.panel !== undefined} />,
         occurrences: (
             <OccurrencesPanel controller={controller} locale={locale} nowMs={nowMs} />
         ),
@@ -1048,8 +1058,11 @@ function PosthogDetailBody({
             <Screen safeArea>
                 <TriageDetailPanel
                     panel={input.panel}
+                    retention={Object.fromEntries(POSTHOG_DETAIL_TABS_V1.map(
+                        (declaration) => [declaration.id, declaration.retention] as const,
+                    ))}
                     ariaLabel={text('plugins.posthog.ui.tabsLabel', 'PostHog issue detail')}
-                    panels={panels}
+                    panels={{ ...panels, activity: <TriageDetailActivity>{panels.activity}</TriageDetailActivity> }}
                 />
             </Screen>
         );
@@ -1107,7 +1120,7 @@ function PosthogDetailSurface(context: RenderContext): React.ReactElement {
         );
     }
 
-    return <PosthogDetailBody input={admitted.input} signal={context.signal} />;
+    return <TriageDetailInstance><PosthogDetailBody input={admitted.input} signal={context.signal} /></TriageDetailInstance>;
 }
 
 /** The manifest names this exact universal CommonJS export. */

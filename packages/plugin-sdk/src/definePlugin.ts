@@ -880,6 +880,12 @@ export type DefinePluginInput<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['workflows']>[number], 'id'>
         >>;
+        inputTypes?: Readonly<Record<
+            PluginContributionLocalId,
+            Omit<NonNullable<NonNullable<PluginManifest['contributes']>['inputTypes']>[number], 'id'>
+        >>;
+        dragSources?: Readonly<Record<PluginContributionLocalId, Omit<NonNullable<NonNullable<PluginManifest['contributes']>['dragSources']>[number], 'id'>>>;
+        dropTargets?: Readonly<Record<PluginContributionLocalId, Omit<NonNullable<NonNullable<PluginManifest['contributes']>['dropTargets']>[number], 'id'>>>;
         notifications?: Readonly<Record<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['notifications']>[number], 'id'>
@@ -2413,6 +2419,9 @@ const SETTINGS_ADAPTER = descriptorFamilyAdapter('settings');
 const EXECUTION_RUN_PROFILES_ADAPTER = descriptorFamilyAdapter('executionRunProfiles');
 const ROLES_ADAPTER = descriptorFamilyAdapter('roles');
 const WORKFLOWS_ADAPTER = descriptorFamilyAdapter('workflows');
+const INPUT_TYPES_ADAPTER = descriptorFamilyAdapter('inputTypes');
+const DRAG_SOURCES_ADAPTER = descriptorFamilyAdapter('dragSources');
+const DROP_TARGETS_ADAPTER = descriptorFamilyAdapter('dropTargets');
 const NOTIFICATIONS_ADAPTER = descriptorFamilyAdapter('notifications');
 const MANAGED_DEPENDENCIES_ADAPTER = descriptorFamilyAdapter('managedDependencies');
 const SYSTEM_TOOLS_ADAPTER = descriptorFamilyAdapter('systemTools');
@@ -2605,6 +2614,9 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     executionRunProfiles: { classification: 'descriptor-only', authorKey: 'executionRunProfiles', inputShape: 'descriptor', adapter: EXECUTION_RUN_PROFILES_ADAPTER },
     roles: { classification: 'descriptor-only', authorKey: 'roles', inputShape: 'descriptor', adapter: ROLES_ADAPTER },
     workflows: { classification: 'descriptor-only', authorKey: 'workflows', inputShape: 'descriptor', adapter: WORKFLOWS_ADAPTER },
+    inputTypes: { classification: 'descriptor-only', authorKey: 'inputTypes', inputShape: 'descriptor', adapter: INPUT_TYPES_ADAPTER },
+    dragSources: { classification: 'adapter', authorKey: 'dragSources', inputShape: 'descriptor', adapter: DRAG_SOURCES_ADAPTER },
+    dropTargets: { classification: 'adapter', authorKey: 'dropTargets', inputShape: 'descriptor', adapter: DROP_TARGETS_ADAPTER },
     notifications: { classification: 'descriptor-only', authorKey: 'notifications', inputShape: 'descriptor', adapter: NOTIFICATIONS_ADAPTER },
     managedDependencies: { classification: 'descriptor-only', authorKey: 'managedDependencies', inputShape: 'descriptor', adapter: MANAGED_DEPENDENCIES_ADAPTER },
     systemTools: { classification: 'descriptor-only', authorKey: 'systemTools', inputShape: 'descriptor', adapter: SYSTEM_TOOLS_ADAPTER },

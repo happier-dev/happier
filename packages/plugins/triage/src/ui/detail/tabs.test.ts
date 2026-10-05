@@ -50,7 +50,7 @@ describe('the detail tab plan (r0.42)', () => {
     const plan = planTriageDetailTabsV1({
       workflowSubject: 'errorIssue',
       entryTabs: [
-        { kind: 'source', id: 'occurrences', title: 'Occurrences' },
+        { kind: 'source', id: 'occurrences', title: 'Occurrences', titleKey: 'plugins.source.tab.occurrences' },
         shared('activity'),
         { kind: 'source', id: 'stack-trace', title: 'Stack trace' },
         shared('overview'),
@@ -58,7 +58,9 @@ describe('the detail tab plan (r0.42)', () => {
       fixPullRequest: null,
     });
     expect(summary(plan)).toBe('overview@entry activity@entry occurrences@entry stack-trace@entry');
-    expect(plan.kind === 'tabs' && plan.tabs[2]).toMatchObject({ kind: 'source', title: 'Occurrences' });
+    expect(plan.kind === 'tabs' && plan.tabs[2]).toMatchObject({
+      kind: 'source', title: 'Occurrences', titleKey: 'plugins.source.tab.occurrences',
+    });
   });
 
   it('always opens on Overview, which hosts the agent step even when the source has no overview panel', () => {

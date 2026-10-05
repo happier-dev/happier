@@ -653,7 +653,7 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
     });
   };
 
-  const registerExplicit = async (rootPath: string, sdkRegistryOrigin?: string): Promise<void> => {
+  const registerExplicit = async (rootPath: string, sdkRegistryOrigin?: string): Promise<string> => {
     const canonicalRoot = await realpath(resolve(rootPath));
     const registered = roots.get(canonicalRoot);
     if (!registered) {
@@ -686,6 +686,7 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
       });
       await persist();
     }
+    return canonicalRoot;
   };
 
   const unregisterExplicit = async (
@@ -782,7 +783,17 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
       if (request.kind === 'status') return { kind: 'status', status: readStatus() };
       try {
         if (request.kind === 'registerExplicit') {
-          await registerExplicit(request.rootPath, request.sdkRegistryOrigin);
+          const canonicalRoot = await registerExplicit(request.rootPath, request.sdkRegistryOrigin);
+          const plugin = pluginStatusBySource.get(canonicalRoot);
+          if (plugin?.diagnostic
+            && (plugin.phase === 'unavailable' || plugin.phase === 'retained_incumbent')) {
+            return {
+              kind: 'failed',
+              code: plugin.diagnostic.code,
+              message: plugin.diagnostic.message ?? 'Plugin development preparation failed',
+              status: readStatus(),
+            };
+          }
           return { kind: 'status', status: readStatus() };
         }
         if (request.kind === 'unregisterExplicit') return await unregisterExplicit(request.rootPath);

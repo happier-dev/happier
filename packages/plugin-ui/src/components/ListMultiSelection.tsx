@@ -9,19 +9,23 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
+import { Platform } from 'react-native';
 
 import {
   HAPPIER_LIST_MULTI_SELECTION_INERT_ROW_SNAPSHOT,
   HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT,
   createHappierListMultiSelectionStore,
   parseHappierListMultiSelectionRowSnapshot,
+  readHappierPointerModifiers,
+  resolveHappierListMultiSelectionPointerAction,
+  resolveHappierPointerPlatform,
   type CreateHappierListMultiSelectionStateInput,
   type HappierListMultiSelectionActions,
   type HappierListMultiSelectionKey,
   type HappierListMultiSelectionSnapshot,
   type HappierListMultiSelectionStore,
 } from '../presentation/collection/multiSelection.js';
-import type { HappierPortableStyle, HappierStyleProp } from '../presentation/portableTypes.js';
+import type { HappierGestureResponderEvent, HappierPortableStyle, HappierStyleProp } from '../presentation/portableTypes.js';
 import type { HappierTone } from '../presentation/semantics.js';
 import {
   HappierSelectionActionBar,
@@ -51,6 +55,28 @@ export type ListMultiSelectionActions = HappierListMultiSelectionActions;
  * the same object without importing this component module at all.
  */
 export type ListMultiSelectionStore = HappierListMultiSelectionStore;
+
+/** Package-private activation shared by virtualized rows and Collection cards. The store owns eligibility. */
+export function activateListItem(input: Readonly<{
+  key: string;
+  event?: HappierGestureResponderEvent;
+  store: ListMultiSelectionStore | null;
+  focus(key: string): void;
+  open(key: string): void;
+}>): 'handled' | 'open' {
+  const action = input.store === null ? 'open' : resolveHappierListMultiSelectionPointerAction({
+      isSelectionMode: input.store.getSnapshot().isSelectionMode,
+      platform: resolveHappierPointerPlatform(Platform.OS), ...readHappierPointerModifiers(input.event),
+  });
+  input.focus(input.key);
+  if (input.store !== null && action !== 'open') {
+    if (action === 'toggle') input.store.toggle(input.key);
+    else input.store.selectRange(input.key);
+    return 'handled';
+  }
+  input.open(input.key);
+  return 'open';
+}
 
 export const createListMultiSelectionStore: (
   input: CreateHappierListMultiSelectionStateInput,

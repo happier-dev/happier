@@ -9,6 +9,11 @@ import {
     type PluginSourceCustodyV1,
 } from '@happier-dev/protocol';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolveEffectiveInputFields, readInputPath, type InputOption } from '@happier-dev/protocol/inputs';
+import { resolveInputTypeOptions, validateInputTypeValue } from '@happier-dev/protocol/inputs/runtime';
+import { createRegistryInputTypeDeps } from './actions/createCommittedContributedActionDeps';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
@@ -116,6 +121,8 @@ function invokeCapturedDaemonActionHandler(
 
 export function buildTargetActionInvocationRegistry(params: Readonly<{
     contributes: ResolvedContributionRegistry;
+    /** The same runtime-owned Resource reader used by Action options discovery. */
+    readRuntimeRegistry?(): Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes' | 'readUiResource'> | null;
     readCurrentPluginOccurrenceId?(pluginId: string): PluginRuntimeOccurrenceId | null;
     readCurrentPluginSourceCustody?(pluginId: string): PluginSourceCustodyV1 | null;
     /** Resolved runtime-owned dispatch-time caller provenance lookup. */
@@ -264,27 +271,57 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
         pluginId: string,
         localId: string,
     ): ResolvedTargetAction | null => {
-        const registration = readActions().find((candidate) => (
-            candidate.pluginId === pluginId && candidate.localId === localId
-        ));
-        if (!registration?.sourceCustody) return null;
+        const actionRegistryKey = buildQualifiedPluginContributionKey(createPluginContributionIdentity({ pluginId, localId }));
+        const resolvedAction = params.contributes.actionsById?.get(actionRegistryKey);
+        let catalogAction: Pick<ReturnType<typeof readActions>[number], 'definition' | 'occurrenceId' | 'sourceCustody'> | undefined;
+        if (resolvedAction?.definition.execution?.target === 'client') {
+            // Client handlers belong to the answering UI, not daemon activation.
+            // Catalog visibility still uses the same current occurrence and policy owner.
+            const manifest = params.contributes.activationTargets.find((target) => target.pluginId === pluginId)?.manifest;
+            const declaration = manifest?.contributes.actions.find((action) => action.id === localId);
+            const occurrenceId = params.readCurrentPluginOccurrenceId?.(pluginId);
+            const sourceCustody = params.readCurrentPluginSourceCustody?.(pluginId);
+            if (
+                !manifest || declaration?.execution.target !== 'client'
+                || resolvedAction.pluginId !== pluginId || resolvedAction.definition.id !== localId
+                || occurrenceId == null || sourceCustody == null
+            ) return null;
+            catalogAction = {
+                occurrenceId,
+                sourceCustody,
+                definition: {
+                    ...readTargetDefinition(resolvedAction.definition),
+                    hostAccessRequests: resolveManifestHostAccessRequests({
+                        manifest,
+                        pluginId,
+                        contribution: { family: 'actions', localId },
+                        requestIds: declaration.hostAccess,
+                    }),
+                },
+            };
+        } else {
+            catalogAction = readActions().find((candidate) => (
+                candidate.pluginId === pluginId && candidate.localId === localId
+            ));
+        }
+        if (!catalogAction?.sourceCustody) return null;
         const availability = resolveTargetActionAvailability({
-            availability: registration.definition.availability ?? undefined,
+            availability: catalogAction.definition.availability ?? undefined,
             facts: resolveInvocationContributionPolicyFacts(),
         });
         return resolveCatalogTargetActionPolicy({
             pluginId,
             localId,
-            occurrenceId: registration.occurrenceId,
-            sourceCustody: registration.sourceCustody,
-            dangerLevel: registration.definition.dangerLevel,
-            scopes: registration.definition.scopes,
-            surfaces: registration.definition.surfaces,
-            hostAccessRequests: registration.definition.hostAccessRequests ?? [],
+            occurrenceId: catalogAction.occurrenceId,
+            sourceCustody: catalogAction.sourceCustody,
+            dangerLevel: catalogAction.definition.dangerLevel,
+            scopes: catalogAction.definition.scopes,
+            surfaces: catalogAction.definition.surfaces,
+            hostAccessRequests: catalogAction.definition.hostAccessRequests ?? [],
             ...(availability === undefined ? {} : { availability }),
-            ...(registration.definition.confirmation === undefined
+            ...(catalogAction.definition.confirmation === undefined
                 ? {}
-                : { confirmation: registration.definition.confirmation }),
+                : { confirmation: catalogAction.definition.confirmation }),
             resolveHostPolicy: params.resolveHostPolicy,
         });
     };
@@ -331,7 +368,38 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
         ...(params.resolveCurrentSessionUi
             ? { resolveCurrentSessionUi: params.resolveCurrentSessionUi }
             : {}),
-        revalidateConnectedAccountActionFormInput: async (input) => {
+        revalidateActionFormInput: async (input) => {
+            const identity = createPluginContributionIdentity({ pluginId: input.pluginId, localId: input.localId });
+            const definition = params.contributes.actionsById?.get(buildQualifiedPluginContributionKey(identity))?.definition;
+            const runtime = params.readRuntimeRegistry?.() ?? { contributes: params.contributes };
+            const inputTypeDeps = createRegistryInputTypeDeps(runtime);
+            const context = { signal: input.signal, ...(input.sessionId ? { defaultSessionId: input.sessionId } : {}) };
+            for (const field of resolveEffectiveInputFields({ inputHints: definition?.inputHints ?? undefined }, input.input, { includeHidden: true })) {
+                if (!field.inputType) continue;
+                const value = readInputPath(input.input, field.path);
+                if (value === undefined) continue;
+                const type = await inputTypeDeps.resolveInputType(field.inputType, context);
+                if (!type) return { status: 'unavailable', code: 'input_type_unavailable', message: 'Input type is unavailable' };
+                let options: readonly InputOption[] | undefined;
+                if (type.definition.options) {
+                    const resolved = await resolveInputTypeOptions({ deps: inputTypeDeps, ctx: context, identity: field.inputType,
+                        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+                        readFailure: result => {
+                            const parsed = ActionExecuteFailureSchema.safeParse(result);
+                            return parsed.success ? parsed.data : null;
+                        },
+                    });
+                    if (!resolved.ok) return { status: 'unavailable', code: resolved.errorCode, message: 'Input choices are unavailable' };
+                    options = resolved.result;
+                }
+                const values = field.widget === 'multiselect' && Array.isArray(value) ? value : [value];
+                for (const selected of values) {
+                    const validation = validateInputTypeValue(type, selected, options);
+                    if (validation.status !== 'valid') return { status: 'invalid', code: validation.reasonCode, message: 'Input value is invalid' };
+                }
+                input.signal.throwIfAborted();
+                if (!input.isCurrent()) return { status: 'unavailable', code: 'input_type_retired', message: 'Input invocation is retired' };
+            }
             return await revalidateRegistryConnectedAccountActionFormInput({
                 registry: params.contributes,
                 qualifiedActionId: buildQualifiedPluginContributionKey(

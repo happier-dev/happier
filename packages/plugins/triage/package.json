@@ -19,12 +19,15 @@
       "default": "./dist/targetedContributions.js"
     },
     "./happier-plugin-ui/triage-list-page-native": "./src/ui/surface.tsx",
+    "./happier-plugin-ui/triage-entity-drag-drop-native": "./src/ui/list/entryDragDrop.ts",
     "./happier-plugin-ui/triage-views-column-native": "./src/ui/column/viewsColumn.tsx",
     "./happier-plugin-ui/triage-latest-widget-native": "./src/ui/widget/latestWidget.tsx",
     "./happier-plugin-ui/triage-entry-picker-native": "./src/composer/entryPicker.tsx",
     "./happier-plugin-ui/triage-entries-compact-native": "./src/composer/controlCompact.tsx",
     "./happier-plugin-ui/triage-session-entries-native": "./src/sessions/cockpit/sessionLinkedEntriesSurface.tsx",
-    "./happier-plugin-ui/triage-search-action-native": "./src/actions/searchEntries.ts"
+    "./happier-plugin-ui/triage-search-action-native": "./src/actions/searchEntries.ts",
+    "./happier-plugin-ui/triage-mounted-ui-action-native": "./src/actions/mountedUi.ts",
+    "./happier-plugin-ui/triage-configured-action-native": "./src/actions/configuredActionRun.ts"
   },
   "files": [
     "dist",

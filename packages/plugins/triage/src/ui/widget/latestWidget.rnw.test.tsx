@@ -63,7 +63,7 @@ function createListHarness() {
         }),
     }));
     const admitted = [{
-        contributor: { pluginId: SOURCE.pluginId, contributionId: SOURCE.localId, immutableGenerationId: 'generation-1' },
+        contributor: { pluginId: SOURCE.pluginId, contributionId: SOURCE.localId, occurrenceId: 'generation-1', sourceCustody: { kind: 'development', registeredRootId: 'source-root' } },
         protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 },
         descriptor: {
             v: 1,

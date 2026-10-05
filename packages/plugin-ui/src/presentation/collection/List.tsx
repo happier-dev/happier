@@ -63,6 +63,8 @@ export type HappierListSectionProps = Readonly<{
   children?: ReactNode;
   /** Visible and semantic group name. */
   title: string;
+  /** Decorated glyphs; the immutable string remains the semantic group name. */
+  titleContent?: ReactNode;
   /** A quiet, tabular count beside the title. */
   count?: number;
   /** What the group's rows share, quiet at the header's end. */
@@ -112,6 +114,10 @@ export type HappierListItemProps = Readonly<{
   title?: string;
   subtitle?: string;
   detail?: string;
+  /** Decorated text inside the incumbent text hosts, without replacing row anatomy or names. */
+  titleContent?: ReactNode;
+  subtitleContent?: ReactNode;
+  detailContent?: ReactNode;
   /**
    * Optional line bounds for the three semantic text slots.
    *
@@ -272,6 +278,7 @@ export function HappierList({
 export function HappierListSection({
   children,
   title,
+  titleContent,
   count,
   description,
   titleRole = 'label',
@@ -293,10 +300,10 @@ export function HappierListSection({
   // The visible heading: the title, its count and what its rows share. Only the title is the group's name.
   const hasAction = action !== undefined && action !== null && action !== false;
   const heading = count === undefined && description === undefined && !hasAction
-    ? <HappierText accessible={false} style={titleStyle}>{title}</HappierText>
+    ? <HappierText accessible={false} style={titleStyle}>{titleContent ?? title}</HappierText>
     : (
       <View style={sectionHeadingStyle}>
-        <HappierText accessible={false} numberOfLines={1} style={[titleStyle, sectionHeadingTitleStyle]}>{title}</HappierText>
+        <HappierText accessible={false} numberOfLines={1} style={[titleStyle, sectionHeadingTitleStyle]}>{titleContent ?? title}</HappierText>
         {count === undefined ? null : (
           <HappierText accessible={false} tabularNumbers style={quietStyle}>{String(count)}</HappierText>
         )}
@@ -382,6 +389,9 @@ export function HappierListItem({
   title,
   subtitle,
   detail,
+  titleContent,
+  subtitleContent,
+  detailContent,
   titleNumberOfLines,
   subtitleNumberOfLines,
   detailNumberOfLines,
@@ -590,7 +600,7 @@ export function HappierListItem({
                 ? { ...resolveHappierPageTextStyle('rowTitle', hostTypography), color: titleColor }
                 : textStyle(resolvedTheme, hostTypography, 'label', titleColor)}
             >
-              {title}
+              {titleContent ?? title}
             </HappierText>
           ) : null}
           {subtitle ? (
@@ -600,7 +610,7 @@ export function HappierListItem({
                 ? { ...resolveHappierPageTextStyle('rowDescription', hostTypography), color: resolvedTheme.colors.secondaryText, marginTop: 2 }
                 : textStyle(resolvedTheme, hostTypography, 'body', resolvedTheme.colors.secondaryText)}
             >
-              {subtitle}
+              {subtitleContent ?? subtitle}
             </HappierText>
           ) : null}
           {customContent}
@@ -623,7 +633,7 @@ export function HappierListItem({
               DETAIL_TEXT_STYLE,
             ]}
           >
-            {detail}
+            {detailContent ?? detail}
           </HappierText>
         ) : null}
         {includeAccessory
@@ -664,6 +674,7 @@ export function HappierListItem({
       controlRef={roving?.register}
       tabIndex={behavior.tabIndex}
       onKeyDown={roving?.onKeyDown}
+      onFocusChange={focused => { if (focused) roving?.onFocus?.(); }}
       onContextMenu={onContextMenu}
       onLongPress={Platform.OS === 'web' ? undefined : onContextMenu}
       onPress={(event) => onPress?.(event)}
@@ -716,7 +727,7 @@ export function HappierListItem({
       </>
     ) : (
       // @ts-expect-error React Native's role union omits RNW's standard gridcell role.
-      <View role="gridcell">{row}</View>
+      <View role="gridcell" style={{ flex: 1, minWidth: 0 }}>{row}</View>
     )
   ) : behavior.accessoryPlacement === 'outside' && pageSection ? (
     // A page row keeps its control on the row's inset: beside the label with

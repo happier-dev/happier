@@ -20,9 +20,12 @@ import {
     TriageReadConfiguredSourceInstancesResultV1Schema,
     TriageSourceAdministrationActionInputV1Schema,
     TriageSourceAdministrationActionResultV1Schema,
+    TriagePullRequestStatusResultV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
 import { PLUGIN_MANIFEST } from '../manifest.js';
+import { TriageMountedUiInputV1Schema, TriageMountedUiResultV1Schema } from './mountedUiProtocol.js';
+import { TriageRunConfiguredActionInputV1Schema, TriageRunConfiguredActionResultV1Schema } from './configuredActionRunProtocol.js';
 import {
     TriageAdministerActionInputV1Schema,
     TriageAdministerActionResultV1Schema,
@@ -102,6 +105,7 @@ import {
  * Values whose schema has a finite structural maximum.
  */
 const structurallyBoundedSchemas = {
+    mountedUiResult: TriageMountedUiResultV1Schema,
     searchEntriesInput: PluginSearchQueryV1Schema,
     searchEntriesResult: PluginSearchResultV1Schema,
     readEntryDetailInput: TriageReadEntryDetailInputV1Schema,
@@ -113,7 +117,6 @@ const structurallyBoundedSchemas = {
     listPinnedEntriesInput: TriageListPinnedEntriesInputV1Schema,
     listPinnedEntriesResult: TriageListPinnedEntriesResultV1Schema,
     readFixPullRequestsInput: TriageReadFixPullRequestsInputV1Schema,
-    readFixPullRequestsResult: TriageReadFixPullRequestsResultV1Schema,
     setFixPullRequestInput: TriageSetFixPullRequestInputV1Schema,
     setFixPullRequestResult: TriageSetFixPullRequestResultV1Schema,
     linkEntryToSessionInput: TriageLinkEntryToSessionInputV1Schema,
@@ -168,6 +171,14 @@ const ownerBoundedSchemas = {
  * maximum encoded value cannot be derived without inventing a product quota.
  */
 const structurallyUnboundedSchemas = {
+    // The fix-PR candidate projection follows real linked Sessions without a count quota.
+    readFixPullRequestsResult: TriageReadFixPullRequestsResultV1Schema,
+    runConfiguredActionInput: TriageRunConfiguredActionInputV1Schema,
+    runConfiguredActionResult: TriageRunConfiguredActionResultV1Schema,
+    // The mounted owner admits exact selections without a product count quota.
+    mountedUiInput: TriageMountedUiInputV1Schema,
+    // PR status walks source-owned rows without a product count ceiling.
+    readPullRequestStatusResult: TriagePullRequestStatusResultV1Schema,
     startEntrySessionInput: TriageStartEntrySessionInputV1Schema,
     startEntrySessionResult: TriageStartEntrySessionResultV1Schema,
     // The review request deliberately carries an unbounded engine selection
@@ -265,6 +276,13 @@ function admits(value: unknown): boolean {
  */
 function finiteOpaqueJsonWitness(fragment: PluginJsonSchema): PluginJsonSchema {
     if (Object.keys(fragment).length === 0) return { const: null };
+    // Host source-custody identifiers have no finite maximum. Choose an
+    // admitted witness only for this prompt regression, never a product bound.
+    if (fragment.type === 'string' && fragment.maxLength === undefined
+        && fragment['x-happier-max-utf8-bytes'] === undefined
+        && fragment.enum === undefined && fragment.const === undefined) {
+        return { ...fragment, const: 'fixture-occurrence' };
+    }
     return {
         ...fragment,
         ...(fragment.anyOf === undefined
@@ -326,7 +344,8 @@ describe('aggregate Action value shapes', () => {
         const delivery = wider.properties?.delivery;
         const text = delivery?.properties?.text;
         if (!text) throw new Error('start input delivery no longer carries a prompt body');
-        text.maxLength = 200_000;
+        // Replace the finite witness, not the product's unbounded prompt schema.
+        text.const = 'x'.repeat(1_024 * 1_024 + 1);
 
         const value = buildMaximalSchemaValue(wider, 'wideStartInput');
 

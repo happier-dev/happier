@@ -152,9 +152,9 @@ const POSTHOG_SOURCE_DESCRIPTOR = {
         detailTabs: [
             { kind: 'shared' as const, id: 'overview' as const },
             { kind: 'shared' as const, id: 'activity' as const },
-            { kind: 'source' as const, id: 'stack-trace', title: 'Stack trace' },
-            { kind: 'source' as const, id: 'occurrences', title: 'Occurrences' },
-            { kind: 'source' as const, id: 'affected-sessions', title: 'Affected sessions' },
+            { kind: 'source' as const, id: 'stack-trace', title: 'Stack trace', titleKey: 'plugins.posthog.ui.tab.stackTrace' },
+            { kind: 'source' as const, id: 'occurrences', title: 'Occurrences', titleKey: 'plugins.posthog.ui.tab.occurrences' },
+            { kind: 'source' as const, id: 'affected-sessions', title: 'Affected sessions', titleKey: 'plugins.posthog.ui.tab.affectedSessions' },
         ],
     }],
 };
@@ -359,11 +359,9 @@ export const POSTHOG_PLUGIN = definePlugin({
         [POSTHOG_ACTION_IDS.issueEvents]: {
             title: 'Read sampled PostHog occurrences',
             description: 'Reads one bounded page of sampled exception events for one PostHog issue.',
-            // Only the source's own mounted detail body invokes this native read,
-            // through the mounted Plugin UI host — present-user authority. The
-            // explicit empty list keeps global placement discovery from offering
-            // it a destination while the mounted invocation stays untouched.
-            surfaces: ['ui'],
+            // Native reads share the configured-account owner across UI and agent
+            // surfaces; the empty list only removes global placement discovery.
+            surfaces: ['ui', 'agent', 'mcp', 'cli'],
             placementBindings: [],
             inputSchema: PosthogSampledEventsInputV1Schema.jsonSchema,
             resultSchema: PosthogSampledEventsResultV1Schema.jsonSchema,
@@ -374,7 +372,7 @@ export const POSTHOG_PLUGIN = definePlugin({
         [POSTHOG_ACTION_IDS.issueActivity]: {
             title: 'Read PostHog issue activity',
             description: 'Reads one page of the recorded activity for one PostHog issue.',
-            surfaces: ['ui'],
+            surfaces: ['ui', 'agent', 'mcp', 'cli'],
             placementBindings: [],
             inputSchema: PosthogIssueActivityInputV1Schema.jsonSchema,
             resultSchema: PosthogIssueActivityResultV1Schema.jsonSchema,
@@ -385,7 +383,7 @@ export const POSTHOG_PLUGIN = definePlugin({
         [POSTHOG_ACTION_IDS.codeVariables]: {
             title: 'Reveal captured PostHog code variables',
             description: 'Rereads one selected occurrence and returns its captured variables after confirmation.',
-            surfaces: ['ui'],
+            surfaces: ['ui', 'agent', 'mcp', 'cli'],
             placementBindings: [],
             inputSchema: PosthogCodeVariablesInputV1Schema.jsonSchema,
             resultSchema: PosthogCodeVariablesResultV1Schema.jsonSchema,
@@ -396,7 +394,7 @@ export const POSTHOG_PLUGIN = definePlugin({
         [POSTHOG_ACTION_IDS.nativeOverview]: {
             title: 'Read a PostHog issue overview',
             description: 'Reads native overview facts and query-enrichment status through the canonical issue read.',
-            surfaces: ['ui'],
+            surfaces: ['ui', 'agent', 'mcp', 'cli'],
             placementBindings: [],
             inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
             resultSchema: PosthogNativeOverviewResultV1Schema.jsonSchema,

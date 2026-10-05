@@ -46,8 +46,6 @@ export type ResolvedTargetAction = NormalizedTargetActionPolicy & Readonly<{
   resourceId?: string;
   /** Durable source authority for replay; live admission remains occurrence-fenced. */
   sourceCustody: PluginSourceCustodyV1;
-  /** Host-stamped Action-settings decision, distinct from plugin confirmation. */
-  approvalRequiredByActionSettings?: true;
   policyFingerprint: string;
 }>;
 
@@ -125,11 +123,7 @@ function stable(value: unknown): string {
   return JSON.stringify(value) ?? 'undefined';
 }
 
-type TargetActionPolicyFingerprintInput = NormalizedTargetActionPolicy & Readonly<{
-  approvalRequiredByActionSettings?: true;
-}>;
-
-export function fingerprintTargetActionPolicy(action: TargetActionPolicyFingerprintInput): string {
+export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPolicy): string {
   return createHash('sha256').update(stable({
     qualifiedId: action.qualifiedId,
     dangerLevel: action.dangerLevel,
@@ -138,7 +132,7 @@ export function fingerprintTargetActionPolicy(action: TargetActionPolicyFingerpr
     hostAccess: action.hostAccess,
     availability: action.availability,
     confirmation: action.confirmation,
-    approvalRequiredByActionSettings: action.approvalRequiredByActionSettings === true,
+    approvalRequiredByActionSettings: action.approvalRequiredByActionSettings,
   })).digest('hex');
 }
 
@@ -263,9 +257,9 @@ export function resolvePresentUserGatePolicy(
     scopes: action.scopes,
     surfaces: action.surfaces,
     ...(action.confirmation === undefined ? {} : { confirmation: action.confirmation }),
-    ...(action.approvalRequiredByActionSettings === true
-      ? { approvalRequiredByActionSettings: true }
-      : {}),
+    ...(action.approvalRequiredByActionSettings === undefined
+      ? {}
+      : { approvalRequiredByActionSettings: action.approvalRequiredByActionSettings }),
     ...(action.availability === undefined ? {} : { availability: action.availability }),
     authorization: Object.freeze(projectTargetActionPresentUserAuthorizationFacts(
       authorization,

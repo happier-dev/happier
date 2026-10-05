@@ -55,6 +55,7 @@ import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import type { RpcHandlerInvoker } from '@/api/rpc/types';
+import type { ClientContributedActionExecutor } from '../invocation/actions/executeContributedAction';
 import type { ResolveSessionResourceAccess } from '@/plugins/runtime/invocation/services/resources';
 import type { ResolvedContributionInputs, ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type {
@@ -209,6 +210,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
   happyHomeDir: string;
   /** Daemon-owned live machine identity for host-stamped nested Action callers. */
   resolveCurrentMachineId?: () => string | null;
+  executeClientAction?: ClientContributedActionExecutor;
   /** Existing authenticated Machine admission authority for protected Session input. */
   machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
   /** Existing daemon-local transfer carrier for host-authored Composer media. */
@@ -385,6 +387,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             happyHomeDir: params.happyHomeDir,
             contributes,
             generation: activationOccurrenceId,
+          ...(params.executeClientAction ? { executeClientAction: params.executeClientAction } : {}),
           ...(params.resolveCurrentMachineId
             ? { resolveCurrentMachineId: params.resolveCurrentMachineId }
             : {}),

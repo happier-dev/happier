@@ -529,11 +529,6 @@ export type WorkspaceIntegrationHandlers = Readonly<{
     ) => PortableWorkspacePathClassification;
 }>;
 
-/** Commit admission witness supplied by the backend that owns publication. */
-type CommitTargetCaptureResponse =
-    | Readonly<{ success: true; target: Readonly<{ headOid: string | null; ref: string | null; baseTreeOid: string }> }>
-    | Readonly<{ success: false; errorCode?: ScmOperationErrorCode; error?: string }>;
-
 export type BackendRuntimeHandlers = Readonly<{
     detection?: Readonly<{
         detectRepo?: (input: Readonly<{ cwd: string }>) => Promise<BackendRuntimeDetection> | BackendRuntimeDetection;
@@ -567,7 +562,14 @@ export type BackendRuntimeHandlers = Readonly<{
         discard?: (input: BackendRuntimeHandlerInput<ScmChangeDiscardRequest>) => Promise<ScmChangeDiscardResponse> | ScmChangeDiscardResponse;
     }>;
     commit?: Readonly<{
-        captureTarget?: (input: Readonly<{ context: BackendRuntimeContext }>) => Promise<CommitTargetCaptureResponse> | CommitTargetCaptureResponse;
+        /** Commit admission witness supplied by the backend that owns publication. */
+        captureTarget?: (input: Readonly<{ context: BackendRuntimeContext }>) =>
+            | Promise<
+                | Readonly<{ success: true; target: Readonly<{ headOid: string | null; ref: string | null; baseTreeOid: string }> }>
+                | Readonly<{ success: false; errorCode?: ScmOperationErrorCode; error?: string }>
+            >
+            | Readonly<{ success: true; target: Readonly<{ headOid: string | null; ref: string | null; baseTreeOid: string }> }>
+            | Readonly<{ success: false; errorCode?: ScmOperationErrorCode; error?: string }>;
         create?: (input: BackendRuntimeHandlerInput<ScmCommitCreateRequest>) => Promise<ScmCommitCreateResponse> | ScmCommitCreateResponse;
         resolveOutcome?: (input: BackendRuntimeHandlerInput<ScmCommitResolveOutcomeRequest>) => Promise<ScmCommitResolveOutcomeResponse> | ScmCommitResolveOutcomeResponse;
         backout?: (input: BackendRuntimeHandlerInput<ScmCommitBackoutRequest>) => Promise<ScmCommitBackoutResponse> | ScmCommitBackoutResponse;

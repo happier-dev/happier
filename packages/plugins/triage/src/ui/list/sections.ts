@@ -1,4 +1,4 @@
-import type { TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageEntryLocatorV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
 import { CORPUS_LANE } from '../../corpus/fold/lane.js';
 import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
@@ -10,6 +10,7 @@ import {
   type TriageListDisplayRowV1,
   type TriageListRowProjectionOptionsV1,
 } from '../marks/pinnedRows.js';
+import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 
 /**
  * The PRs & Issues rows and their ONE grouping axis (PLAN.md r0.41): **Needs you / With an agent / In review /
@@ -46,6 +47,8 @@ export type TriageListItemV1 = Readonly<{
   /** The source's bounded summary, for the peek. */
   summary: string | null;
   signal: TriageListRowSignalV1 | null;
+  /** The canonical selected connection's locator; absent for unread or unavailable entries. */
+  locator?: TriageEntryLocatorV1 | null;
 }>;
 
 /**
@@ -83,8 +86,8 @@ export function planTriageListItemsV1(input: Readonly<{
   /** The admitted source contribution's workflow subject for this kind, or `null` when none was declared. */
   workflowSubjectOf: (entryRef: TriageListRowV1['entryRef']) => TriageSourceWorkflowSubjectV1 | null;
   /**
-   * Whether a linked session is working on the entry. No list-level linked-session fact exists yet (session links
-   * are read per entry by the detail read), so the shell supplies none and nothing is filed under With an agent.
+   * Whether a linked Session's canonical host Work status is working. The shell
+   * supplies its single mounted relationship/Session-fact join, shared by every row.
    */
   agentActive?: (key: string) => boolean;
   /** How the rows say the words this plugin authors, and whether the window they came from is current. */
@@ -103,6 +106,7 @@ export function planTriageListItemsV1(input: Readonly<{
       group: 'pinned' as const,
       summary: projected?.content?.outcome.snapshot.summary ?? null,
       signal: readSignal(projected),
+      locator: projected === null ? null : readTriageSelectedObservationV1(projected)?.observation.locator ?? null,
     });
   });
   for (const windowRow of input.rows) {
@@ -118,6 +122,7 @@ export function planTriageListItemsV1(input: Readonly<{
       }),
       summary: windowRow.content?.outcome.snapshot.summary ?? null,
       signal: readSignal(windowRow),
+      locator: readTriageSelectedObservationV1(windowRow)?.observation.locator ?? null,
     }));
   }
   return Object.freeze(items);

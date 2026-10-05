@@ -2,6 +2,13 @@
 import { z } from 'zod';
 
 import {
+    PluginUiWidgetAreaRequestV1Schema,
+    PluginUiWidgetAreaResultV1Schema,
+    PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema,
+    PluginUiReadEntityDragItemRequestV1Schema,
+    PluginUiReadEntityDragItemResultV1Schema,
+    PluginUiUpdateEntityDragDropRequestV1Schema,
+    PluginUiUpdateEntityDragDropResultV1Schema,
     PluginUiWatchLiveStreamRequestV1Schema,
     PLUGIN_UI_HOST_API_VERSION_V1,
     isPluginUiHostApiVersionCompatibleV1,
@@ -15,6 +22,7 @@ import {
     PluginUiInspectComposerContentRequestV1Schema,
     PluginUiInspectComposerContentResultV1Schema,
     PluginUiExecuteActionRequestV1Schema,
+    PluginUiMountedActionReferenceV1Schema,
     PluginUiEphemeralInputSettlementV1Schema,
     PluginUiFocusComposerRequestV1Schema,
     PluginUiFocusComposerResultV1Schema,
@@ -592,6 +600,9 @@ export type PluginUiTestkitRespondToSessionPermissionInput = Readonly<{
 }>;
 
 export type PluginUiTestkitHostHandlers = Readonly<{
+    watchEntityDragDrop?: (input: Readonly<{ request: import('../entityDragDrop.js').PluginUiWatchEntityDragDropRequestV1; publish: (state: import('../entityDragDrop.js').PluginUiEntityDragDropStateV1) => void; signal: AbortSignal }>) => void | Disposable | Promise<void | Disposable>;
+    readEntityDragItem?: (input: Readonly<{ request: import('../ui/hostApi.js').PluginUiReadEntityDragItemRequestV1; signal: AbortSignal }>) => import('../entityDragDrop.js').EntityDragItemV1 | null | Promise<import('../entityDragDrop.js').EntityDragItemV1 | null>;
+    updateEntityDragDrop?: (input: Readonly<{ request: import('../ui/hostApi.js').PluginUiUpdateEntityDragDropRequestV1; signal: AbortSignal }>) => import('../ui/hostApi.js').PluginUiUpdateEntityDragDropResultV1 | Promise<import('../ui/hostApi.js').PluginUiUpdateEntityDragDropResultV1>;
     publishCurrentUiContext?: (
         input: Readonly<{ enrichment: PluginUiContextEnrichmentV1 | null; signal: AbortSignal }>,
     ) => void | Promise<void>;
@@ -662,6 +673,10 @@ export type PluginUiTestkitHostHandlers = Readonly<{
     readStoredImage?: (
         input: Readonly<{ image: import('../ui/hostApi.js').StoredImageRefV1; signal: AbortSignal }>,
     ) => import('../ui/hostApi.js').PluginUiReadStoredImageResultV1 | Promise<import('../ui/hostApi.js').PluginUiReadStoredImageResultV1>;
+    /** Delegate to the real captured host area port, not a fixture layout store. */
+    widgetArea?: (input: Readonly<{
+        request: import('../ui/hostApi.js').PluginUiWidgetAreaRequestV1; signal: AbortSignal;
+    }>) => import('../ui/hostApi.js').PluginUiWidgetAreaResultV1 | Promise<import('../ui/hostApi.js').PluginUiWidgetAreaResultV1>;
     /**
      * Establish one Session watch. Invalidations are emitted through the
      * fixture's `invalidateSession`, never through this handler.
@@ -676,7 +691,7 @@ export type PluginUiTestkitHostHandlers = Readonly<{
         input: PluginUiTestkitReplacePageLocationInput,
     ) => string | Promise<string>;
     notify?: (input: Readonly<{ message: string; severity?: InteractionSeverity; signal: AbortSignal }>) => void | Promise<void>;
-    confirm?: (input: Readonly<{ message: string; title?: string; signal: AbortSignal }>) => boolean | Promise<boolean>;
+    confirm?: (input: Readonly<{ message: string; title?: string; action?: import('../identity.js').PluginReference; signal: AbortSignal }>) => boolean | Promise<boolean>;
     diagnostic?: (input: Readonly<{ data: PluginDiagnosticData; signal: AbortSignal }>) => void | Promise<void>;
     readClipboard?: (input: Readonly<{ signal: AbortSignal }>) => string | Promise<string>;
     writeClipboard?: (input: Readonly<{ value: string; signal: AbortSignal }>) => void | Promise<void>;
@@ -726,6 +741,10 @@ const hostMethodPolicies = {
     watchSession: 'watchSession',
     watchLiveStream: 'watchLiveStream',
     respondToSessionPermission: 'respondToSessionPermission',
+    readEntityDragItem: 'readEntityDragItem',
+    updateEntityDragDrop: 'updateEntityDragDrop',
+    watchEntityDragDrop: 'watchEntityDragDrop',
+    widgetArea: 'widgetArea',
 } as const satisfies Readonly<Record<(typeof PLUGIN_UI_HOST_METHODS_V1)[number], PluginUiTestkitHostMethodPolicy>>;
 
 function isHostMethodAvailable(
@@ -816,8 +835,8 @@ export interface PluginUiTestkit {
 type ActiveRequest = Readonly<{ controller: AbortController }>;
 type ResourceSubscription = Readonly<{ resource: PluginReference }>;
 type ComposerHostResource = Readonly<{
-    method: 'watchComposer' | 'acquireComposerInputLock';
-    ref: ComposerRefV1;
+    method: 'watchComposer' | 'acquireComposerInputLock' | 'watchEntityDragDrop';
+    ref?: ComposerRefV1;
     controller: AbortController;
     release?: Disposable;
 }>;
@@ -1553,6 +1572,12 @@ async function createPluginUiTestkitInternal<TSurface>(
                 const result = await handlers.readStoredImage({ image: payload.data.image, signal });
                 return PluginUiReadStoredImageResultV1Schema.parse(result) as JsonValue;
             }
+            case 'widgetArea': {
+                if (!handlers.widgetArea) throw fixtureError('unsupported_method', 'widgetArea is not installed.');
+                const payload = PluginUiWidgetAreaRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) throw fixtureError('invalid_payload', 'widgetArea payload is invalid.');
+                return PluginUiWidgetAreaResultV1Schema.parse(await handlers.widgetArea({ request: payload.data, signal })) as JsonValue;
+            }
             case 'respondToSessionPermission': {
                 if (!handlers.respondToSessionPermission) {
                     throw fixtureError('unsupported_method', 'respondToSessionPermission is not installed.');
@@ -1595,6 +1620,7 @@ async function createPluginUiTestkitInternal<TSurface>(
                 const confirmed = await handlers.confirm({
                     message: requireString(payload.message, 'message'),
                     ...(readOptionalString(payload, 'title') === undefined ? {} : { title: readOptionalString(payload, 'title')! }),
+                    ...(payload.action === undefined ? {} : { action: PluginUiMountedActionReferenceV1Schema.parse(payload.action) }),
                     signal,
                 });
                 if (typeof confirmed !== 'boolean') throw fixtureError('invalid_payload', 'confirm must resolve a boolean.');
@@ -1646,7 +1672,20 @@ async function createPluginUiTestkitInternal<TSurface>(
                 await handlers.openExternalLink({ url: payload.data.url, signal });
                 return undefined;
             }
+            case 'readEntityDragItem': {
+                if (!handlers.readEntityDragItem) throw fixtureError('unsupported_method', 'readEntityDragItem is not installed.');
+                const request = PluginUiReadEntityDragItemRequestV1Schema.safeParse(message.payload);
+                if (!request.success) throw fixtureError('invalid_payload', 'readEntityDragItem payload is invalid.');
+                return PluginUiReadEntityDragItemResultV1Schema.parse(await handlers.readEntityDragItem({ request: request.data, signal }));
+            }
+            case 'updateEntityDragDrop': {
+                if (!handlers.updateEntityDragDrop) throw fixtureError('unsupported_method', 'updateEntityDragDrop is not installed.');
+                const request = PluginUiUpdateEntityDragDropRequestV1Schema.safeParse(message.payload);
+                if (!request.success) throw fixtureError('invalid_payload', 'updateEntityDragDrop payload is invalid.');
+                return PluginUiUpdateEntityDragDropResultV1Schema.parse(await handlers.updateEntityDragDrop({ request: request.data, signal }));
+            }
             case 'watchContext':
+            case 'watchEntityDragDrop':
             case 'watchResource':
             case 'watchComposer':
             case 'acquireComposerInputLock':
@@ -1681,6 +1720,17 @@ async function createPluginUiTestkitInternal<TSurface>(
             assertActive();
             let establishment: JsonValue | undefined;
             switch (message.method) {
+                case 'watchEntityDragDrop': {
+                    if (!handlers.watchEntityDragDrop) throw fixtureError('unsupported_method', 'watchEntityDragDrop is not installed.');
+                    const payload = PluginUiWatchEntityDragDropRequestV1Schema.parse(message.payload);
+                    const release = readComposerHostResourceRelease(await handlers.watchEntityDragDrop({ request: payload, signal: controller.signal, publish: state => {
+                        if (!controller.signal.aborted && active) emit({ wireVersion: 1, kind: 'subscription', identity, subscriptionId: message.subscriptionId, event: PluginUiEntityDragDropStateV1Schema.parse(state) });
+                    } }));
+                    const resource: ComposerHostResource = { method: 'watchEntityDragDrop', controller, ...(release ? { release } : {}) };
+                    if (controller.signal.aborted || !active) { await retireComposerHostResource(resource, 'aborted'); return; }
+                    composerHostResources.set(message.subscriptionId, resource);
+                    break;
+                }
                 case 'watchContext':
                     contextSubscriptions.add(message.subscriptionId);
                     break;
@@ -2015,6 +2065,7 @@ async function createPluginUiTestkitInternal<TSurface>(
             for (const [subscriptionId, resource] of composerHostResources) {
                 if (
                     resource.method !== 'watchComposer'
+                    || resource.ref === undefined
                     || resource.controller.signal.aborted
                     || !composerRefsV1Equal(resource.ref, canonicalRef)
                 ) {

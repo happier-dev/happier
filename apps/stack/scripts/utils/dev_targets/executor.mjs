@@ -8,6 +8,7 @@ import {
   buildSshWorkerArgs,
   classifyRemoteCommand,
   requiresRemoteWorkspacePreparation,
+  resolveRemoteCommandPolicy,
   resolveRemoteValidationKind,
   resolveRemoteValidationComponentRelativeDir,
 } from './remote_commands.mjs';
@@ -292,8 +293,10 @@ export async function runDevTargetCommand(
         ...(preparationRequired ? { componentRelativeDir: resolveRemoteValidationComponentRelativeDir(commandArgs, { cwd }) } : {}),
         validationKind,
       } : null,
-      admissionClass: ['full-validation', 'targeted-validation'].includes(classification.commandClass)
-        ? classification.commandClass : '',
+      admissionClass: resolveRemoteCommandPolicy(commandArgs, { cwd }).heavyClass === 'compilation'
+        ? 'compilation'
+        : ['full-validation', 'targeted-validation'].includes(classification.commandClass)
+          ? classification.commandClass : '',
     }),
     environment,
   });

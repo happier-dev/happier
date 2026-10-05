@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 
 /** What a typed-in-place setting holds: free text, a whole number or a decimal. */
 export type HappierFieldValueKind = 'text' | 'integer' | 'decimal';
+export type HappierFieldStepperBounds = Readonly<{ min?: number; max?: number; step: number }>;
 
 /**
  * The draft a number field keeps: digits only (one decimal point for a
@@ -46,6 +47,7 @@ export type HappierFieldValueDraftInput = Readonly<{
   signed?: boolean;
   /** A number that may be left empty ("not set"): an empty draft commits instead of returning. */
   allowEmpty?: boolean;
+  stepper?: HappierFieldStepperBounds;
 }>;
 
 /**
@@ -59,8 +61,11 @@ export function useHappierFieldValueDraft(input: HappierFieldValueDraftInput): R
   draft: string;
   change: (text: string) => void;
   commit: () => void;
+  stepBy: (direction: -1 | 1) => void;
+  canDecrement: boolean;
+  canIncrement: boolean;
 }> {
-  const { value, onCommit, onDraftChange, kind = 'text', signed = false, allowEmpty } = input;
+  const { value, onCommit, onDraftChange, kind = 'text', signed = false, allowEmpty, stepper } = input;
   const [draft, setDraft] = useState(value);
   useEffect(() => {
     setDraft(value);
@@ -83,5 +88,18 @@ export function useHappierFieldValueDraft(input: HappierFieldValueDraftInput): R
     const shown = onCommit(next);
     setDraft(typeof shown === 'string' ? shown : next);
   }, [allowEmpty, draft, kind, onCommit, value]);
-  return { draft, change, commit };
+  const current = draft.trim() !== '' && Number.isFinite(Number(draft)) ? Number(draft) : Number(value);
+  const stepBy = useCallback((direction: -1 | 1) => {
+    if (!stepper || !Number.isFinite(current)) return;
+    const next = Math.max(stepper.min ?? -Infinity, Math.min(stepper.max ?? Infinity, current + direction * stepper.step));
+    const text = String(next);
+    if (text === value) { setDraft(value); return; }
+    const shown = onCommit(text);
+    setDraft(typeof shown === 'string' ? shown : text);
+  }, [current, onCommit, stepper, value]);
+  return {
+    draft, change, commit, stepBy,
+    canDecrement: Number.isFinite(current) && current > (stepper?.min ?? -Infinity),
+    canIncrement: Number.isFinite(current) && current < (stepper?.max ?? Infinity),
+  };
 }

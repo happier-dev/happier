@@ -1,6 +1,7 @@
 import {
   cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   realpathSync,
@@ -18,6 +19,9 @@ import { main as rmDist } from './rmDist.mjs';
 import { rmDirSafeSync } from './rmDirSafe.mjs';
 import { runPkgrollBuild } from './runPkgrollBuild.mjs';
 
+const INCREMENTAL_SOURCE_DIR = '.tmp.hstack-cli-build-source.incremental';
+const BUILD_SOURCE_PATHS = ['package.json', 'tsconfig.json', 'tsconfig.build.json', 'src'];
+
 function resolveBuildOutputDir(env = process.env) {
   const raw = String(env?.HAPPIER_CLI_BUILD_OUTPUT_DIR ?? '').trim();
   if (raw) return raw;
@@ -34,6 +38,9 @@ function reclaimAbandonedCliBuildDirs(packageRoot, activeOutputDir) {
       continue;
     }
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+    // This compiler cache belongs to the serialized CLI build, not an
+    // abandoned generation. Unlocked/caller-owned stages must leave it alone.
+    if (entry.name === INCREMENTAL_SOURCE_DIR) continue;
     const entryPath = resolve(packageRoot, entry.name);
     if (entryPath === activeOutputPath) continue;
     rmDirSafeSync(entryPath);
@@ -58,7 +65,7 @@ async function runNodeScript(scriptPath, args, options = {}) {
   }
 }
 
-function createImmutableBuildSource({ packageRoot }) {
+function createImmutableBuildSource({ packageRoot, outputDir, reuseCompilerCache = false }) {
   if (!existsSync(join(packageRoot, 'src'))) {
     return {
       packageRoot,
@@ -68,21 +75,34 @@ function createImmutableBuildSource({ packageRoot }) {
   }
   // Keep the immutable generation under the physical package root so Node and
   // TypeScript retain the package-local node_modules resolution ancestry.
-  const snapshotRoot = mkdtempSync(join(packageRoot, '.tmp.hstack-cli-build-source.'));
+  // The CLI publication lock serializes this source path. Reusing its path
+  // lets TypeScript reuse checked file identities across dev-watch builds;
+  // unlocked builds retain private generations instead.
+  const snapshotRoot = reuseCompilerCache
+    ? join(packageRoot, INCREMENTAL_SOURCE_DIR)
+    : mkdtempSync(join(packageRoot, '.tmp.hstack-cli-build-source.'));
+  mkdirSync(snapshotRoot, { recursive: true });
+  const cleanup = () => {
+    if (!reuseCompilerCache) {
+      rmDirSafeSync(snapshotRoot);
+      return;
+    }
+    // Retain only compiler metadata between builds. Authored inputs and bundle
+    // stages are disposable copies, and deleted inputs cannot survive a copy.
+    for (const relativePath of [...BUILD_SOURCE_PATHS, outputDir]) {
+      rmDirSafeSync(join(snapshotRoot, relativePath));
+    }
+  };
   try {
-    for (const relativePath of [
-      'package.json',
-      'tsconfig.json',
-      'tsconfig.build.json',
-      'src',
-    ]) {
+    if (reuseCompilerCache) cleanup();
+    for (const relativePath of BUILD_SOURCE_PATHS) {
       const sourcePath = join(packageRoot, relativePath);
       if (!existsSync(sourcePath)) continue;
       cpSync(sourcePath, join(snapshotRoot, relativePath), { recursive: true });
     }
   } catch (error) {
     try {
-      rmDirSafeSync(snapshotRoot);
+      cleanup();
     } catch {
       // Preserve the source-snapshot creation error when best-effort cleanup also fails.
     }
@@ -91,9 +111,7 @@ function createImmutableBuildSource({ packageRoot }) {
   return {
     packageRoot: snapshotRoot,
     packageJsonPath: join(snapshotRoot, 'package.json'),
-    cleanup() {
-      rmDirSafeSync(snapshotRoot);
-    },
+    cleanup,
   };
 }
 
@@ -156,6 +174,8 @@ async function buildCliDistUnlocked(options = {}) {
       }
     : (options.createImmutableBuildSourceImpl ?? createImmutableBuildSource)({
         packageRoot,
+        outputDir,
+        reuseCompilerCache: options.skipLock !== true,
       });
 
   try {
@@ -172,7 +192,7 @@ async function buildCliDistUnlocked(options = {}) {
     const typeScriptInvocation = (options.resolveTypeScriptCliInvocationImpl ?? resolveTypeScriptCliInvocation)({
       processExecPath: process.execPath,
     });
-    await (options.runTypecheckImpl ?? runNodeScript)(typeScriptInvocation.argsPrefix[0], ['-p', 'tsconfig.build.json', '--noEmit'], {
+    await (options.runTypecheckImpl ?? runNodeScript)(typeScriptInvocation.argsPrefix[0], ['-p', 'tsconfig.build.json', '--noEmit', '--singleThreaded'], {
       cwd: immutableSource.packageRoot,
       env,
     });

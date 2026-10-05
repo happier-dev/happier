@@ -225,6 +225,8 @@ export interface AgentSessionRuntimeFactory {
     kind: 'runner' | 'managed_terminal' | 'provider_attach' | 'none';
     startingMode?: 'terminal' | 'remote';
     runtimeDescriptorV1?: AgentSessionOpenRequest['runtimeDescriptorV1'];
+    /** Resume may rebind a surviving owned terminal through this runtime's admission owner. */
+    retainedTerminalRecovery?: 'adopt';
     /** Applied over the already prepared environment; never replaces credentials or unset keys. */
     environmentOverlay?: Readonly<Record<string, string>>;
   }>>;

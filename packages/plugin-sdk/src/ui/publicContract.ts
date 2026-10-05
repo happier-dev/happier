@@ -56,6 +56,7 @@ import type {
 } from '@happier-dev/protocol/plugins/ui/client';
 import type {
     PluginUiAppPageColumnV1 as ProtocolPluginUiAppPageColumnV1,
+    PluginUiWidgetAreaDeclarationV1 as ProtocolPluginUiWidgetAreaDeclarationV1,
     PluginUiDestinationPlacementV1 as ProtocolPluginUiDestinationPlacementV1,
     PluginUiViewInlineBindingInputV2 as ProtocolPluginUiViewInlineBindingInputV2,
     PluginUiContainerV1 as ProtocolPluginUiContainerV1,
@@ -520,7 +521,8 @@ export type ComposerUnavailableReasonV1 = Extract<
 /**
  * Linked-Session state for plugin UI (r0.42). Protocol owns the closed grammar;
  * lifecycle, runtime and operational state are the canonical Session awareness
- * projection's own vocabulary.
+ * projection's own vocabulary. `workStatus` is the host's shared Work
+ * presentation, including report-aware settlement, not a plugin derivation.
  */
 export type SessionStateV1 = ProtocolPluginUiSessionStateV1;
 export type SessionPendingPermissionV1 = ProtocolPluginUiSessionPendingPermissionV1;
@@ -691,6 +693,7 @@ export type PluginUiViewDestinationBindingInputV2 =
         headerActions?: PluginUiPageHeaderActionV1[];
         placement?: PluginUiDestinationPlacementV1;
         column?: PluginUiAppPageColumnV1;
+        widgetAreas?: PluginUiWidgetAreaDeclarationV1[];
     }
     | {
         container: 'rightSidebarTab';
@@ -724,7 +727,13 @@ export type PluginUiViewDestinationBindingInputV2 =
         headerActions?: [];
     };
 
-/** Inline host roles share a renderer declaration, never destination chrome. */
+export type PluginUiWidgetAreaDeclarationV1 = ProtocolPluginUiWidgetAreaDeclarationV1;
+
+/**
+ * Inline host roles share a renderer declaration. Widgets inherit the canonical
+ * neutral inputs and exact Session input path; their target describes execution,
+ * while each configured instance may be hosted on any WidgetSurface.
+ */
 export type PluginUiViewInlineBindingInputV2 = ProtocolPluginUiViewInlineBindingInputV2;
 
 export type PluginUiPageHeaderActionV1 = {

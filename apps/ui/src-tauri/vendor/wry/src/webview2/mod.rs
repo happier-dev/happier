@@ -1389,23 +1389,23 @@ impl InnerWebView {
 
   pub fn go_back(&self) -> Result<bool> {
     let mut can_go_back = BOOL::default();
-    unsafe { self.webview.CanGoBack(&mut can_go_back) }.map_err(Into::into)?;
+    unsafe { self.webview.CanGoBack(&mut can_go_back) }.map_err(Error::from)?;
     if !can_go_back.as_bool() {
       return Ok(false);
     }
-    unsafe { self.webview.GoBack() }.map_err(Into::into)?;
+    unsafe { self.webview.GoBack() }.map_err(Error::from)?;
     Ok(true)
   }
 
   pub fn can_go_back(&self) -> Result<bool> {
     let mut available = BOOL::default();
-    unsafe { self.webview.CanGoBack(&mut available) }.map_err(Into::into)?;
+    unsafe { self.webview.CanGoBack(&mut available) }.map_err(Error::from)?;
     Ok(available.as_bool())
   }
 
   pub fn can_go_forward(&self) -> Result<bool> {
     let mut available = BOOL::default();
-    unsafe { self.webview.CanGoForward(&mut available) }.map_err(Into::into)?;
+    unsafe { self.webview.CanGoForward(&mut available) }.map_err(Error::from)?;
     Ok(available.as_bool())
   }
 
@@ -1413,7 +1413,7 @@ impl InnerWebView {
     if !self.can_go_forward()? {
       return Ok(false);
     }
-    unsafe { self.webview.GoForward() }.map_err(Into::into)?;
+    unsafe { self.webview.GoForward() }.map_err(Error::from)?;
     Ok(true)
   }
 

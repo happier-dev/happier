@@ -8,6 +8,7 @@ import {
   ensureWorkspacePackagesBuiltByName as ensureWorkspacePackagesBuiltByNameDefault,
   readWorkspaceBuildFileDigest,
 } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+import { createWorkspaceBuildWaitNotifier } from './utils/proc/workspaceBuildWaitNotifier.mjs';
 import { loadCliCommonWorkspacesModule } from '../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs';
 import { resolveWorkspaceBundlePublicationMode } from '../../../scripts/workspaces/workspaceBundlePublication.mjs';
 import {
@@ -391,6 +392,7 @@ export async function bundleWorkspaceDeps(opts = {}) {
     timeoutMs: DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
     pollIntervalMs: 250,
     staleAfterMs: DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
+    onWait: createWorkspaceBuildWaitNotifier({ env: baseEnv, label: 'Stack workspace publication', kind: 'lock' }),
   });
 }
 

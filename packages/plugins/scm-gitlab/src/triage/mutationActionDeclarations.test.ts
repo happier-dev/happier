@@ -67,8 +67,7 @@ describe('GitLab merge-request write declarations', () => {
   });
 
   it.each(WRITE_IDS)('%s preserves its native surfaces and central approval metadata', (id) => {
-    expect(declarationOf(id).surfaces).toEqual(id.startsWith('gitlab/merge-request/')
-      ? ['ui', 'agent', 'mcp', 'cli'] : ['ui']);
+    expect(declarationOf(id).surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
   });
 
   it.each(WRITE_IDS)('%s carries a confirmation and a non-safe danger level', (id) => {

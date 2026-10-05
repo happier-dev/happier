@@ -1,5 +1,6 @@
 import type { ActionHandler } from '../actions/service.js';
 import type { PluginCaptureSourceRuntime } from '../captureSources.js';
+import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from '../entityDragDrop.js';
 import type {
     AgentExternalSessionObservationContribution,
     AgentExternalSessionsContribution,
@@ -54,6 +55,8 @@ type CapturedActionHandler = (input: never, context: never) => ReturnType<Action
  * owner; adding a second hand-maintained family map is a correctness bug.
  */
 export interface PluginRegistrationValueByFamily {
+    dragSources: PluginDragSourceRuntime;
+    dropTargets: PluginDropTargetRuntime;
     captureSources: PluginCaptureSourceRuntime;
     actions: CapturedActionHandler;
     agents: Readonly<{

@@ -18,12 +18,8 @@ import { renderSurface } from '../renderSurface.js';
 /**
  * The Bitbucket Cloud pull-request writes, as a user can actually reach them.
  *
- * Every Action is declared `surfaces: ['ui']` with `placementBindings: ['detailsPanel']`.
- * `ui` is the write's whole product reach: the mounted detail body reaches the daemon as
- * present-user UI authority — while the host does not read that placement binding for a source-owned Triage detail
- * renderer; the browser shell is its only consumer, over a different contribution family. So both
- * the reachability and the control are this surface's own
- * work, and these cases prove the exact thing a declaration cannot: that a user can press it, that
+ * Shared action admission also supports automation callers. These cases prove
+ * the mounted UI path that a declaration cannot: that a user can press it, that
  * what leaves carries the decisions they made and the commit they were shown, and that the settled
  * answer is presented rather than swallowed.
  */

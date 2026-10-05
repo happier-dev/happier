@@ -5642,7 +5642,7 @@ function BindingEditJourney(props: Readonly<{
         return undefined;
       }
       const parsed = ConversationBindingReadResultV1Schema.safeParse(settled.result);
-      if (!parsed.success) {
+      if (!parsed.success || parsed.data.kind === 'automationAssociation') {
         setDetailPending(false);
         setFeedback('readUnavailable');
         return undefined;

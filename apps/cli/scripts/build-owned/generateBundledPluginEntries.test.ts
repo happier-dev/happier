@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -7,7 +8,7 @@ import * as piDefinition from '../../../../packages/plugins/pi/src/agent/definit
 import * as codexDefinition from '../../../../packages/plugins/codex/src/agent/definition';
 import * as claudeDefinition from '../../../../packages/plugins/claude/src/agent/definition';
 import * as ohMyPiDefinition from '../../../../packages/plugins/ohmypi/src/agent/definition';
-import { collectBundledFirstPartyVoiceProjectionSources, collectBundledPluginUiTranslations, reconcileBundledPluginInstalledRuntime, readExternalSessionSourceDeclaration, renderRetainedCliBundledPluginImplementationEntriesTs, resolveGeneratorPackagedRuntimePreparation, selectCanonicalRuntimeWorkspacePackageRoots, publishBundledPluginSemanticProjection, readInheritedBundledPluginFailures } from './generateBundledPluginEntries.ts';
+import { collectBundledFirstPartyVoiceProjectionSources, collectBundledPluginUiTranslations, reconcileBundledPluginInstalledRuntime, readExternalSessionSourceDeclaration, renderRetainedCliBundledPluginImplementationEntriesTs, resolveGeneratorPackagedRuntimePreparation, selectCanonicalRuntimeWorkspacePackageRoots, publishBundledPluginSemanticProjection, readInheritedBundledPluginFailures, parsePreparedGeneratorPublication } from './generateBundledPluginEntries.ts';
 import { renderBundledAgentDefinitionsTs } from './bundledPlugins/agentFacts.ts';
 import { renderBundledVoiceEntriesTs, renderBundledVoiceRuntimeEntriesTs } from './bundledPlugins/voice.ts';
 import { readBundledAgentNativeHomeEnvironmentKeys } from '../../../stack/scripts/utils/env/scrub_env.mjs';
@@ -26,10 +27,92 @@ import { AGENT_IDS, BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '../../../../pa
 import { collectBundledAgentContributionIdentities } from './generateBundledPluginEntries.ts';
 import { renderAgentIdsTs } from './bundledPlugins/agentFacts.ts';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../../src/plugins/projection/registry/sources/generatedBundledPluginManifests';
+import { readGeneratorAuthoringSourceFingerprint } from './generateBundledPluginEntries.ts';
+import { withGeneratorSingleFlight } from './bundledPlugins/publication.ts';
 
 const generatorSource = readFileSync(new URL('./generateBundledPluginEntries.ts', import.meta.url), 'utf8');
 const registryRendererSource = readFileSync(new URL('./bundledPlugins/registry.ts', import.meta.url), 'utf8');
 const voiceRendererSource = readFileSync(new URL('./bundledPlugins/voice.ts', import.meta.url), 'utf8');
+
+describe('bundled generator preparation process boundary', () => {
+  it('rejects changed authoring source without invalidating built outputs for unrelated daemon edits', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bundled-authoring-inputs-'));
+    const author = join(root, 'src/plugins/authoring/sourceModule.ts');
+    const daemon = join(root, 'src/daemon/daemon.ts');
+    mkdirSync(join(root, 'src/plugins/authoring'), { recursive: true });
+    mkdirSync(join(root, 'src/daemon'), { recursive: true });
+    writeFileSync(author, 'export const author = 1;');
+    writeFileSync(daemon, 'export const daemon = 1;');
+    try {
+      const first = readGeneratorAuthoringSourceFingerprint(root);
+      writeFileSync(daemon, 'export const daemon = 2;');
+      expect(readGeneratorAuthoringSourceFingerprint(root)).toBe(first);
+      writeFileSync(author, 'export const author = 2;');
+      expect(readGeneratorAuthoringSourceFingerprint(root)).not.toBe(first);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  it('preserves optional-plugin exclusions and dependency currentness across child serialization', () => {
+    const prepared = {
+      dependencyCurrentness: 'prepared dependency signature',
+      pluginFailures: [{
+        packageName: '@happier-dev/plugins-channels', pluginId: 'happier.channels',
+        diagnostic: { code: 'plugin_manifest_invalid', message: 'manifest rejected' },
+      }],
+    };
+    expect(parsePreparedGeneratorPublication(JSON.parse(JSON.stringify(prepared)))).toEqual(prepared);
+    expect(() => parsePreparedGeneratorPublication({ ...prepared, dependencyCurrentness: null })).toThrow();
+    expect(() => parsePreparedGeneratorPublication({ ...prepared, pluginFailures: [{ packageName: 'not-a-plugin' }] })).toThrow();
+  });
+  it.each(['drift', 'compiler'] as const)('preserves terminal %s failure across a real private child without retrying it', async (mode) => {
+    const root = mkdtempSync(join(tmpdir(), 'bundled-terminal-child-'));
+    const source = join(root, 'source');
+    writeFileSync(source, 'first');
+    let children = 0;
+    const childSource = `
+      import { execFile } from 'node:child_process';
+      import { writeFileSync } from 'node:fs';
+      import { promisify } from 'node:util';
+      import { BuildInputDriftError, WorkspacePackageBuildError, withSingleTrailingBuildPass, serializeTerminalBuildFailure }
+        from ${JSON.stringify(new URL('../../../../scripts/workspaces/buildInputConvergence.mjs', import.meta.url).href)};
+      const [source, mode] = process.argv.slice(1);
+      try {
+        await withSingleTrailingBuildPass({ run: async (trailing) => {
+          writeFileSync(source, trailing ? 'third' : 'second');
+          if (mode === 'drift') throw new BuildInputDriftError('inputs still moving');
+          try { await promisify(execFile)(process.execPath, ['-e', 'throw new Error("compiler rejected current source")']); }
+          catch (error) { throw new WorkspacePackageBuildError(error); }
+        } });
+      } catch (error) {
+        process.send(serializeTerminalBuildFailure(error), () => { process.disconnect(); process.exitCode = 1; });
+      }
+    `;
+    try {
+      await expect(withGeneratorSingleFlight({
+        readFingerprint: () => readFileSync(source, 'utf8'),
+        stampPath: join(root, 'readiness.json'),
+        lockOptions: { lockPath: join(root, 'publication.lock') },
+        prepare: async () => {
+          children++;
+          await new Promise<void>((resolve, reject) => {
+            let failure: unknown;
+            const child = spawn(process.execPath, ['--input-type=module', '-e', childSource, source, mode], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+            child.on('message', (message: unknown) => {
+              try { parsePreparedGeneratorPublication(message); }
+              catch (error) { failure = error; }
+            });
+            child.once('error', reject);
+            child.once('exit', (code) => code === 0 ? resolve() : reject(failure ?? new Error('child failed without its terminal result')));
+          });
+        },
+        run: async () => { throw new Error('terminal preparation must not publish'); },
+      })).rejects.toMatchObject(mode === 'drift'
+        ? { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: true }
+        : { code: 'WORKSPACE_PACKAGE_BUILD_FAILED' });
+      expect(children).toBe(1);
+      expect(existsSync(join(root, 'readiness.json'))).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
 
 function sourceBetween(startMarker: string, endMarker: string, source = generatorSource): string {
   const start = source.indexOf(startMarker);

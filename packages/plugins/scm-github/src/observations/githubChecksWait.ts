@@ -77,11 +77,10 @@ export async function waitGithubChecksSource(input: unknown, context: PluginInvo
       if (deadlineReached) return result('observation_timeout');
       if (!source || source.definition.eventRef.localId !== row.value['event-local-id']
         || source.definition.sourceInstanceId !== row.value.payload.sourceInstanceId) return result('target_unavailable');
-      const cursor = row.value.payload.cursor;
-      const continuity = row.value.payload.continuity;
-      if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor) || cursor.kind !== 'pullRequestChecks' || cursor.v !== 1
-        || !continuity || typeof continuity !== 'object' || Array.isArray(continuity)
-        || continuity.endpointKind !== 'pullRequestChecks' || typeof continuity.repositoryId !== 'string') return result('target_unavailable');
+      const cursor = readJsonRecord(row.value.payload.cursor);
+      const continuity = readJsonRecord(row.value.payload.continuity);
+      if (!cursor || cursor.kind !== 'pullRequestChecks' || cursor.v !== 1
+        || !continuity || continuity.endpointKind !== 'pullRequestChecks' || typeof continuity.repositoryId !== 'string') return result('target_unavailable');
       snapshot = readGithubChecksSnapshot(cursor.snapshot) ?? undefined;
       if (!snapshot || row.value.payload.sourceInstanceId !== githubChecksSourceInstanceId(continuity.repositoryId, snapshot)) return result('target_unavailable');
       if (snapshot.failure?.class === 'permission' || snapshot.failure?.class === 'authentication') return result('permission_denied');
@@ -114,4 +113,9 @@ export async function waitGithubChecksSource(input: unknown, context: PluginInvo
 }
 function invalid() {
   return new PluginError({ code: 'github_checks_wait_input_invalid', message: 'Choose an admitted checks source and condition.' });
+}
+
+/** A JSON object (not an array): the native compiler does not narrow readonly JSON arrays out through `Array.isArray`. */
+function readJsonRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
 }

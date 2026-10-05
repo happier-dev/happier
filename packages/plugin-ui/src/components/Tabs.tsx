@@ -52,8 +52,8 @@ export type TabsProps = Readonly<{
   testID?: string;
   /**
    * `host` when an enclosing frame already draws the tab strip for this
-   * surface (a detail that mounted it for one tab): only the selected panel
-   * renders, still inside its own active interval.
+   * surface: only the selected panel is visible, with the same retention and
+   * active-interval rules as a shown strip.
    */
   tabList?: 'shown' | 'host';
   /**
@@ -63,6 +63,12 @@ export type TabsProps = Readonly<{
    * right inside a scroll area.
    */
   layout?: 'content' | 'fill';
+  /**
+   * One stateful renderer shared by the tabs, instead of per-item children.
+   * The caller supplies the selected panel to that renderer; changing tabs
+   * updates its label without remounting it. Nested Tabs own panel activity.
+   */
+  sharedPanel?: ReactNode;
   children?: ReactNode;
 }>;
 

@@ -1,8 +1,6 @@
 /** ElevenLabs Voice account operations with bounded response parsing. */
-import {
-  VoiceRealtimeJsonValueSchema,
-  type VoiceRealtimeJsonValue,
-} from '@happier-dev/plugin-sdk/voice/client';
+import { z } from 'zod';
+import type { VoiceRealtimeJsonValue } from '@happier-dev/plugin-sdk/voice/client';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import {
   classifyVoiceProviderHttpFailure,
@@ -20,7 +18,7 @@ const ELEVENLABS_AGENT_CONFIG_TAG_PREFIX = 'happier_voice_config_v';
 const ELEVENLABS_AGENT_PLATFORM_SETTINGS = {
   auth: { enable_auth: true },
   overrides: { conversation_config_override: {
-    agent: { language: true, prompt: { prompt: true } },
+    agent: { first_message: true, language: true, prompt: { prompt: true } },
     conversation: { text_only: true },
   } },
 } satisfies VoiceRealtimeJsonValue;
@@ -168,7 +166,7 @@ export async function listElevenLabsVoicesWithAccountOperations(input: Readonly<
 function normalizeToolParameters(value: Record<string, unknown>): VoiceRealtimeJsonValue {
   const result: Record<string, unknown> = { ...value, type: 'object' };
   if (!result.properties || typeof result.properties !== 'object' || Array.isArray(result.properties)) result.properties = {};
-  return VoiceRealtimeJsonValueSchema.parse(result);
+  return z.json().parse(result);
 }
 
 function desiredElevenLabsToolConfig(tool: Readonly<{
@@ -176,7 +174,7 @@ function desiredElevenLabsToolConfig(tool: Readonly<{
   description: string;
   parameters: Record<string, unknown>;
 }>): VoiceRealtimeJsonValue {
-  return VoiceRealtimeJsonValueSchema.parse({
+  return z.json().parse({
     type: 'client',
     name: tool.name,
     description: tool.description,
@@ -202,7 +200,7 @@ function findExactSelectedElevenLabsToolId(
     const id = stringValue(record.id, 256);
     const toolConfig = record.tool_config;
     if (!id || !toolConfig || typeof toolConfig !== 'object' || Array.isArray(toolConfig)) continue;
-    const candidate = VoiceRealtimeJsonValueSchema.safeParse(toolConfig);
+    const candidate = z.json().safeParse(toolConfig);
     const candidateRecord = candidate.success && !Array.isArray(candidate.data)
       && candidate.data !== null && typeof candidate.data === 'object'
       ? candidate.data as Readonly<Record<string, unknown>>
@@ -603,6 +601,7 @@ export async function isElevenLabsAgentConfigurationCurrent(input: Readonly<{
   const agentOverrides = objectValue(overrides.agent);
   return Array.isArray(agent.tags) && agent.tags.includes(ELEVENLABS_AGENT_CONFIG_TAG)
     && objectValue(platform.auth).enable_auth === true
+    && agentOverrides.first_message === true
     && agentOverrides.language === true
     && objectValue(agentOverrides.prompt).prompt === true
     && objectValue(overrides.conversation).text_only === true;

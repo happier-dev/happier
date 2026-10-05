@@ -18,6 +18,7 @@ import {
     PluginSettingsProjectionError,
     projectPluginSettingsContributionV2,
     PluginResourceKindV2Schema,
+    PluginDynamicResourceScopeV1Schema,
 } from '@happier-dev/protocol';
 
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
@@ -50,6 +51,8 @@ import { connectedAccountProjectionFamily } from '../connectedAccounts';
 import { voiceModelPackProjectionFamily, voiceProviderProjectionFamily } from '../voiceDeclarations';
 import { rolesProjectionFamily } from '../roles';
 import { workflowsProjectionFamily } from '../workflows';
+import { inputTypesProjectionFamily } from '../inputTypes';
+import { dragSourcesProjectionFamily, dropTargetsProjectionFamily } from '../entityDragDrop';
 import {
     composerAttachmentsProjectionFamily,
     composerControlsProjectionFamily,
@@ -57,6 +60,7 @@ import {
 } from '../composer';
 import {
     buildPluginContributionIntrospectionQualifiedId,
+    enrichPluginDiagnosticRecord,
     projectPluginCompatibilityDiagnostics,
     projectPluginContributionIntrospection,
 } from '@/plugins/projection/introspection/project';
@@ -67,6 +71,7 @@ import {
     resolveLocalSettingsDeclarations,
 } from '@/plugins/settings/localSettingsContributions';
 import { resolveNotificationChannelSettingsContributions } from '@/plugins/settings/notificationChannelSettings';
+import { deriveRegistryConnectedAccountPurposeAuthorizations } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 
 function readOptionalString(value: unknown): string | undefined {
     const normalized = typeof value === 'string' ? value.trim() : '';
@@ -446,6 +451,14 @@ function collectPluginDiagnosticMetadata(params: Readonly<{
         }
         metadataByPluginId.set(metadata.pluginId, candidate);
     }
+    for (const contribution of params.registry.introspectionContributions ?? []) {
+        const candidate = {
+            id: contribution.pluginId,
+            version: contribution.pluginVersion,
+            source: contribution.source,
+        };
+        if (!metadataByPluginId.has(candidate.id)) metadataByPluginId.set(candidate.id, candidate);
+    }
     return metadataByPluginId;
 }
 
@@ -781,24 +794,17 @@ function buildCommandsById(
 
 function buildResourcesById(
     registry: ResolvedContributionRegistry,
+    pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>,
 ): PluginProjectionV2['resourcesById'] {
     const resourcesById: PluginProjectionV2['resourcesById'] = {};
+    const purposeScopes = deriveRegistryConnectedAccountPurposeAuthorizations(registry);
     for (const resource of registry.resources) {
         if (!resource.pluginId) {
             continue;
         }
-        // §3.6.1: a dynamic resource has no package path, and
-        // `PluginProjectedResourceV2Schema.path` is a required wire field. It is
-        // deliberately NOT projected as `path: <id>` — that would disclose a
-        // fabricated package path. Projecting the dynamic arm requires adding
-        // the `source` discriminant to the projection schema, which is a
-        // wire-compatibility decision owned by the EU-4b UI-delivery leg that
-        // makes these entries reachable from the app in the first place.
-        if (isDynamicPluginResourceContributionV2(
+        const dynamic = isDynamicPluginResourceContributionV2(
             resource.definition as unknown as Readonly<Record<string, unknown>>,
-        )) {
-            continue;
-        }
+        );
         const resourceKind = PluginResourceKindV2Schema.safeParse(resource.definition.type);
         if (!resourceKind.success) {
             throw new Error(
@@ -806,11 +812,23 @@ function buildResourcesById(
             );
         }
         const key = qualifiedProjectionKey(resource.pluginId, resource.definition.id);
+        const occurrenceId = registry.occurrenceIdsByPluginId?.[resource.pluginId];
+        const parsedOrigin = PluginMachineExecutionOriginV1Schema.safeParse(pluginExecutionOriginsByPluginId?.[resource.pluginId]);
+        const executionOrigin = occurrenceId && parsedOrigin.success
+            && parsedOrigin.data.materializationRef.pluginId === resource.pluginId ? parsedOrigin.data : undefined;
         resourcesById[key] = {
             id: resource.definition.id,
             pluginId: resource.pluginId,
+            ...(occurrenceId ? { occurrenceId } : {}),
+            ...(executionOrigin ? { serverIdentityId: executionOrigin.serverIdentityId,
+                materializationRef: Object.freeze({ ...executionOrigin.materializationRef }) } : {}),
             resourceKind: resourceKind.data,
-            path: resource.definition.path ?? resource.definition.id,
+            ...(!dynamic && resource.definition.path ? { path: resource.definition.path } : {}),
+            scope: dynamic ? PluginDynamicResourceScopeV1Schema.parse(resource.definition.scope) : 'global',
+            connectedAccountPurposes: purposeScopes.find(scope => scope.consumer.pluginId === resource.pluginId
+                && scope.consumer.localId === resource.definition.id)?.authorizedPurposes.map(scope => ({
+                    purpose: scope.purpose.purpose, serviceRefs: [...scope.serviceRefs],
+                })),
             digest: readOptionalString(resource.definition.digest),
             contentType: readOptionalString(resource.definition.contentType),
         };
@@ -931,12 +949,50 @@ export function buildPluginProjectionV2(params: Readonly<{
         voiceModelPackProjectionFamily,
         rolesProjectionFamily,
         workflowsProjectionFamily,
+        inputTypesProjectionFamily,
+        dragSourcesProjectionFamily,
+        dropTargetsProjectionFamily,
         voiceProviderProjectionFamily,
         accountCollectionsProjectionFamily,
         composerAttachmentsProjectionFamily,
         composerControlsProjectionFamily,
         composerRegionsProjectionFamily,
     ];
+    let diagnosticMetadataByPluginId: ReturnType<typeof collectPluginDiagnosticMetadata> | undefined;
+    const familiesById = buildPluginProjectionFamiliesByIdV2({
+        registry: params.registry,
+        generation: params.generation,
+        pluginDiagnosticsByPluginId,
+        ...(params.pluginExecutionOriginsByPluginId
+            ? { pluginExecutionOriginsByPluginId: params.pluginExecutionOriginsByPluginId }
+            : {}),
+        pluginUiHostRuntime: params.pluginUiHostRuntime,
+        ...(params.requestedLocale === undefined ? {} : { requestedLocale: params.requestedLocale }),
+        scmRuntimeAvailability: params.scmRuntimeAvailability,
+        onInvalidEntry: ({ family, entryId, entry, issues }) => {
+            diagnosticMetadataByPluginId ??= collectPluginDiagnosticMetadata({ registry: params.registry, installedPackages });
+            const pluginId = readOptionalString(entry.pluginId);
+            const plugin = pluginId ? diagnosticMetadataByPluginId.get(pluginId) : undefined;
+            if (!plugin) throw new Error(`Missing current plugin metadata for invalid projected entry '${entryId}'`);
+            const definition = 'definition' in entry ? entry.definition : undefined;
+            const localId = ('descriptorId' in entry ? readOptionalString(entry.descriptorId) : undefined)
+                ?? ('contributionId' in entry ? readOptionalString(entry.contributionId) : undefined)
+                ?? (definition && typeof definition === 'object' ? readOptionalString(Reflect.get(definition, 'id')) : undefined);
+            diagnostics.push(enrichPluginDiagnosticRecord({
+                code: 'plugin_compatibility_projection_invalid',
+                severity: 'error',
+                message: `Invalid contribution projection omitted: ${entryId}`,
+                details: { family, entryId, issues: issues.map((issue) => ({ ...issue, path: [...issue.path] })) },
+            }, {
+                ordinal: diagnostics.length,
+                plugin,
+                ...(localId ? { contribution: createPluginContributionIdentity({ pluginId: plugin.id, localId }) } : {}),
+                stage: 'normalization',
+                occurrenceId: params.registry.occurrenceIdsByPluginId?.[plugin.id],
+                host: 'daemon', platform: process.platform, occurredAtMs: Date.now(),
+            }));
+        },
+    }, familyDescriptors);
 
     return {
         v: 2,
@@ -962,21 +1018,9 @@ export function buildPluginProjectionV2(params: Readonly<{
         ),
         toolsById: buildToolsById(params.registry),
         commandsById: buildCommandsById(params.registry),
-        resourcesById: buildResourcesById(params.registry),
+        resourcesById: buildResourcesById(params.registry, params.pluginExecutionOriginsByPluginId),
         settingsById: buildSettingsById(params.registry),
-        familiesById: buildPluginProjectionFamiliesByIdV2({
-            registry: params.registry,
-            generation: params.generation,
-            pluginDiagnosticsByPluginId,
-            ...(params.pluginExecutionOriginsByPluginId
-                ? { pluginExecutionOriginsByPluginId: params.pluginExecutionOriginsByPluginId }
-                : {}),
-            pluginUiHostRuntime: params.pluginUiHostRuntime,
-            ...(params.requestedLocale === undefined
-                ? {}
-                : { requestedLocale: params.requestedLocale }),
-            scmRuntimeAvailability: params.scmRuntimeAvailability,
-        }, familyDescriptors),
+        familiesById,
         contributionIntrospection: narrowIntrospectionToClientReadFamilies(projectPluginContributionIntrospection({
             generation: params.generation,
             candidates: params.registry.introspectionContributions ?? [],

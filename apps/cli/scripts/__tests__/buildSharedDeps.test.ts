@@ -204,10 +204,10 @@ describe('bundled plugin preparation', () => {
 });
 
 function writeBundledPluginSourceIntegrityInventory(
+  repoRoot: string,
   inventoryPath: string,
   integrities: readonly unknown[],
 ): void {
-  const repoRoot = resolve(dirname(inventoryPath), '../../../..');
   for (const integrity of integrities) {
     const packageName = typeof integrity === 'object' && integrity !== null
       ? String((integrity as { packageName?: unknown }).packageName ?? '')
@@ -216,8 +216,7 @@ function writeBundledPluginSourceIntegrityInventory(
     if (!packageId || packageId === packageName) continue;
     const manifestPath = resolve(repoRoot, 'packages', 'plugins', packageId, 'src', 'manifest.ts');
     if (existsSync(manifestPath)) continue;
-    mkdirSync(dirname(manifestPath), { recursive: true });
-    writeFileSync(manifestPath, 'export {};\n', 'utf8');
+    writeBundledPluginSourceInputs({ repoRoot, pluginId: packageId, writePackageJson: false });
   }
   mkdirSync(dirname(inventoryPath), { recursive: true });
   writeFileSync(inventoryPath, `${JSON.stringify({
@@ -252,6 +251,10 @@ function materializeWorkspaceRuntimeDependencyOwner(repoRoot: string): void {
     resolve(sourceRepoRoot, 'packages', 'cli-common', 'packageBuildOutputTargets.mjs'),
     resolve(cliCommonDir, 'packageBuildOutputTargets.mjs'),
   );
+  cpSync(
+    resolve(sourceRepoRoot, 'packages', 'cli-common', 'bundledPluginPublicationPolicy.mjs'),
+    resolve(cliCommonDir, 'bundledPluginPublicationPolicy.mjs'),
+  );
   mkdirSync(resolve(repoRoot, 'node_modules'), { recursive: true });
   cpSync(
     resolve(sourceRepoRoot, 'node_modules', 'semver'),
@@ -261,6 +264,14 @@ function materializeWorkspaceRuntimeDependencyOwner(repoRoot: string): void {
 }
 
 function materializeCliCommonWorkspacesLoader(repoRoot: string): void {
+  cpSync(
+    resolve(workspaceScriptsSourceDir, 'buildInputConvergence.mjs'),
+    resolve(repoRoot, 'scripts', 'workspaces', 'buildInputConvergence.mjs'),
+  );
+  cpSync(
+    resolve(workspaceScriptsSourceDir, 'bundledPluginPublicationFailure.mjs'),
+    resolve(repoRoot, 'scripts', 'workspaces', 'bundledPluginPublicationFailure.mjs'),
+  );
   cpSync(
     resolve(workspaceScriptsSourceDir, 'loadCliCommonWorkspacesModule.mjs'),
     resolve(repoRoot, 'scripts', 'workspaces', 'loadCliCommonWorkspacesModule.mjs'),
@@ -369,12 +380,21 @@ describe('buildSharedDeps', () => {
         quiet: true,
         mode: 'check',
       })).resolves.toBe(true);
-      await expect(runCanonicalBundledPluginArtifactPublisher({
-        repoRoot,
-        env: { ...process.env, BUNDLED_PUBLISHER_TEST_FAIL: '1' },
-        quiet: true,
-        mode: 'check',
-      })).rejects.toThrow(/code=17[\s\S]*bundled publisher test failure/);
+      const progress: string[] = [];
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        progress.push(String(chunk));
+        return true;
+      });
+      try {
+        await expect(runCanonicalBundledPluginArtifactPublisher({
+          repoRoot,
+          env: { ...process.env, BUNDLED_PUBLISHER_TEST_FAIL: '1' },
+          quiet: true,
+          progress: true,
+          mode: 'check',
+        })).rejects.toThrow(/code=17[\s\S]*bundled publisher test failure/);
+        expect(progress.join('')).toContain('bundled publisher test failure');
+      } finally { stderr.mockRestore(); }
     } finally {
       removeTempDirSync(repoRoot);
     }
@@ -527,6 +547,11 @@ describe('buildSharedDeps', () => {
       writeFileSync(bundlePath, 'bundle bytes\n', 'utf8');
       writeFileSync(sourceMapPath, '{"version":3}\n', 'utf8');
       writeFileSync(resolve(artifactDir, 'ui-artifacts.json'), JSON.stringify({ version: 1 }), 'utf8');
+      writeFileSync(resolve(pluginDir, 'dist', '.happier-build-inputs.json'), JSON.stringify({
+        version: 2,
+        fingerprint: readWorkspacePackageInputFingerprint({ packageDir: pluginDir }),
+        outputs: [{ path: 'index.js', digest: createHash('sha256').update('export const built = 1;\n').digest('hex') }],
+      }), 'utf8');
 
       const signature = computeSourceDevSharedDepsSignature({
         repoRoot,
@@ -544,14 +569,31 @@ describe('buildSharedDeps', () => {
         },
       }), 'utf8');
 
+      const builtFrame = JSON.stringify(computeSourceDevSharedDepsSignature({
+        repoRoot, workspaceNames: ['plugins-inspector'], includeBuildInputs: false,
+      }));
       writeFileSync(resolve(pluginDir, 'src', 'index.ts'), 'export const source = 2;\n', 'utf8');
+      expect(JSON.stringify(computeSourceDevSharedDepsSignature({
+        repoRoot, workspaceNames: ['plugins-inspector'], includeBuildInputs: false,
+      }))).toBe(builtFrame);
+      const exactLastGreen = inspectUsableSourceDevSharedDepsLastGreen({
+        repoRoot, workspaceNames: ['plugins-inspector'], requireExactOutputs: true,
+      });
+      expect(exactLastGreen).toMatchObject({ usable: true });
       writeFileSync(bundlePath, 'newer complete bundle bytes with a different size\n', 'utf8');
       writeFileSync(resolve(pluginDir, 'dist', 'newer-extra.js'), 'extra output is allowed\n', 'utf8');
+      expect(JSON.stringify(computeSourceDevSharedDepsSignature({
+        repoRoot, workspaceNames: ['plugins-inspector'], includeBuildInputs: false,
+      }))).not.toBe(builtFrame);
 
       expect(inspectUsableSourceDevSharedDepsLastGreen({
         repoRoot,
         workspaceNames: ['plugins-inspector'],
       })).toEqual({ usable: true, reason: 'recorded-outputs-complete', syncedAtMs: 1 });
+      expect(inspectUsableSourceDevSharedDepsLastGreen({
+        repoRoot, workspaceNames: ['plugins-inspector'], requireExactOutputs: true,
+      })).toMatchObject({ usable: false });
+      expect(exactLastGreen).toMatchObject({ signature });
 
       rmSync(sourceMapPath);
       expect(inspectUsableSourceDevSharedDepsLastGreen({
@@ -1266,7 +1308,7 @@ describe('buildSharedDeps', () => {
           digest: `sha256:${createHash('sha256').update(Buffer.from(publishedBundle, 'utf8')).digest('hex')}`,
         }],
       }]);
-      writeBundledPluginSourceIntegrityInventory(inventoryPath, JSON.parse(inventoryPayload));
+      writeBundledPluginSourceIntegrityInventory(repoRoot, inventoryPath, JSON.parse(inventoryPayload));
 
       markFixtureWorkspaceOutputsCurrent(pluginDir);
       const builtWorkspaceNames: string[] = [];
@@ -1345,7 +1387,7 @@ describe('buildSharedDeps', () => {
           digest: `sha256:${createHash('sha256').update(Buffer.from(publishedBundle, 'utf8')).digest('hex')}`,
         }],
       }]);
-      writeBundledPluginSourceIntegrityInventory(inventoryPath, JSON.parse(inventoryPayload));
+      writeBundledPluginSourceIntegrityInventory(repoRoot, inventoryPath, JSON.parse(inventoryPayload));
 
       markFixtureWorkspaceOutputsCurrent(pluginDir);
       const builtWorkspaceNames: string[] = [];
@@ -1431,7 +1473,7 @@ describe('buildSharedDeps', () => {
           },
         ],
       }]);
-      writeBundledPluginSourceIntegrityInventory(inventoryPath, JSON.parse(inventoryPayload));
+      writeBundledPluginSourceIntegrityInventory(repoRoot, inventoryPath, JSON.parse(inventoryPayload));
 
       const publishBundledPluginArtifacts = vi.fn(async () => true);
       await syncSharedDepsForSourceDev({
@@ -1494,7 +1536,7 @@ describe('buildSharedDeps', () => {
         },
       ],
     }]);
-    writeBundledPluginSourceIntegrityInventory(inventoryPath, JSON.parse(inventoryPayload));
+    writeBundledPluginSourceIntegrityInventory(repoRoot, inventoryPath, JSON.parse(inventoryPayload));
   };
 
   const writeHoistedInventoryFixtureRepo = (repoRoot: string): void => {
@@ -1534,7 +1576,7 @@ describe('buildSharedDeps', () => {
       repoRoot,
       'retired-source-byte-ledger.json',
     );
-    writeBundledPluginSourceIntegrityInventory(inventoryPath, [{ packageName, files }]);
+    writeBundledPluginSourceIntegrityInventory(repoRoot, inventoryPath, [{ packageName, files }]);
   };
 
   const runSourceDevRuntimeClosure = async (
@@ -1587,7 +1629,7 @@ describe('buildSharedDeps', () => {
           resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-pi', 'package.json'),
           'utf8',
         );
-        writeBundledPluginSourceIntegrityInventory(resolve(
+        writeBundledPluginSourceIntegrityInventory(repoRoot, resolve(
           repoRoot,
           'retired-source-byte-ledger.json',
         ), [{
@@ -1777,7 +1819,7 @@ describe('buildSharedDeps', () => {
         artifact('@happier-dev/plugins-healthy', healthyCurrentBytes),
         artifact('@happier-dev/plugins-failed', failedLastGreenBytes),
       ];
-      writeBundledPluginSourceIntegrityInventory(inventoryPath, inventory);
+      writeBundledPluginSourceIntegrityInventory(repoRoot, inventoryPath, inventory);
 
       const syncedWorkspaceNames: string[] = [];
       const publishReadiness = vi.fn(() => ({ stamped: false, reason: 'stale-plugin-source' }));
@@ -1830,7 +1872,7 @@ describe('buildSharedDeps', () => {
       expect(publishReadiness).toHaveBeenCalledTimes(1);
 
       // Retired ledger membership is not an admission input.
-      writeBundledPluginSourceIntegrityInventory(inventoryPath, [
+      writeBundledPluginSourceIntegrityInventory(repoRoot, inventoryPath, [
         artifact('@happier-dev/plugins-healthy', healthyCurrentBytes),
       ]);
       publishReadiness.mockClear();
@@ -2176,6 +2218,7 @@ describe('buildSharedDeps', () => {
       }), 'utf8');
       writeFileSync(resolve(repoRoot, 'packages', 'plugins', 'pi', 'tsconfig.json'), '{}\n', 'utf8');
       writeBundledPluginSourceIntegrityInventory(
+        repoRoot,
         resolve(repoRoot, 'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json'),
         [{ packageName: '@happier-dev/plugins-pi', files: [] }],
       );
@@ -2325,7 +2368,7 @@ describe('buildSharedDeps', () => {
       const pluginPackageJsonPath = resolve(repoRoot, 'packages', 'plugins', 'pi', 'package.json');
       const pluginPackageJson = readFileSync(pluginPackageJsonPath, 'utf8');
       const installedPluginDir = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-pi');
-      writeBundledPluginSourceIntegrityInventory(resolve(
+      writeBundledPluginSourceIntegrityInventory(repoRoot, resolve(
         repoRoot,
         'retired-source-byte-ledger.json',
       ), [{
@@ -2761,7 +2804,7 @@ describe('buildSharedDeps', () => {
         byteLength: Buffer.byteLength(bytes, 'utf8'),
         digest: `sha256:${createHash('sha256').update(Buffer.from(bytes, 'utf8')).digest('hex')}`,
       }));
-      writeBundledPluginSourceIntegrityInventory(resolve(
+      writeBundledPluginSourceIntegrityInventory(repoRoot, resolve(
         repoRoot,
         'retired-source-byte-ledger.json',
       ), [{ packageName, files }]);
@@ -4104,6 +4147,22 @@ describe('buildSharedDeps', () => {
     const repoRoot = createTempDirSync('happy-cli-dev-sync-artifact-failure-');
     try {
       const cliDir = resolve(repoRoot, 'apps', 'cli');
+      const publisherHandoffPath = resolve(repoRoot, 'publisher-handoff.json');
+      const cliScriptsDir = resolve(cliDir, 'scripts');
+      mkdirSync(resolve(cliScriptsDir, 'build-owned'), { recursive: true });
+      // Only the publisher subprocess is a boundary fixture. Failure selection,
+      // diagnostic construction and package preservation stay in the real owner.
+      writeFileSync(resolve(cliScriptsDir, 'withNodeHeapLimit.mjs'), [
+        "import { readFileSync, appendFileSync } from 'node:fs';",
+        'const args = process.argv.slice(2);',
+        "if (args.includes('--inherited-failures-stdin')) {",
+        `  appendFileSync(${JSON.stringify(publisherHandoffPath)}, JSON.stringify({`,
+        '    args, failures: JSON.parse(readFileSync(0, "utf8")),',
+        "  }) + '\\n');",
+        '}',
+        '',
+      ].join('\n'));
+      writeFileSync(resolve(cliScriptsDir, 'build-owned', 'generateBundledPluginEntries.ts'), 'export {};\n');
       const sourcePackageDir = resolve(repoRoot, 'packages', 'plugins', 'inspector');
       const sourceFilePath = resolve(sourcePackageDir, 'src', 'index.ts');
       const sourceDistPath = resolve(sourcePackageDir, 'dist', 'index.js');
@@ -4149,6 +4208,14 @@ describe('buildSharedDeps', () => {
       expect(syncCliDependencies).toHaveBeenCalledTimes(1);
       expect(existsSync(resolve(cliDir, 'node_modules', '@happier-dev', 'plugins-inspector'))).toBe(false);
       expect(result).toMatchObject({ synced: true, stamped: false });
+      const handoffs = readFileSync(publisherHandoffPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+      expect(handoffs).toEqual(expect.arrayContaining([expect.objectContaining({
+        args: expect.arrayContaining(['--aggregate', '--inherited-failures-stdin']),
+        failures: [expect.objectContaining({
+          packageName: '@happier-dev/plugins-inspector',
+          diagnostic: { code: 'plugin_package_build_failed', message: 'generated UI graph failed' },
+        })],
+      })]));
     } finally {
       removeTempDirSync(repoRoot);
     }

@@ -9,7 +9,7 @@ export function formatHappierAsOfTime(at: number, now: number = Date.now(), loca
   const locales = locale === undefined ? [] : [locale];
   const read = new Date(at);
   const today = new Date(now);
-  const time = read.toLocaleTimeString(locales, { hour: '2-digit', minute: '2-digit' });
+  const time = read.toLocaleTimeString(locales, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   const sameDay = read.getFullYear() === today.getFullYear()
     && read.getMonth() === today.getMonth()
     && read.getDate() === today.getDate();

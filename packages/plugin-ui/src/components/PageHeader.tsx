@@ -1,10 +1,11 @@
 import type { ReactElement, ReactNode } from 'react';
 
-import { HappierPageHeader } from '../presentation/layout/PageHeader.js';
+import { HappierPageHeader, HappierPageHeadingBindingContext } from '../presentation/layout/PageHeader.js';
 import { useHappierPageChrome } from '../presentation/layout/pageChrome.js';
 import { Icon, type IconName } from './Icon.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
+import { useCollectionDetailHeadingBindingInternal } from './Focus.js';
 
 /** One fact on the page header's meta line ("v2.4.0", "Personal Home", "End-to-end encrypted"). */
 export type PageHeaderMetaFact = Readonly<{
@@ -20,6 +21,8 @@ export type PageHeaderMetaFact = Readonly<{
 export type PageHeaderProps = Readonly<{
   /** The page's title. Hidden when the host's navigation already shows it; the purpose line stays. */
   title: string;
+  /** A surface's one display greeting, above the regular page-title step. */
+  titleProminence?: 'page' | 'hero';
   /** A key from this plugin's declared translation bundle; `title` is its fallback. */
   titleKey?: string;
   /** One sentence saying what the page is for. */
@@ -27,6 +30,12 @@ export type PageHeaderProps = Readonly<{
   descriptionKey?: string;
   /** A leading identity mark: the thing the page is about (a `BrandMark`, an `Image`). */
   leading?: ReactNode;
+  /** Identity details or a summary spanning the page's content column. */
+  details?: ReactNode;
+  /** Defaults to identity; column places the summary below title and actions at full content width. */
+  detailsPlacement?: 'identity' | 'column';
+  /** Entity identity centered above its controls on a compact measured pane. */
+  compactPresentation?: 'centered';
   /** The distinguishing facts of the thing the page is about, on one quiet line. */
   meta?: readonly PageHeaderMetaFact[];
   /** At most one primary page action plus context controls. */
@@ -42,6 +51,7 @@ export type PageHeaderProps = Readonly<{
  * from another page.
  */
 export function PageHeader(props: PageHeaderProps): ReactElement {
+  const headingRef = useCollectionDetailHeadingBindingInternal();
   const translate = usePluginTranslation();
   const chrome = useHappierPageChrome();
   const title = resolveAuthorText(translate, props.title, props.titleKey) ?? props.title;
@@ -53,16 +63,22 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
     ...(fact.icon === undefined ? {} : { icon: <Icon name={fact.icon} size="small" tone="secondary" /> }),
   }));
   return (
+    <HappierPageHeadingBindingContext.Provider value={headingRef}>
     <HappierPageHeader
       title={title}
-      showTitle={chrome?.showsTitle !== true}
+      titleProminence={props.titleProminence}
+      showTitle={headingRef !== undefined || chrome?.showsTitle !== true}
       description={description}
       leading={props.leading}
+      details={props.details}
+      detailsPlacement={props.detailsPlacement}
+      compactPresentation={props.compactPresentation}
       meta={meta}
       actions={props.actions}
       renderBack={chrome?.renderBack ?? null}
       {...(chrome?.columnMaxWidthPx === undefined ? {} : { columnMaxWidthPx: chrome.columnMaxWidthPx })}
       {...(props.testID === undefined ? {} : { testID: props.testID })}
     />
+    </HappierPageHeadingBindingContext.Provider>
   );
 }

@@ -54,7 +54,7 @@ async function untilSubscribed(fixture: ReturnType<typeof harness>) {
 function genericWait(fixture: ReturnType<typeof harness>, durationMs?: number) {
   // The contributed-Action RPC is the boundary fixture. The real checkpoint
   // waiter, generic dispatch, Action admission and result schemas stay live.
-  const executor = createActionExecutor({ invokeContributedAction: async ({ action, input, signal }) => {
+  const executor = createActionExecutor({ invokeContributedAction: async ({ action, input, signal }: Parameters<NonNullable<ActionExecutorDeps['invokeContributedAction']>>[0]) => {
     expect(action).toEqual({ pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_CHECKS_WAIT_ACTION_ID });
     return { ok: true, result: await waitGithubChecksSource(input, { ...fixture.context,
       ...(signal ? { signal } : {}) }) };

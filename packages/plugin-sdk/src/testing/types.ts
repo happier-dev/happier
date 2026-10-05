@@ -1,4 +1,4 @@
-import type { PluginApi } from '../activation.js';
+import type { PluginApi, PluginClientApi } from '../activation.js';
 import type { DefinedPlugin } from '../definePlugin.js';
 import type { PluginContributionLocalId, JsonValue } from '../identity.js';
 import type {
@@ -71,6 +71,8 @@ export type PluginTestkitAdmittedTargetedOperation<
  * not the host's raw registration map.
  */
 export type PluginTestkitRegistrationByFamily = Readonly<{
+    dragSources: Parameters<PluginClientApi['dragSources']['register']>[1];
+    dropTargets: Parameters<PluginClientApi['dropTargets']['register']>[1];
     captureSources: Parameters<PluginApi['captureSources']['register']>[1];
     actions: Parameters<PluginApi['actions']['register']>[1];
     agents: Readonly<{

@@ -271,6 +271,12 @@ export function snapshotVoiceProviderRuntime(
         'Voice conversation protocol.encodeTurnControl',
         true,
     );
+    const encodePostInputCommitControls = captureStaticRegistrationMethod(
+        protocolReceiver,
+        'encodePostInputCommitControls',
+        'Voice conversation protocol.encodePostInputCommitControls',
+        false,
+    );
     const refreshAuth = captureStaticRegistrationMethod(
         protocolReceiver,
         'refreshAuth',
@@ -288,6 +294,7 @@ export function snapshotVoiceProviderRuntime(
         prepare: prepare!,
         decodeControl: decodeControl!,
         encodeTurnControl: encodeTurnControl!,
+        ...(encodePostInputCommitControls ? { encodePostInputCommitControls } : {}),
         ...(refreshAuth ? { refreshAuth } : {}),
         ...(releasePrepared ? { releasePrepared } : {}),
     });
@@ -839,6 +846,14 @@ export function snapshotStaticRegistrationValue<
 ): PluginRegistrationValueByFamily[TFamily] {
     const policyFamily: PluginRegistrationFamily = family;
     switch (policyFamily) {
+        case 'dragSources': {
+            const receiver = requireObject(value, 'Drag source runtime');
+            return Object.freeze({ describe: captureStaticRegistrationMethod(receiver, 'describe', 'Drag source runtime.describe', true) }) as PluginRegistrationValueByFamily[TFamily];
+        }
+        case 'dropTargets': {
+            const receiver = requireObject(value, 'Drop target runtime');
+            return Object.freeze({ resolve: captureStaticRegistrationMethod(receiver, 'resolve', 'Drop target runtime.resolve', true) }) as PluginRegistrationValueByFamily[TFamily];
+        }
         case 'captureSources': {
             const receiver = requireObject(value, 'Capture source runtime');
             return Object.freeze({ start: captureStaticRegistrationMethod(receiver, 'start', 'Capture source runtime.start', true) }) as PluginCaptureSourceRuntime as PluginRegistrationValueByFamily[TFamily];

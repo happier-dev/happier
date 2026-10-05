@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { createRuntimeArtifactFingerprint } from './runtime_artifact_identity.mjs';
+import { createRuntimeArtifactFingerprint, readRuntimeComponentSourceFingerprint } from './runtime_artifact_identity.mjs';
 import { resolveRuntimeBuildRequestIdentity } from './runtime_build_request_identity.mjs';
 import { createRuntimeSnapshotId } from '../runtime/shared/runtime_snapshot_identity.mjs';
 
@@ -25,6 +28,42 @@ const componentSourceFingerprints = Object.freeze({
   web: 'web-source-a',
   server: 'server-source-a',
   daemon: 'daemon-source-a',
+});
+
+test('relocated web and server inputs keep producer identity labels and still observe content changes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-relocated-inputs-'));
+  try {
+    const producer = join(root, 'producer');
+    const worker = join(root, 'worker');
+    for (const repo of [producer, worker]) for (const app of ['ui', 'server']) {
+      await mkdir(join(repo, 'apps', app, 'sources'), { recursive: true });
+      await writeFile(join(repo, 'apps', app, 'package.json'), JSON.stringify({ name: `@happier-dev/${app}` }));
+      await writeFile(join(repo, 'apps', app, 'sources/index.ts'), 'same consumed bytes');
+    }
+    for (const component of ['web', 'server']) {
+      const original = await readRuntimeComponentSourceFingerprint({ component, sourceMetadata: { repoDir: producer } });
+      const relocated = await readRuntimeComponentSourceFingerprint({ component, sourceMetadata: { repoDir: worker }, identityRepoDir: producer });
+      assert.equal(relocated, original);
+      await writeFile(join(worker, 'apps', component === 'web' ? 'ui' : 'server', 'sources/index.ts'), 'changed bytes');
+      assert.notEqual(await readRuntimeComponentSourceFingerprint({ component, sourceMetadata: { repoDir: worker }, identityRepoDir: producer }), original);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('every component identity separates consumer architectures', () => {
+  for (const component of ['web', 'server', 'daemon']) {
+    const input = { component, sourceMetadata, componentSourceFingerprint: 'same-source', supportArtifactFingerprint: 'same-support', platform: 'linux' };
+    assert.notEqual(createRuntimeArtifactFingerprint({ ...input, arch: 'arm64' }), createRuntimeArtifactFingerprint({ ...input, arch: 'x64' }));
+  }
+});
+
+test('QA stale outputs give artifacts distinct identities even with identical current inputs', () => {
+  const inputs = { component: 'web', sourceMetadata, componentSourceFingerprint: 'same-source' };
+  const stalePackages = [{ packageName: '@happier-dev/example', outputIdentity: 'old-output' }];
+  const stale = createRuntimeArtifactFingerprint({ ...inputs, stalePackages });
+  assert.notEqual(stale, createRuntimeArtifactFingerprint(inputs));
+  assert.notEqual(stale, createRuntimeArtifactFingerprint({ ...inputs, stalePackages: [{ ...stalePackages[0], outputIdentity: 'different-output' }] }));
+  assert.equal(stale, createRuntimeArtifactFingerprint({ ...inputs, stalePackages: [{ ...stalePackages[0], diagnosticSummary: 'another failure' }] }));
 });
 
 test('component artifact recipes use only their consumed source, toolchain, and support identities', () => {

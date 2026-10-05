@@ -4,6 +4,7 @@ import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin
 
 import { openAiConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
 import { OPENAI_VOICE_PROVIDER_CONTRIBUTION_ID } from './constants.js';
+import { OPENAI_REALTIME_SETTINGS_SECTION } from './voiceSettingsPresentation.js';
 
 const OPENAI_API_KEY_CREDENTIAL_SLOT_ID = VoiceCredentialSlotIdSchema.parse('api_key');
 
@@ -40,11 +41,12 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     [OPENAI_VOICE_PROVIDER_CONTRIBUTION_ID]: {
       declaration: {
       title: 'OpenAI Realtime Voice',
+      mark: { kind: 'connected_service', serviceId: 'openai' },
       kind: 'conversation',
       roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation', 'turn_control'],
       platforms: ['web', 'ios', 'android'],
       capabilities: {
-        turn: { cancelResponse: true, bargeIn: true },
+        turn: { cancelResponse: true, bargeIn: true, clearInput: true },
         tools: { effectCalls: 'stable_ids' },
       },
       credentials: {
@@ -133,6 +135,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       },
       settings: {
         schemaVersion: 1,
+        presentation: JSON.parse(JSON.stringify(OPENAI_REALTIME_SETTINGS_SECTION)),
         fields: [{
           id: 'model',
           title: 'Model',
@@ -193,6 +196,11 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         privacyDisclosure: {
           key: 'settingsVoice.realtimeProviders.openai.privacyDisclosure',
           fallback: 'Audio and conversation content are sent from this device to OpenAI using WebRTC. When enabled or used, OpenAI may also receive bounded Voice context updates, client-tool definitions, and delegated results from this device. Happier uses the selected Saved Voice API key, OpenAI Connected Service, or experimental Codex OAuth account to mint short-lived client authentication; connected accounts are accessed through the selected machine. OpenAI processes the live conversation under the selected account and may retain received data according to that account’s settings and OpenAI’s terms. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.',
+        },
+        privacyFacts: {
+          audioDestination: 'OpenAI',
+          processor: 'OpenAI Realtime',
+          retention: { key: 'settingsVoice.pages.privacy.servicePolicy', fallback: 'Follows your service account settings and terms.' },
         },
       },
         client: {

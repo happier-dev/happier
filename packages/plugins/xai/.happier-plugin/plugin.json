@@ -717,6 +717,9 @@
             ],
             "footerKey": "settingsVoice.realtimeProviders.xai.setup.footer",
             "kind": "voice.provider-settings.v1",
+            "language": {
+              "kind": "independent_reply"
+            },
             "links": {
               "account": "https://console.x.ai",
               "apiKeys": "https://console.x.ai/team/default/api-keys",

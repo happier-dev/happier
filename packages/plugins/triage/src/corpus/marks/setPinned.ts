@@ -1,5 +1,5 @@
-import { isPluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
+import { isPluginError, PluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import type { TriageEntryRefV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { CorpusCollectionsV1 } from '../collections/bindCorpusCollections.js';
 import { putCorpusRowOnce } from '../collections/putRowOnce.js';
@@ -12,7 +12,7 @@ import type {
 import { toCorpusStoredValue } from '../collections/rowCodec.js';
 import { sameTriageEntryReference } from '../identity/components.js';
 import { deriveUserMarkTag } from '../identity/tags.js';
-import { MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 } from '@happier-dev/triage-protocol/v1';
+import { isKnownNonPullRequestSubject } from './fixPullRequests.js';
 
 /**
  * The one canonical `user-marks` writer: Pin/Unpin and the fix-PR choice
@@ -197,9 +197,7 @@ export type CorpusSetFixPullRequestResultV1 =
     | Readonly<{ status: 'linked' }>
     | Readonly<{ status: 'unlinked' }>
     /** Another writer moved the mark first; the caller re-reads rather than forcing. */
-    | Readonly<{ status: 'conflict' }>
-    /** The mark already holds one page of fix-PR choices; nothing was dropped to make room. */
-    | Readonly<{ status: 'full' }>;
+    | Readonly<{ status: 'conflict' }>;
 
 /**
  * Link or unlink one fix pull request for the marked entry.
@@ -213,20 +211,25 @@ export type CorpusSetFixPullRequestResultV1 =
  * Both carry the marked entry's own display pair, because the first fix-PR
  * choice on an unpinned entry creates its mark row and a mark must be nameable
  * on its own bytes. An existing row keeps its own `displayAtMark` and pin.
- * Each list holds at most one detail page of refs; a write past that bound is
- * refused as `full` rather than silently evicting an older choice.
+ * Durable choices are not relationship query pages: link and unlink preserve
+ * all earlier intent rather than refusing or evicting it at a page boundary.
  */
 export async function setFixPullRequest(input: Readonly<{
     collections: MarkCollections;
     entryRef: TriageEntryRefV1;
     displayAtMark: CorpusUserMarkDisplayV1;
     fixPullRequest: TriageEntryRefV1;
+    /** Current admitted kind fact, supplied by the domain projection; absent stays unknown. */
+    fixPullRequestWorkflowSubject?: TriageSourceWorkflowSubjectV1 | null;
     nowMs: number;
     signal?: AbortSignal;
 }> & (
     | Readonly<{ linked: true; displayAtLink: CorpusUserMarkDisplayV1 }>
     | Readonly<{ linked: false }>
 )): Promise<CorpusSetFixPullRequestResultV1> {
+    if (input.linked && isKnownNonPullRequestSubject(input.fixPullRequestWorkflowSubject)) {
+        throw new PluginError({ code: 'triage_fix_pull_request_kind_invalid', message: 'The selected entry is not a pull request.' });
+    }
     const { collections, entryRef, fixPullRequest, nowMs } = input;
     const options = input.signal ? { signal: input.signal } : undefined;
     const markTag = await deriveUserMarkTag(collections.userMarks, entryRef, options);
@@ -242,10 +245,6 @@ export async function setFixPullRequest(input: Readonly<{
             dismissed,
         }
         : { linked, dismissed: [...dismissed, fixPullRequest] };
-    if (next.linked.length > MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1
-        || next.dismissed.length > MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1) {
-        return { status: 'full' };
-    }
     const settled = input.linked ? { status: 'linked' as const } : { status: 'unlinked' as const };
 
     if (existing) {

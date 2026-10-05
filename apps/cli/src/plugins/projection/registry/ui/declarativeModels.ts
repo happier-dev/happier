@@ -106,6 +106,10 @@ export function resolveDeclarativeProjectionModels(params: Readonly<{
                 renderer: renderer.definition,
                 settings,
                 actions,
+                dragSources: (params.registry.dragSources ?? []).filter((source) => source.pluginId === pluginId)
+                    .map((source) => ({ identity: source.identity, referenceSchema: source.definition.referenceSchema })),
+                dropTargets: (params.registry.dropTargets ?? []).filter((target) => target.pluginId === pluginId)
+                    .map((target) => target.identity),
                 actionPresentations,
                 destinations,
                 uiQueries,
@@ -152,6 +156,10 @@ export function resolveDeclarativeProjectionModels(params: Readonly<{
                     documentSource: { kind: 'resource', resourceId: section.definition.resourceId },
                 },
                 settings: [],
+                dragSources: (params.registry.dragSources ?? []).filter((source) => source.pluginId === pluginId)
+                    .map((source) => ({ identity: source.identity, referenceSchema: source.definition.referenceSchema })),
+                dropTargets: (params.registry.dropTargets ?? []).filter((target) => target.pluginId === pluginId)
+                    .map((target) => target.identity),
                 actions: permittedActions.map((entry) => entry.identity),
                 actionPresentations: permittedActions.map(({ identity, title, icon }) => Object.freeze({
                     identity,

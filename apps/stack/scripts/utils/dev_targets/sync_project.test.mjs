@@ -152,6 +152,10 @@ async function writeMutagenStatusStub(root) {
 
 test('independent sync start owns and resumes the canonical Mutagen project', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-start-'));
+  await writeFile(join(root, 'dev-targets.json'), JSON.stringify({
+    version: 3, targets: [target],
+    commandExecution: { mode: 'auto', targets: [target.name] },
+  }));
   const calls = [];
   const result = await ensureDevTargetSyncProject({
     stackBaseDir: root,
@@ -168,6 +172,7 @@ test('independent sync start owns and resumes the canonical Mutagen project', as
   });
 
   assert.equal(result.ownership, 'owned');
+  assert.match(await readFile(result.projectFile, 'utf8'), /configurationAlpha:\n\s+watch:\n\s+pollingInterval: 150/);
   assert.deepEqual(
     calls.filter((call) => call.command === 'mutagen').map((call) => call.args[1] ?? call.args[0]),
     ['version', 'terminate', 'start', 'list'],

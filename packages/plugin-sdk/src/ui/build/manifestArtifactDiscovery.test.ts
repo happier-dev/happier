@@ -31,6 +31,16 @@ async function fixture(exportTarget: unknown): Promise<string> {
 }
 
 describe('discoverExecutablePluginUiArtifacts', () => {
+    it('discovers declared drag source and drop target activation exports without a renderer or Action', async () => {
+        const root = await fixture('./ui/panel.tsx');
+        await writeFile(join(root, '.happier-plugin/plugin.json'), JSON.stringify({ contributes: {
+            dragSources: [{ id: 'entry', client: { artifactId: 'panel', exportName: 'activateSources' } }],
+            dropTargets: [{ id: 'entry', client: { artifactId: 'panel', exportName: 'activateTargets' } }],
+        } }), 'utf8');
+        await expect(discoverExecutablePluginUiArtifacts(root)).resolves.toEqual([{
+            artifactId: 'panel', entryPath: join(root, 'ui/panel.tsx'), requestedExports: ['activateSources', 'activateTargets'],
+        }]);
+    });
     it('accepts a child export within the plugin root', async () => {
         const root = await fixture('./ui/panel.tsx');
 

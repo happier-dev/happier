@@ -6,7 +6,7 @@ import {
   testkitSnapshot,
   testkitViewer,
 } from '../../corpus/testkit/observations.test-support.js';
-import type { TriageListRowV1 } from '../../projection/listWindow.js';
+import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 import type { TriagePinnedEntryV1 } from '../marks/pinCommand.js';
 import {
   planTriageListItemsV1,
@@ -27,7 +27,7 @@ type RowFacts = Readonly<{
 
 function row(entryId: string, facts: RowFacts = {}): TriageListRowV1 {
   const kindId = facts.kindId ?? 'pull-request';
-  return {
+  const projected = {
     entryRef: { source: SOURCE, kindId, collisionScope: 'origin', entryId },
     content: {
       sourceInstanceId: INSTANCE,
@@ -51,6 +51,10 @@ function row(entryId: string, facts: RowFacts = {}): TriageListRowV1 {
     selected: { kind: 'selected', sourceInstanceId: INSTANCE, reason: 'onlyPresent' },
     observations: [],
   } as TriageListRowV1;
+  return {
+    ...projected,
+    observations: [{ sourceInstanceId: INSTANCE, observedAtMs: 1_000, outcome: projected.content!.outcome }],
+  };
 }
 
 function pin(entryId: string, title = `Pinned ${entryId}`): TriagePinnedEntryV1 {
@@ -72,7 +76,7 @@ function byGroup(items: readonly TriageListItemV1[]): Readonly<Record<string, re
 describe('the PRs & Issues grouping axis', () => {
   it('files an entry by who acts next: you, an agent, someone else, or nobody', () => {
     const subject = { workflowSubject: 'pullRequest' as const, agentActive: false };
-    expect(readTriageListGroupV1({ row: row('1', { attention: 'required' }), ...subject })).toBe('needsYou');
+    expect(readTriageListGroupV1({ row: row('1', { attention: 'required' }), ...subject, agentActive: true })).toBe('needsYou');
     expect(readTriageListGroupV1({ row: row('2', { involvement: ['author'], attention: 'suggested' }), ...subject })).toBe('inReview');
     expect(readTriageListGroupV1({ row: row('3', { attention: 'suggested', involvement: ['mentioned'] }), ...subject })).toBe('everythingElse');
     expect(readTriageListGroupV1({ row: row('4'), workflowSubject: 'pullRequest', agentActive: true })).toBe('withAgent');
@@ -102,6 +106,7 @@ describe('the PRs & Issues grouping axis', () => {
       rows: [row('a', { attention: 'required' }), row('b')],
       pins: [pin('a'), pin('z', 'Not walked yet')],
       workflowSubjectOf: pullRequests,
+      agentActive: (key) => key !== triageEntryRowKey(row('b').entryRef),
     });
     expect(byGroup(items)).toEqual({ pinned: ['a', 'z'], everythingElse: ['b'] });
     const unwalked = items.find((item) => item.row.entryRef.entryId === 'z')!;
@@ -118,5 +123,29 @@ describe('the PRs & Issues grouping axis', () => {
       workflowSubjectOf: pullRequests,
     });
     expect(item!.signal).toEqual({ label: '2 failing', tone: 'danger' });
+  });
+
+  it('keeps the source locator beside the qualified identity for a Session link drop', () => {
+    const projected = row('31');
+    const [item] = planTriageListItemsV1({
+      rows: [projected], pins: [], workflowSubjectOf: pullRequests,
+    });
+    expect(item).toHaveProperty('locator', projected.content!.outcome.locator);
+    const [unreadPin] = planTriageListItemsV1({
+      rows: [], pins: [pin('31')], workflowSubjectOf: pullRequests,
+    });
+    expect(unreadPin).toHaveProperty('locator', null);
+  });
+
+  it('uses the selected connection locator rather than a different connection supplying display content', () => {
+    const projected = row('31');
+    const selectedLocator = testkitLocator({ routingToken: 'selected-connection', displayPath: 'selected/repository #31' });
+    const [item] = planTriageListItemsV1({
+      rows: [{ ...projected, observations: [{
+        sourceInstanceId: INSTANCE, observedAtMs: 2_000,
+        outcome: { ...projected.content!.outcome, locator: selectedLocator },
+      }] }], pins: [], workflowSubjectOf: pullRequests,
+    });
+    expect(item).toHaveProperty('locator', selectedLocator);
   });
 });

@@ -122,6 +122,21 @@ export type AgentExternalSessionsInvocationBounds = Readonly<{
     maxSerializedBytes: number;
 }>;
 
+/** Packaged host tool; paths are the source-owned file set, never PATH resolution. */
+export type AgentExternalSessionsRipgrep = Readonly<{
+    run(request: Readonly<{
+        args: readonly string[];
+        paths: readonly string[];
+        signal?: AbortSignal;
+    }>): Promise<Readonly<{
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+        stdoutTruncated?: boolean;
+        stderrTruncated?: boolean;
+    }>>;
+}>;
+
 export type AgentExternalSessionsInvocation =
     AgentExternalSessionsInvocationBounds & Readonly<{
         /**
@@ -135,6 +150,7 @@ export type AgentExternalSessionsInvocation =
          * fencing as every other Agent invocation.
          */
         exec: ExecService;
+        ripgrep: AgentExternalSessionsRipgrep;
     }>;
 
 /**
@@ -215,6 +231,8 @@ export type AgentExternalSessionCandidate = Readonly<{
     archived?: boolean;
     thread?: AgentExternalSessionCandidateThread;
     linkData?: AgentExternalSessionLinkData;
+    /** Decoded visible-text hit; ordinal is presentation, never a Happier seq. */
+    match?: Readonly<{ snippet: string; sourceItemId: string; messageIndex: number }>;
     /** Private resumable enrichment state; the host strips it before publication. */
     candidateIndexState?: AgentExternalSessionCandidateIndexState;
 }>;
@@ -276,6 +294,7 @@ export type AgentExternalSessionsListCandidatesRequest = AgentExternalSessionsIn
     maxItems: number;
     searchTerm?: string;
     searchMode?: 'fast' | 'full';
+    searchTarget?: 'metadata' | 'content';
     /**
      * List the Agent's internal threads too. Absent or false: top-level
      * sessions only, and pages, cursors and progress describe that listing.
@@ -293,6 +312,7 @@ export type AgentExternalSessionsListCandidatesResult = Readonly<{
     candidates: readonly AgentExternalSessionCandidate[];
     nextCursor: string | null;
     searchIncomplete?: boolean;
+    contentCoverage?: 'complete' | 'partial' | 'unsupported';
     preparation?: AgentExternalSessionsCandidatePreparation;
 }>;
 

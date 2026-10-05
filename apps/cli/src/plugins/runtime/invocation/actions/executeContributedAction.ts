@@ -13,6 +13,8 @@ import {
   type PluginMachineExecutionOriginV1,
   type RehydratedPluginContributionPointOperationV1,
   type TargetActionApprovalReplayPlacementV1,
+  UiContributedActionExecuteRequestV1Schema,
+  type UiContributedActionExecuteRequestV1,
 } from '@happier-dev/protocol';
 import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui';
@@ -69,6 +71,11 @@ export type PluginActionExecutionAttempt = Readonly<
   | { matched: false }
   | { matched: true; result: PluginActionExecutorResult }
 >;
+
+export type ClientContributedActionExecutor = (
+  request: UiContributedActionExecuteRequestV1,
+  options: Readonly<{ signal?: AbortSignal }>,
+) => Promise<PluginActionExecutorResult>;
 
 type PluginActionExecutionRegistry = ResolvedContributionRegistry | ResolvedExecutablePluginRuntimeRegistry;
 
@@ -410,15 +417,27 @@ export async function executeContributedAction(params: Readonly<{
     ) };
   }
 
-  // A contributed Action declares one exact execution target. The daemon is
-  // not an alternate route for a client target: the invoking UI process owns
-  // its activation and handler lifetime, so reaching this leaf fails closed.
-  if (
+  const surface = params.context.surface ?? 'cli';
+  const invocationSurface = params.context.invocationSurface ?? surface;
+  const clientTarget = (
     typeof action.definition.execution === 'object'
     && action.definition.execution !== null
     && 'target' in action.definition.execution
     && action.definition.execution.target === 'client'
-  ) {
+  );
+  // Only authenticated host automated origins can use the reverse channel.
+  // Plugin provenance and host-private execution bindings cannot be flattened
+  // into a host invocation on another process.
+  if (clientTarget && (
+    (invocationSurface !== 'agent' && invocationSurface !== 'mcp' && invocationSurface !== 'cli')
+    || params.context.caller !== undefined
+    || params.context.externalActionContext !== undefined
+    || params.captureExecutionOrigin !== undefined
+    || params.captureApprovalReplayPlacement !== undefined
+    || params.expectedExecutionOrigin !== undefined
+    || params.expectedApprovalReplayPlacement !== undefined
+    || params.admittedTargetedOperation !== undefined
+  )) {
     return {
       matched: true,
       result: actionHandlerNotStartedFailure(
@@ -428,8 +447,6 @@ export async function executeContributedAction(params: Readonly<{
     };
   }
 
-  const surface = params.context.surface ?? 'cli';
-  const invocationSurface = params.context.invocationSurface ?? surface;
   // The declared-surface check follows the host-stamped invocation origin, not
   // the caller kind. A mounted Plugin UI invocation derives a plugin-kind
   // caller — the plugin that owns the validated mount — but its authority is
@@ -515,6 +532,40 @@ export async function executeContributedAction(params: Readonly<{
     && !matchesAdmittedTargetedOperation(admittedTargetedOperation, action, params.context.caller)
   ) {
     return { matched: true, result: admittedTargetedOperationInvalid() };
+  }
+  if (clientTarget) {
+    const currentOccurrenceId = runtimeRegistry?.readPluginOccurrenceId?.(pluginId);
+    const contributorOccurrenceId = expectedContributorOccurrenceId ?? currentOccurrenceId;
+    if (!contributorOccurrenceId || !await isExpectedPluginCurrent({
+      runtimeRegistry, pluginId, expectedOccurrenceId: contributorOccurrenceId,
+      ...(expectedContributorMaterializationId === undefined ? {} : {
+        expectedMaterializationId: expectedContributorMaterializationId,
+      }),
+      requireMaterialization: expectedContributorMaterializationId !== undefined,
+    })) {
+      return { matched: true, result: admittedContributorOccurrenceRetired() };
+    }
+    if (params.context.signal?.aborted) {
+      return { matched: true, result: actionHandlerNotStartedFailure('plugin_action_aborted', 'Action invocation was cancelled') };
+    }
+    if (!runtimeRegistry?.executeClientAction) {
+      return { matched: true, result: actionHandlerNotStartedFailure(
+        'plugin_action_client_target_unavailable', 'No answering UI client is available',
+      ) };
+    }
+    const request = UiContributedActionExecuteRequestV1Schema.safeParse({
+      v: 1, action: { pluginId, localId: action.definition.id },
+      input: params.input ?? null, surface: invocationSurface,
+      expectedContributorOccurrenceId: contributorOccurrenceId,
+      ...(params.context.defaultSessionId === undefined ? {} : { defaultSessionId: params.context.defaultSessionId }),
+      ...(params.requiredDangerLevel === undefined ? {} : { requiredDangerLevel: params.requiredDangerLevel }),
+    });
+    if (!request.success) {
+      return { matched: true, result: actionHandlerNotStartedFailure('plugin_action_input_invalid', 'Client Action request is invalid') };
+    }
+    return { matched: true, result: await runtimeRegistry.executeClientAction(request.data, {
+      ...(params.context.signal ? { signal: params.context.signal } : {}),
+    }) };
   }
   const targetActionInvocations = runtimeRegistry
     ? runtimeRegistry.targetActionInvocations

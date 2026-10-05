@@ -158,7 +158,7 @@ function PopoverPresentation({
     const contentBody = (
       <OverlayFieldTriggerContext.Provider value={null}>
         <HappierScrollArea style={{ maxHeight: controls.maxHeight }}>
-          <Surface padding="small">
+          <Surface padding="small" materialRole="floating">
             <HappierStack gap={4}>{renderedChildren}</HappierStack>
           </Surface>
         </HappierScrollArea>

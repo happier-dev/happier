@@ -37,6 +37,8 @@ export const HAPPIER_SEGMENTED_METRICS = Object.freeze({
   segmentMinWidthPx: 24,
   /** One unavailable segment, or a whole unavailable control. */
   disabledOpacity: 0.5,
+  /** Separate list-filter pills share the tab interaction owner, without a segmented track. */
+  pills: Object.freeze({ gapPx: 8, radiusPx: 999, paddingVerticalPx: 4, paddingHorizontalPx: 8, labelFontSizePx: 13, labelSlotPx: 18 }),
 });
 
 export type HappierSegmentedSize = 'default' | 'compact';

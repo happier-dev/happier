@@ -26,11 +26,9 @@ export const TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1 = 'entries/read-
  * observation, is already in the reader's device-local projection. Both paths
  * compose the strict input through the one boundary builder.
  *
- * It is declared here rather than in `@happier-dev/triage-protocol` for the same
- * reason the aggregate list Action is: it has exactly one caller family — this
- * plugin's own mounted surfaces — and publishing it cross-plugin would invite a
- * second reader of another source's private configured payload. The handler
- * enforces that caller rule; this file only describes the wire.
+ * Mounted self and authenticated host agent/MCP/CLI callers use this exact
+ * contract. The handler enforces provenance and source admission; a supplied
+ * entry/source address never grants another plugin access to private config.
  */
 
 export const TriageReadEntryDetailInputV1Schema = defineProtocolObject({
@@ -64,11 +62,10 @@ export type TriageReadEntryDetailInputV1 = ReturnType<
  * `CONTRACT.md` §7 requires; no reader may infer that such a Session was never
  * linked.
  *
- * Source descriptor and operation/surface facts do not cross this wire. The
- * mounted host already supplies their one exact generation in
- * `SurfaceContext.targetedContributions`; rereading them here would create a
- * second descriptor authority and make this durable Account read require a
- * daemon.
+ * Source descriptors and operation/surface facts do not cross this wire.
+ * Mounted self reads remain independent of daemon contribution availability;
+ * host automated callers resolve the existing admitted source owner before
+ * reading private configuration.
  */
 export const TriageReadEntryDetailResultV1Schema = defineProtocolUnion([
     defineProtocolObject({

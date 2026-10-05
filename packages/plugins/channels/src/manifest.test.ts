@@ -26,6 +26,9 @@ import {
   MAX_CONVERSATION_DELIVERY_ATTEMPTS,
   MAX_CONVERSATION_DELIVERY_CHUNKS,
   MAX_CONVERSATION_SESSION_IDEMPOTENCY_KEY_UTF8_BYTES,
+  SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
+  SessionPullRequestBindingInputV1Schema,
+  SessionPullRequestBindingResultV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 
 import {
@@ -557,6 +560,24 @@ describe('Channels core manifest', () => {
         hostAccess: ['account-storage'],
       },
       {
+        id: SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
+        title: 'Manage session pull request binding',
+        description: 'Attaches native SCM PR links and scoped triggers through conversation bindings.',
+        inputSchema: SessionPullRequestBindingInputV1Schema.jsonSchema,
+        resultSchema: SessionPullRequestBindingResultV1Schema.jsonSchema,
+        scopes: ['global'],
+        surfaces: ['cli', 'ui', 'plugin', 'agent', 'mcp'],
+        placementBindings: ['commandPalette'],
+        dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
+        confirmation: {
+          title: 'Change Session pull request binding?',
+          body: 'This changes the Session’s saved pull request link or its scoped triggers.',
+          confirmLabel: 'Save binding',
+        },
+        hostAccess: ['account-storage'],
+      },
+      {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionTransfer,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionTransfer,
         title: 'Transfer conversation connection',
@@ -687,7 +708,7 @@ describe('Channels core manifest', () => {
         title: 'Read conversation binding',
         description: 'Reads the saved conversation binding policy and details.',
         scopes: ['global'],
-        surfaces: ['cli', 'ui'],
+        surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['secondary'],
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
@@ -2114,6 +2135,10 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
       container: 'widget',
       target: { kind: 'app' },
       renderer: 'channels-glance',
+      resources: [
+        { pluginId: 'happier.channels', localId: 'bindings-v1' },
+        { pluginId: 'happier.channels', localId: 'connections-v1' },
+      ],
       title: { key: 'plugins.channels.widget.title', fallback: 'Channels' },
       icon: 'conversations',
       home: { default: 'available' },
@@ -2144,16 +2169,60 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
         fallback: 'External conversations',
       },
       icon: 'globe',
-    }, {
+    }, expect.objectContaining({
       id: 'session-conversations-widget',
       container: 'widget',
       target: { kind: 'session' },
       renderer: 'channels-renderer',
+      resources: [
+        { pluginId: 'happier.channels', localId: 'session-conversations-v1' },
+        { pluginId: 'happier.channels', localId: 'connections-v1' },
+      ],
+      inputs: {
+        fields: [{ path: 'session', title: 'Session', widget: 'json', required: true, optionsSourceId: 'sessions' }],
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          session: {
+            type: 'object',
+            properties: {
+              serverId: { type: 'string', minLength: 1 },
+              sessionId: { type: 'string', minLength: 1 },
+            },
+            required: ['serverId', 'sessionId'],
+            additionalProperties: false,
+          },
+        },
+        required: ['session'],
+        additionalProperties: false,
+      },
+      sessionInputPath: 'session',
       title: {
         key: 'plugins.channels.session.title',
         fallback: 'External conversations',
       },
-    }, expect.objectContaining({ id: 'conversations' }), expect.objectContaining({ id: 'conversations-widget' })]);
+    }), expect.objectContaining({ id: 'conversations' }), expect.objectContaining({ id: 'conversations-widget' })]);
+
+    const sessionWidget = ui?.views?.find((view) => view.id === CHANNELS_SESSION_CONVERSATIONS_WIDGET_ID);
+    if (!sessionWidget || !('inputSchema' in sessionWidget) || !sessionWidget.inputSchema) {
+      throw new Error('Expected the Session conversations widget to declare its input value schema');
+    }
+    const validateSessionInput = compilePluginJsonSchema(sessionWidget.inputSchema);
+    const session = { serverId: 'home', sessionId: 'session-a' };
+    expect(isValidPluginJsonSchemaValue(validateSessionInput, { session })).toBe(true);
+    for (const invalidInput of [
+      {},
+      { session: 'session-a' },
+      { session: { sessionId: 'session-a' } },
+      { session: { serverId: 'home' } },
+      { session: { ...session, serverId: '' } },
+      { session: { ...session, sessionId: '' } },
+      { session: { ...session, extra: true } },
+      { session, extra: true },
+    ]) {
+      expect(isValidPluginJsonSchemaValue(validateSessionInput, invalidInput)).toBe(false);
+    }
 
     expect(PLUGIN_MANIFEST.contributes?.sessionHeaderActions).toEqual([{
       id: 'open-session-conversations',

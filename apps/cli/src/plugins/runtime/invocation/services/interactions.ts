@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { PluginError, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type {
     ApprovalQueueService,
+    CurrentSessionPresentationIntentV1,
     InteractionOptions,
     InteractionTransientApprovalAuthorRequestV1,
     InteractionTransientApprovalResultV1,
@@ -23,7 +24,7 @@ import type {
     HostSessionInteractionOptions,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
-import type { InteractionTransientRequesterV1 } from '@happier-dev/protocol';
+import { CurrentSessionPresentationAuthorIntentV1Schema, type InteractionTransientRequesterV1 } from '@happier-dev/protocol';
 import type { AgentInvocationTurnAdmissionWitness, PluginInvocationServicesSeed } from './types';
 import { isWorkflowInteractionCapacityError } from '@/agent/permissions/interactionPersistenceError';
 
@@ -341,14 +342,18 @@ export function createPluginInvocationPresentation(params: InvocationPresentatio
     }
 
     return Object.freeze({
-        async present(intent: import('@happier-dev/protocol').CurrentSessionPresentationIntentV1, mutationOptions?: Readonly<{ signal?: AbortSignal }>) {
+        async present(intent: CurrentSessionPresentationIntentV1, mutationOptions?: Readonly<{ signal?: AbortSignal }>) {
             assertCurrent();
+            const admitted = CurrentSessionPresentationAuthorIntentV1Schema.safeParse(intent);
+            if (!admitted.success) {
+                throwUiError('plugin_ui_invalid_presentation_intent', 'Use widget Actions for widget instance mutations');
+            }
             if (!currentSession.presentation) {
                 throwUiError('plugin_ui_unavailable', 'The requested UI presentation operation is unavailable');
             }
             const result = await currentSession.presentation.present({
                 operationId: createOperationId(),
-                intent,
+                intent: admitted.data,
             }, operationOptions(mutationOptions?.signal));
             assertCurrent();
             assertPresentationApplied(result);

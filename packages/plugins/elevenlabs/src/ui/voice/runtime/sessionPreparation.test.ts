@@ -71,7 +71,7 @@ function agentResponse(agentId = 'agent-1') {
       platform_settings: {
         auth: { enable_auth: true },
         overrides: { conversation_config_override: {
-          agent: { language: true, prompt: { prompt: true } },
+          agent: { first_message: true, language: true, prompt: { prompt: true } },
           conversation: { text_only: true },
         } },
       },
@@ -95,6 +95,12 @@ describe('createElevenLabsSessionPreparationService', () => {
   it.each([
     { agent_id: 'agent-1', tags: [] },
     { agent_id: 'agent-1', tags: ['happier_voice_config_v1'], platform_settings: { auth: { enable_auth: false } } },
+    // A prior Happier agent can be secure but unable to override its greeting.
+    { agent_id: 'agent-1', tags: ['happier_voice_config_v1'], platform_settings: {
+      auth: { enable_auth: true }, overrides: { conversation_config_override: {
+        agent: { language: true, prompt: { prompt: true } }, conversation: { text_only: true },
+      } },
+    } },
   ])('signals agent update before minting for obsolete or insecure remote config', async (agent) => {
     mocks.requestAccountOperation.mockImplementation(async (request: Readonly<{ operationId: string }>) => ({
       ...agentResponse(),

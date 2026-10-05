@@ -283,7 +283,7 @@ test('direct POSIX validation execution enters the target machine admission owne
 
   assert.match(remoteCommand, /apps\/stack\/bin\/hstack-exec/);
   assert.match(remoteCommand, /--heavyweight-admission/);
-  assert.match(remoteCommand, /--class=full-validation/);
+  assert.match(remoteCommand, /--class=compilation/);
   assert.match(remoteCommand, /--machine=linux/);
 });
 

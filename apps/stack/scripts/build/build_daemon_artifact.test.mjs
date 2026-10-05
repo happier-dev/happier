@@ -9,6 +9,7 @@ import {
   linkDaemonSupportPayload,
   readDaemonWorkspaceSourceFingerprint,
 } from './build_daemon_artifact.mjs';
+import { readReusableArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
 
 test('daemon workspace support identity observes source changes before a dist is installed', async () => {
   const root = await mkdtemp(join(tmpdir(), 'runtime-daemon-source-identity-'));
@@ -16,6 +17,8 @@ test('daemon workspace support identity observes source changes before a dist is
   const sourcePath = join(pluginDir, 'src', 'index.ts');
   const generatorPath = join(root, 'apps', 'cli', 'scripts', 'build-owned', 'generateBundledPluginEntries.ts');
   const rendererPath = join(root, 'apps', 'cli', 'scripts', 'build-owned', 'bundledPlugins', 'registry.ts');
+  const authorPath = join(root, 'apps', 'cli', 'src', 'plugins', 'authoring', 'sourceModule.ts');
+  const dependencyPath = join(authorPath, '..', 'dependency.ts');
   try {
     await mkdir(join(pluginDir, 'src'), { recursive: true });
     await mkdir(join(generatorPath, '..'), { recursive: true });
@@ -33,6 +36,9 @@ test('daemon workspace support identity observes source changes before a dist is
     await writeFile(sourcePath, 'export const value = 1;\n');
     await writeFile(generatorPath, 'export const generator = 1;\n');
     await writeFile(rendererPath, 'export const renderRegistry = () => "one";\n');
+    await mkdir(join(authorPath, '..'), { recursive: true });
+    await writeFile(authorPath, "import './dependency.ts';\nexport const author = 1;\n");
+    await writeFile(dependencyPath, 'export const value = 1;\n');
     const promptPath = join(pluginDir, 'resources', 'review-prompt.md');
     const assetPath = join(pluginDir, 'assets', 'icon.svg');
     const serializedManifestPath = join(pluginDir, '.happier-plugin', 'plugin.json');
@@ -66,6 +72,17 @@ test('daemon workspace support identity observes source changes before a dist is
     await writeFile(join(rendererPath, '..', 'registry.test.ts'), 'test fixture changed\n');
     assert.equal(readDaemonWorkspaceSourceFingerprint({ repoDir: root }), changedRenderer,
       'test-only changes must retain the same daemon support identity');
+    await mkdir(join(root, 'docs'));
+    await writeFile(join(root, 'docs', 'unrelated.md'), 'unrelated docs');
+    await writeFile(join(root, 'apps', 'cli', 'src', 'daemon.ts'), 'unrelated daemon source');
+    assert.equal(readDaemonWorkspaceSourceFingerprint({ repoDir: root }), changedRenderer,
+      'unrelated docs and daemon-only edits must retain warm generator support reuse');
+    await writeFile(dependencyPath, 'export const value = 2;\n');
+    const changedDependency = readDaemonWorkspaceSourceFingerprint({ repoDir: root });
+    assert.notEqual(changedDependency, changedRenderer, 'transitive authoring inputs invalidate support');
+    await rm(authorPath);
+    assert.notEqual(readDaemonWorkspaceSourceFingerprint({ repoDir: root }), changedDependency,
+      'deleted authoring entries invalidate support');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -240,43 +257,37 @@ test('a changed daemon support identity publishes only a new daemon support arti
   }
 });
 
-test('daemon code preparation detects support drift before copying the stale support closure', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'runtime-daemon-support-drift-'));
+test('daemon reuse rejects missing support and repairs it through the support builder', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-daemon-support-repair-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
   const stackBaseDir = join(root, 'stack');
-  const events = [];
-  try {
-    await assert.rejects(
-      buildDaemonArtifact({
-        rootDir: root,
-        stackBaseDir,
-        artifactDir: join(stackBaseDir, 'artifacts', 'daemon', 'daemon-code'),
-        artifactFingerprint: 'daemon-code',
-        supportArtifactFingerprint: 'daemon-support-before-code-build',
-        sourceMetadata: sourceMetadata(root),
-        resolveDaemonSupportArtifactFingerprintImpl: async () => {
-          events.push('support-identity-after-code');
-          return 'daemon-support-after-code-build';
-        },
-        buildDaemonSupportArtifactPayloadImpl: async (args) => {
-          events.push('support-copy');
-          return await writeDaemonSupportPayload({
-            payloadDir: args.payloadDir,
-            fingerprint: 'daemon-support-before-code-build',
-          });
-        },
-        buildCliBinaryArtifactPayloadImpl: async (args) => {
-          events.push('code');
-          return await writeDaemonCodePayload(args);
-        },
-        writeCliBinaryArtifactRuntimeAssetBuildManifestImpl: () => {},
-      }),
-      /daemon support publication changed before staging/i,
-    );
-
-    assert.deepEqual(events, ['code', 'support-identity-after-code']);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  const artifactDir = join(stackBaseDir, 'artifacts', 'daemon', 'code');
+  let supportBuilds = 0;
+  const options = {
+    rootDir: root, stackBaseDir, artifactDir, artifactFingerprint: 'code',
+    supportArtifactFingerprint: 'support', sourceMetadata: sourceMetadata(root),
+    runCaptureImpl: readFixtureGoVersion,
+    buildDaemonSupportArtifactPayloadImpl: async (args) => {
+      supportBuilds += 1;
+      return writeDaemonSupportPayload({ ...args, fingerprint: 'support' });
+    },
+    buildCliBinaryArtifactPayloadImpl: writeDaemonCodePayload,
+    writeCliBinaryArtifactRuntimeAssetBuildManifestImpl: () => {},
+  };
+  await buildDaemonArtifact(options);
+  assert.ok(await readReusableArtifactManifest({ artifactDir, artifactFingerprint: 'code' }));
+  await buildDaemonArtifact(options);
+  assert.equal(supportBuilds, 1, 'healthy payloads reuse');
+  await rm(join(stackBaseDir, 'artifacts', 'daemon-support', 'support'), { recursive: true });
+  assert.equal(await readReusableArtifactManifest({ artifactDir, artifactFingerprint: 'code' }), null);
+  await buildDaemonArtifact(options);
+  assert.equal(supportBuilds, 2, 'missing support must be rebuilt');
+  assert.ok(await readReusableArtifactManifest({ artifactDir, artifactFingerprint: 'code' }));
+  assert.equal(await readFile(join(artifactDir, 'payload', 'tools', 'tool.txt'), 'utf8'), 'tool:support');
+  await rm(join(stackBaseDir, 'artifacts', 'daemon-support', 'support', 'payload', 'tools'), { recursive: true });
+  assert.equal(await readReusableArtifactManifest({ artifactDir, artifactFingerprint: 'code' }), null);
+  await buildDaemonArtifact(options);
+  assert.equal(supportBuilds, 3, 'incomplete support payloads repair too');
 });
 
 test('daemon support references request Windows junctions for directory payloads', async () => {

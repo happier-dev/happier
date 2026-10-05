@@ -153,6 +153,12 @@ describe('plugin invocation interaction and presentation facades', () => {
         await expect(facade.widget.set('summary', null)).resolves.toBeUndefined();
         await expect(facade.composer.replace('next prompt')).resolves.toBeUndefined();
         await expect(facade.present({ kind: 'board.item.reveal', widgetId: 'note-1' })).resolves.toBeUndefined();
+        const writesBeforeInvalidAuthorIntent = vi.mocked(hostPresentation.present).mock.calls.length;
+        // JavaScript authors can bypass types; the invocation boundary must still reject host-only mutation input.
+        await expect(Reflect.apply(facade.present, facade, [{
+            kind: 'companion.instance.rename', instanceId: 'copy-a', displayName: 'Forged',
+        }])).rejects.toMatchObject({ code: 'plugin_ui_invalid_presentation_intent' });
+        expect(vi.mocked(hostPresentation.present).mock.calls).toHaveLength(writesBeforeInvalidAuthorIntent);
 
         expect(hostPresentation.notify).toHaveBeenCalledWith({
             operationId: 'host-operation-1',

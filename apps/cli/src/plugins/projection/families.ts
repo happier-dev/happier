@@ -1,8 +1,10 @@
 import {
     assertPluginProjectionFamilyIdsV2,
     listPluginProjectionFamilyIdsV2,
+    PluginProjectedFamilyV2Schema,
     type PluginContributionCatalogEntryV2,
     type PluginMachineExecutionOriginV1,
+    type PluginProjectedFamilyEntryV2,
     type PluginProjectedFamilyV2,
 } from '@happier-dev/protocol';
 
@@ -39,6 +41,13 @@ export type PluginProjectionFamilyContextV2 = Readonly<{
         backendIds: ReadonlySet<string>;
         hostingProviderIds: ReadonlySet<string>;
     }>;
+    /** Invalid wire entries are omitted; the describe owner publishes their attributed diagnostics. */
+    onInvalidEntry?: (failure: Readonly<{
+        family: string;
+        entryId: string;
+        entry: PluginProjectedFamilyEntryV2;
+        issues: readonly Readonly<{ code: string; path: readonly string[]; message: string }>[];
+    }>) => void;
 }>;
 
 export type PluginProjectionFamilyDescriptorV2 = Readonly<{
@@ -68,14 +77,32 @@ export function definePluginProjectionFamilyCatalogV2(
 function freezeProjectedFamilyV2<Family extends PluginProjectedFamilyV2>(
     projected: Family,
     occurrenceIdsByPluginId: ResolvedContributionRegistry['occurrenceIdsByPluginId'],
+    onInvalidEntry: PluginProjectionFamilyContextV2['onInvalidEntry'],
 ): Family {
+    const familySchema = PluginProjectedFamilyV2Schema.options.find((schema) => (
+        schema.shape.family.value === projected.family
+    ));
+    if (!familySchema) throw new Error(`Missing canonical schema for projection family '${projected.family}'`);
+    const entrySchema = familySchema.shape.entriesById.unwrap().valueType;
     const entriesById = Object.fromEntries(Object.entries(projected.entriesById).flatMap(([entryId, entry]) => {
         const pluginId = typeof entry.pluginId === 'string' ? entry.pluginId : null;
-        if (!pluginId) return [[entryId, entry] as const];
-        const occurrenceId = occurrenceIdsByPluginId?.[pluginId];
-        return occurrenceId
-            ? [[entryId, Object.freeze({ ...entry, occurrenceId })] as const]
-            : [];
+        const occurrenceId = pluginId ? occurrenceIdsByPluginId?.[pluginId] : undefined;
+        if (pluginId && !occurrenceId) return [];
+        const stampedEntry = occurrenceId ? Object.freeze({ ...entry, occurrenceId }) : entry;
+        const parsed = entrySchema.safeParse(stampedEntry);
+        if (!parsed.success) {
+            if (!onInvalidEntry) throw parsed.error;
+            onInvalidEntry({
+                family: projected.family,
+                entryId,
+                entry: stampedEntry,
+                issues: parsed.error.issues.map((issue) => ({
+                    code: issue.code, path: issue.path.map(String), message: issue.message,
+                })),
+            });
+            return [];
+        }
+        return [[entryId, stampedEntry] as const];
     }));
     return Object.freeze({
         ...projected,
@@ -98,6 +125,7 @@ export function buildPluginProjectionFamiliesByIdV2(
         familiesById[descriptor.family] = freezeProjectedFamilyV2(
             projected,
             context.registry.occurrenceIdsByPluginId,
+            context.onInvalidEntry,
         );
     }
     return Object.freeze(familiesById);

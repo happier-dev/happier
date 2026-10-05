@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildCodexAgentRuntimeDescriptorV1 } from '../../protocol/runtimeDescriptorV1.js';
+import { resolveCodexCliSessionExtraOptions } from '../cli/command.js';
 import { createCodexAgentRuntime } from './engine.js';
 
 function createSession(): AgentSessionRuntime {
@@ -30,6 +31,51 @@ function createConnectedAccountsBoundary() {
 }
 
 describe('createCodexAgentRuntime', () => {
+  it.each(['plain', undefined, 'herdr', 'zellij', 'tmux'] as const)(
+    'keeps shared attach available without starting an invisible client for host %s',
+    async (requestedHost) => {
+      const runtime = await createCodexAgentRuntime({
+        plugin: { id: 'happier.agent.codex', version: '0.0.0' },
+        agent: { id: 'codex' }, signal: new AbortController().signal,
+      });
+      if (!runtime.sessions?.resolveTerminalPresentation) throw new Error('Codex presentation owner is unavailable');
+      const selected = await runtime.sessions.resolveTerminalPresentation({
+        requestedHost,
+        launchEnvironment: { values: { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } },
+      }, {
+        settings: { forScope() { throw new Error('Explicit Codex selection must not read account settings'); } },
+        features: { isEnabled() { throw new Error('Explicit Codex selection must not read feature policy'); } },
+      });
+      const hosted = requestedHost !== 'plain' && requestedHost !== undefined;
+      expect(selected).toMatchObject({
+        kind: 'provider_attach', startingMode: hosted ? 'terminal' : 'remote',
+        runtimeDescriptorV1: { agentId: 'codex', agent: { backendMode: 'appServer' } },
+        environmentOverlay: { HAPPIER_CODEX_BACKEND_MODE: 'appServer' },
+      });
+      // The real CLI consumer translates the selected public mode into its
+      // host mode; plain daemon startup must not become a local native launch.
+      expect(resolveCodexCliSessionExtraOptions({ startingMode: selected.startingMode, agentArgs: [] }))
+        .toEqual({ ok: true, options: { startingMode: hosted ? 'local' : 'remote' } });
+    },
+  );
+
+  it('keeps captured ACP headless even when a terminal host is selected', async () => {
+    const runtime = await createCodexAgentRuntime({
+      plugin: { id: 'happier.agent.codex', version: '0.0.0' },
+      agent: { id: 'codex' }, signal: new AbortController().signal,
+    });
+    const selected = await runtime.sessions?.resolveTerminalPresentation?.({
+      requestedHost: 'herdr',
+      runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'acp' } },
+      launchEnvironment: { values: { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } },
+    }, {
+      settings: { forScope() { throw new Error('Captured Codex selection must not read account settings'); } },
+      features: { isEnabled() { throw new Error('Captured Codex selection must not read feature policy'); } },
+    });
+    expect(selected).toMatchObject({ kind: 'none', runtimeDescriptorV1: { agent: { backendMode: 'acp' } } });
+    expect(selected?.startingMode).toBeUndefined();
+  });
+
   it('forces the native read-only sandbox for hands-off even with the default permission mode', async () => {
     const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
     const plan = await runtime.surfaces?.terminal?.resolveLaunch({

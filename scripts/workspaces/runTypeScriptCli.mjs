@@ -28,14 +28,36 @@ if (process.platform !== 'win32' && shouldRouteTypeScriptCliThroughHstack({ args
     workspaceDir: process.cwd(),
     processExecPath: process.execPath,
   });
-  prepareTypeScriptProjectBuildFromArgs(args, { cwd: process.cwd() });
-
-  const result = await runCommand(invocation.command, [...invocation.argsPrefix, ...args], {
-    ownedProcessGroup: true,
-    cwd: process.cwd(),
-    stdio: 'inherit',
-    env: process.env,
-  });
-
+  const projects = [];
+  const commonArgs = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if ((arg === '--project' || arg === '-p') && args[index + 1]) {
+      projects.push(args[++index]);
+    } else if (arg.startsWith('--project=')) {
+      projects.push(arg.slice('--project='.length));
+    } else {
+      commonArgs.push(arg);
+    }
+  }
+  // Separate programs bound live checker state without losing test diagnostics when source fails.
+  const programs = projects.length > 1
+    ? projects.map((project) => [...commonArgs, '--project', project])
+    : [args];
+  let result = { status: 0, signal: null };
+  for (const programArgs of programs) {
+    prepareTypeScriptProjectBuildFromArgs(programArgs, { cwd: process.cwd() });
+    const current = await runCommand(invocation.command, [...invocation.argsPrefix, ...programArgs], {
+      ownedProcessGroup: true,
+      cwd: process.cwd(),
+      stdio: 'inherit',
+      env: process.env,
+    });
+    if (current.error || current.signal) {
+      result = current;
+      break;
+    }
+    if (current.status !== 0) result = current;
+  }
   exitWithCommandResult(result);
 }

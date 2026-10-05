@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, resolve, relative } from 'node:path';
 
 import { resolveWorkspaceBundlesFromPackageJson } from '@happier-dev/cli-common/workspaces';
 import { isDevRuntimeReloadIgnoredPath } from '../dev/watchSignature.mjs';
@@ -76,7 +76,10 @@ export function resolveHappyCliRuntimeInputPaths(options) {
   return resolveHappyCliRuntimeInputGroups(options).flatMap((group) => group.paths);
 }
 
-export async function readHappyCliRuntimeInputFreshness(cliDir) {
+export async function readHappyCliRuntimeInputFreshness(cliDir, {
+  identityRepoDir = process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR,
+} = {}) {
+  const repoRoot = resolve(cliDir, '..', '..');
   let newestMtimeNs = null;
   const fingerprint = createHash('sha256');
   const visit = async (path) => {
@@ -92,7 +95,9 @@ export async function readHappyCliRuntimeInputFreshness(cliDir) {
       ? fileStat.mtimeNs
       : newestMtimeNs;
     const nodeType = fileStat.isDirectory() ? 'dir' : fileStat.isFile() ? 'file' : 'other';
-    fingerprint.update(path);
+    // A dedicated build checkout reads its own bytes, but retains the original
+    // producer path labels in the existing fingerprint recipe.
+    fingerprint.update(identityRepoDir ? join(identityRepoDir, relative(repoRoot, path)) : path);
     fingerprint.update('\0');
     fingerprint.update(nodeType);
     fingerprint.update('\0');

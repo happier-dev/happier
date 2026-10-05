@@ -4,8 +4,8 @@ import type { HappierStyleProp } from '../presentation/portableTypes.js';
 
 /**
  * @internal What the Collection (`Collection.tsx`) asks of the virtualized List engine it presents through. The
- * List stays the one owner of virtualization, roving focus, selection and grid semantics; this carries only the
- * few facts a presentation with exact row geometry needs from it. Package-private: not part of the public List.
+ * List owns virtualization, physical focus and row/menu/selection semantics. Collection supplies its logical
+ * cursor, navigation and viewport; a standalone List retains its own cursor. Package-private, not author API.
  */
 export type ListCollectionControl = Readonly<{
   /**
@@ -13,6 +13,17 @@ export type ListCollectionControl = Readonly<{
    * table's Space peek), so the row's own activation never sees it.
    */
   onRowKey?: (key: string, itemKey: string) => boolean;
+  /** Collection owns logical focus; List still reveals and binds physical virtualized rows. */
+  focus?: Readonly<{
+    key: string | null;
+    tabStopKey: string | null;
+    request: Readonly<{ key: string }> | null;
+    onRequestHandled?: (request: Readonly<{ key: string }>) => void;
+    onKey(key: string, itemKey: string, event: unknown): boolean;
+  }>;
+  /** A column must not narrow the shared selection inventory to its own mounted rows. */
+  ownsSelectionRows?: boolean;
+  hideChrome?: boolean;
   /** The scroll offset as the scroller reports it, and one scroll request (a new object is a new request). */
   scroll?: Readonly<{
     offsetRef: MutableRefObject<number>;

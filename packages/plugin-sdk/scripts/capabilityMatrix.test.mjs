@@ -423,6 +423,29 @@ test('declares session info sections with the maintained Channels resource autho
   });
 });
 
+test('derives entity drag families through the client occurrence owner and maintained Triage consumer', () => {
+  const entries = PLUGIN_CONTRIBUTION_CATALOG_V2.filter(entry => (
+    entry.manifestKey === 'dragSources' || entry.manifestKey === 'dropTargets'
+  ));
+  assert.equal(entries.length, 2);
+  const metadata = deriveCapabilityMatrixMetadata({
+    contributionCatalog: entries,
+    hostAccessCatalog: [],
+    apiInventory: { entrypoints: [], symbols: [] },
+    services: [],
+    declarations: CAPABILITY_MATRIX_DECLARATIONS_V1,
+  });
+  for (const entry of entries) {
+    const row = metadata.manifestFamilies[entry.manifestKey];
+    assert.equal(row.availabilityDisposition, 'available');
+    assert.equal(row.specialistOwner, CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration);
+    assert.equal(row.lifecycleOwner, CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration);
+    assert.equal(row.provingConsumer, 'packages/plugins/triage/src/manifest.ts');
+    assert.equal(row.loadedPlatformProof, 'not-recorded');
+    assert.equal(row.releaseAvailability, 'not-published');
+  }
+});
+
 test('derives targeted contribution availability through the maintained external target/contributor fixture consumer', () => {
   const targetedContributionCatalogEntry = PLUGIN_CONTRIBUTION_CATALOG_V2.find(
     (entry) => entry.manifestKey === 'targetedPluginContributions',
@@ -521,6 +544,8 @@ test('names the real realm binder for every catalogued manifest family', () => {
     // Voice providers ship on web/iOS/Android only, so the daemon registry
     // never binds them; the client executable registration index does.
     voiceProviders: 'apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts',
+    dragSources: 'apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts',
+    dropTargets: 'apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts',
     transcriptActivities: 'apps/cli/src/plugins/projection/registry/ui/projection.ts',
     'ui.views': 'apps/cli/src/plugins/projection/registry/ui/projection.ts',
     browserActions: 'apps/cli/src/plugins/projection/registry/browser.ts',

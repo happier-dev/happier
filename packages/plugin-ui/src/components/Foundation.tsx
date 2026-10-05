@@ -15,6 +15,7 @@ import { usePluginHostApi } from '../hostApi/context.js';
 import {
   type PluginUiFocusTarget,
   usePluginUiFocusTargetBindingInternal,
+  useCollectionDetailHeadingBindingInternal,
 } from './Focus.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
@@ -36,7 +37,7 @@ export type HeadingProps = AuthorText & Readonly<{
 
 export function Heading({ level = 2, focusTarget, testID, children, ...text }: HeadingProps): ReactElement {
   const label = useAuthorText(text);
-  const focusBinding = usePluginUiFocusTargetBindingInternal(focusTarget);
+  const focusBinding = useCollectionDetailHeadingBindingInternal(focusTarget);
   return <HappierHeading level={level} theme={usePluginTheme()} controlRef={focusBinding} testID={testID}>{children ?? label}</HappierHeading>;
 }
 

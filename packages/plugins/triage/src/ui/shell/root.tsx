@@ -1,7 +1,8 @@
 import * as React from 'react';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
-import type { PluginUiContextEnrichmentV1, PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { CurrentUiCommandDeclarationV1, PluginUiContextEnrichmentV1, PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import type { TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import {
   Banner,
   Button,
@@ -25,6 +26,7 @@ import {
   useListMultiSelectionController,
   usePluginAccessibility,
   usePluginHostApi,
+  usePluginUiEphemeralSharedScope,
   usePluginSurfaceActivity,
   usePluginTheme,
   usePluginTranslation,
@@ -53,6 +55,9 @@ import type {
   TriageSavedViewPresentationV1,
 } from '../../settings/savedViews.js';
 import { projectTriageCurrentUiContextV1 } from '../currentContext.js';
+import { bindTriageMountedUiActions } from '../mountedActions.js';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../../actions/mountedUiProtocol.js';
+import { planTriageDetailTabsV1 } from '../detail/tabs.js';
 import { projectTriageDetailHeaderV1 } from '../detail/header.js';
 import { useTriagePostMutationRow } from '../detail/useTriagePostMutationRow.js';
 import { readTriageDetailContextLineV1, TriageDetailHeaderActions, TriageDetailHeaderView, TriageDetailRegion } from '../detail/region.js';
@@ -82,6 +87,7 @@ import {
   useTriageBulkEntrySessions,
 } from '../list/useBulkEntrySessions.js';
 import { planTriageListContinuationV1, readTriageWindowStatementV1 } from '../list/continuation.js';
+import { useTriageListSessionActivityV1 } from '../list/useListSessionActivity.js';
 import {
   TriageListRowEnvironmentContext,
   useTriageListAnatomyV1,
@@ -408,6 +414,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const [editingActions, setEditingActions] = React.useState(false);
   const [editingSources, setEditingSources] = React.useState(false);
   const [moreOpen, setMoreOpen] = React.useState(false);
+  const [organizing, setOrganizing] = React.useState(false);
   /**
    * Whether the location this page OPENED at named a lens of its own.
    *
@@ -432,6 +439,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     () => resolveTriageListShellState(window.snapshot, { durableStateReachable }),
     [durableStateReachable, window.snapshot],
   );
+  const listedEntryRefs = React.useMemo(
+    () => state.kind === 'window' ? state.window.rows.map((row) => row.entryRef) : [],
+    [state],
+  );
+  const sessionActivity = useTriageListSessionActivityV1({
+    entryRefs: listedEntryRefs,
+    acquisition: window.snapshot.window,
+    active: surfaceActivity.active,
+  });
   const [surface, dispatch] = React.useReducer(
     reduceTriageSurfaceV1,
     props.subPath,
@@ -446,7 +462,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const routeQueue = React.useMemo(() => createTriageRouteWriteQueueV1(hostApi), [hostApi]);
   React.useEffect(() => () => { routeQueue.dispose(); }, [routeQueue]);
   const [listFocusRequest, setListFocusRequest] = React.useState<Readonly<{ key: string }> | undefined>();
-  const refresh = React.useCallback(() => window.refresh('manual'), [window]);
+  const refresh = React.useCallback(() => {
+    sessionActivity.retry();
+    return window.refresh('manual');
+  }, [sessionActivity.retry, window]);
   /**
    * `core/CORPUS.md` §4.2. The coordinator may already be refusing to read, and
    * a Refresh press that silently does nothing is exactly the failure it wants
@@ -522,12 +541,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             surfaceContext.targetedContributions,
             entryRef,
           ),
+          agentActive: (key) => sessionActivity.activeEntries.has(key),
           // One freshness owner, stated per row. `text` is the reader's own catalog for the words this plugin
           // authors; the window's `stale` claim is the same one the page's freshness line reads.
           display: { text, stale: state.kind === 'window' && state.stale },
         })
       : NO_LIST_ITEMS),
-    [marks.pins, state, surfaceContext.targetedContributions, text],
+    [marks.pins, sessionActivity.activeEntries, state, surfaceContext.targetedContributions, text],
   );
   const groupAxis = React.useMemo(() => ({
     axis: [
@@ -574,21 +594,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       : []),
     [rowsByKey, state],
   );
-  const currentUiContext = React.useMemo(
-    () => projectTriageCurrentUiContextV1({
-      surface,
-      visibleRows: currentUiContextRows,
-      formatOpenEntryTitle: (title) => text(
-        'plugins.triage.currentContext.openEntry',
-        'Open {title}',
-        { title },
-      ),
-    }),
-    [currentUiContextRows, surface, text],
-  );
-
-  useTriageCurrentUiContextPublication(hostApi, currentUiContext);
-
   /** Whether the reader has changed the lens yet; see `useTriageRouteBinding`. */
   const readerChangedLens = React.useRef(false);
   const rowsByKeyRef = React.useRef<TriageRouteRowIndexV1>(rowsByKey);
@@ -768,16 +773,20 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * qualify carries no instance — selecting it would open somebody else's
    * connection, so it is refused rather than approximated.
    */
-  const activateRow = React.useCallback((key: string) => {
+  const readRowActivation = React.useCallback((key: string) => {
     const hit = rowsByKey.get(key);
-    if (hit === undefined || hit.row.sourceInstanceId === null) return;
-    applyLensEdit({
-      kind: 'rowActivated',
+    if (hit === undefined || hit.row.sourceInstanceId === null) return null;
+    return {
+      kind: 'rowActivated' as const,
       sectionId: hit.sectionId,
       entryRef: hit.row.entryRef,
       sourceInstanceId: hit.row.sourceInstanceId,
-    }, 'selection');
-  }, [applyLensEdit, rowsByKey]);
+    };
+  }, [rowsByKey]);
+  const activateRow = React.useCallback((key: string) => {
+    const action = readRowActivation(key);
+    if (action !== null) applyLensEdit(action, 'selection');
+  }, [applyLensEdit, readRowActivation]);
 
   /**
    * The one focus producer (`core/SURFACE.md` §3.1).
@@ -1328,7 +1337,121 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const dismissDetail = React.useCallback(() => {
     if (selectedKey !== null) setListFocusRequest({ key: selectedKey });
     applyLensEdit({ kind: 'detailDismissed', visibleOrder }, 'selection');
+    setDetailTab(null);
+    setDetailTabs(null);
   }, [applyLensEdit, selectedKey, visibleOrder]);
+  // Tabs not represented by the canonical route stay mount-local. The same
+  // controlled value is consumed by source Tabs and the mounted Action.
+  const [detailTab, setDetailTab] = React.useState<Readonly<{ key: string; tab: string }> | null>(null);
+  const [detailTabs, setDetailTabs] = React.useState<Readonly<{ key: string; tabs: readonly string[] }> | null>(null);
+  const chooseDetailTab = React.useCallback((tab: string) => {
+    if (selectedKey !== null) setDetailTab({ key: selectedKey, tab });
+  }, [selectedKey]);
+  const reportDetailTabs = React.useCallback((tabs: readonly string[]) => {
+    if (selectedKey !== null) setDetailTabs((previous) => previous?.key === selectedKey
+      && previous.tabs.length === tabs.length && previous.tabs.every((tab, index) => tab === tabs[index])
+      ? previous : { key: selectedKey, tabs });
+    setDetailTab((previous) => previous?.key === selectedKey && !tabs.includes(previous.tab)
+      ? { key: previous.key, tab: tabs[0] ?? 'overview' } : previous);
+  }, [selectedKey]);
+  const sharedScope = usePluginUiEphemeralSharedScope();
+  const mountId = React.useId();
+  const runMountedOperation = React.useCallback(async (
+    operation: TriageMountedUiOperationV1, signal: AbortSignal,
+  ): Promise<TriageMountedUiResultV1> => {
+    if (signal.aborted) return { status: 'unavailable' };
+    switch (operation.kind) {
+      case 'switchView': chooseCollectionView(operation.view); break;
+      case 'openDetail': {
+        const key = triageEntryRowKey(operation.entryRef);
+        const action = readRowActivation(key);
+        if (action === null) return { status: 'unavailable' };
+        if (operation.tab !== undefined) {
+          const descriptor = readTriageSourceDescriptorV1(surfaceContext, operation.entryRef.source);
+          const kind = descriptor?.kinds.find((candidate) => candidate.id === operation.entryRef.kindId);
+          const composition = planTriageDetailTabsV1({ workflowSubject: kind?.workflowSubject ?? null, entryTabs: kind?.detailTabs, fixPullRequest: null });
+          if (composition.kind !== 'tabs' || !composition.tabs.some((tab) => tab.id === operation.tab)) return { status: 'unavailable' };
+        }
+        if (await settleLensEditBeforeDurable(action) === null) return { status: 'rejected' };
+        // A settled selection is an issued effect. Complete its tab intent even
+        // when publishing that new selection retires the invoking command.
+        setDetailTab({ key, tab: operation.tab ?? 'overview' });
+        break;
+      }
+      case 'closeDetail':
+        if (selectedKey !== null) setListFocusRequest({ key: selectedKey });
+        if (await settleLensEditBeforeDurable({ kind: 'detailDismissed', visibleOrder }) === null) return { status: 'rejected' };
+        setDetailTab(null);
+        break;
+      case 'selectDetailTab':
+        if (selectedKey === null || detailTabs?.key !== selectedKey || !detailTabs.tabs.includes(operation.tab)) return { status: 'unavailable' };
+        chooseDetailTab(operation.tab);
+        break;
+      case 'setLens':
+        if (await settleLensEditBeforeDurable({ kind: 'savedViewApplied', viewId: surface.selectedViewId,
+          query: operation.query, filters: operation.filters, order: operation.order, smartPolicy: surface.smartPolicy }) === null) return { status: 'rejected' };
+        break;
+      case 'selectSavedView': {
+        // A routed view is an ephemeral lens, not the Account's saved-view
+        // selection write. Use the same resolver as Views and its route owner;
+        // durable edits remain the separately admitted saved-view Action.
+        const action = operation.viewId === null ? { kind: 'savedViewSelectionCleared' } as const
+          : savedViews.saved === null ? null : readProjectedSelectionAction(savedViews.saved, operation.viewId);
+        if (action === null) return { status: 'unavailable' };
+        if (await settleLensEditBeforeDurable(action) === null) return { status: 'rejected' };
+        break;
+      }
+      case 'setSelection': {
+        const keys = operation.entryRefs.map(triageEntryRowKey);
+        if (keys.some((key) => !bulkSelection.getSnapshot().eligibleKeys.has(key))) return { status: 'unavailable' };
+        bulkSelection.setSelectedKeys(keys);
+        break;
+      }
+      case 'refresh':
+        if (refreshState.kind === 'blocked') return { status: 'unavailable' };
+        await refresh();
+        break;
+      case 'loadMore': {
+        const continuation = collectionWindow.kind === 'partial'
+          ? collectionWindow.continuations.find((candidate) => candidate.key === operation.section)
+          : undefined;
+        if (continuation === undefined || continuation.busy) return { status: 'unavailable' };
+        if (operation.section === 'entries') await loadMoreEntries();
+        else await loadMorePins();
+        break;
+      }
+    }
+    return { status: 'applied' };
+  }, [bulkSelection, chooseCollectionView, chooseDetailTab, collectionWindow, surfaceContext, detailTabs, loadMoreEntries, loadMorePins, readRowActivation, readProjectedSelectionAction, refresh, refreshState.kind, savedViews.saved, selectedKey, settleLensEditBeforeDurable, surface.selectedViewId, surface.smartPolicy, visibleOrder]);
+  const mountedOperationRef = React.useRef(runMountedOperation);
+  React.useLayoutEffect(() => { mountedOperationRef.current = runMountedOperation; }, [runMountedOperation]);
+  React.useLayoutEffect(() => sharedScope === null || !surfaceActivity.active ? undefined : bindTriageMountedUiActions(
+    sharedScope, mountId, (operation, signal) => mountedOperationRef.current(operation, signal),
+  ), [mountId, sharedScope, surfaceActivity.active]);
+  const mountedCommands = React.useMemo(() => {
+    const command = (title: string, operation: TriageMountedUiOperationV1): CurrentUiCommandDeclarationV1 => ({
+      title, command: { kind: 'executeAction', action: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, input: { mountId, operation } },
+    });
+    return [
+      command(text('plugins.triage.currentContext.board', 'Switch to Board'), { kind: 'switchView', view: 'board' }),
+      command(text('plugins.triage.currentContext.list', 'Switch to List'), { kind: 'switchView', view: 'list' }),
+      ...(selectedKey === null ? [] : [command(text('plugins.triage.currentContext.closeDetail', 'Close detail'), { kind: 'closeDetail' })]),
+      ...(detailTabs?.key !== selectedKey ? [] : detailTabs.tabs.map((tab) => command(
+        text('plugins.triage.currentContext.selectTab', 'Select {tab} tab', { tab }), { kind: 'selectDetailTab', tab },
+      ))),
+      ...(refreshState.kind !== 'blocked' ? [command(text('plugins.triage.currentContext.refresh', 'Refresh PRs & Issues'), { kind: 'refresh' })] : []),
+      ...(collectionWindow.kind !== 'partial' ? [] : collectionWindow.continuations.flatMap((continuation) => continuation.busy ? [] : [
+        command(continuation.label, { kind: 'loadMore', section: continuation.key === 'pins' ? 'pins' : 'entries' }),
+      ])),
+      command(text('plugins.triage.currentContext.clearSelection', 'Clear bulk selection'), { kind: 'setSelection', entryRefs: [] }),
+    ];
+  }, [collectionWindow, detailTabs, mountId, refreshState.kind, selectedKey, text]);
+  const currentUiContext = React.useMemo(() => projectTriageCurrentUiContextV1({
+    surface, visibleRows: currentUiContextRows, mountedCommands,
+    mountedAction: { action: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 }, mountId },
+    formatOpenEntryTitle: (title) => text('plugins.triage.currentContext.openEntry', 'Open {title}', { title }),
+  }), [currentUiContextRows, mountId, mountedCommands, surface, text]);
+  useTriageCurrentUiContextPublication(hostApi, currentUiContext);
   openChangeRef.current = (key) => {
     if (key === null) dismissDetail();
     else activateRow(key);
@@ -1339,7 +1462,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     [activateRow, pinHandlers],
   );
   /** The signal column exists only while some row has a primary status fact to show in it. */
-  const itemAnatomy = useTriageListAnatomyV1({ withSignal: items.some((item) => item.signal !== null) });
+  const itemAnatomy = useTriageListAnatomyV1({ withSignal: items.some((item) => item.signal !== null), organizing });
   const routeLens = React.useMemo(() => readTriageRouteLensV1(surface), [
     surface.order, surface.smartPolicy, surface.filters, surface.search.query, surface.selectedViewId, surface.selection,
   ]);
@@ -1520,7 +1643,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       'plugins.triage.surface.sources.remove.confirm',
       'Remove {name} from PRs & Issues?',
       { name: displayLabel },
-    ));
+    ), { action: TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1 });
     if (!confirmed) return;
     if (await configuredSources.remove(sourceInstanceId)) refresh();
   }, [configuredSources, hostApi, refresh, text]);
@@ -1637,6 +1760,14 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         />
       </Row>
       <Row gap="xsmall" align="center">
+        {organizing ? (
+          <Button
+            titleKey="plugins.triage.sessionLinks.done"
+            title="Done"
+            variant="plain"
+            onPress={() => setOrganizing(false)}
+          />
+        ) : null}
         {/*
           Freshness is said, never implied by silence — but quietly while the
           list is current, so the one thing that stands out is a list that is
@@ -1658,11 +1789,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           trigger="•••"
           triggerAccessibilityLabel={moreLabel}
           items={[
+            ...(!organizing ? [{ id: 'organize-list', label: text('plugins.triage.surface.organizeList', 'Organize list') }] : []),
             { id: 'configure-actions', label: text('plugins.triage.surface.actions.configure', 'Configure actions') },
             { id: 'manage-sources', label: text('plugins.triage.surface.sources.manage', 'Manage sources') },
           ]}
           onSelect={(id) => {
-            if (id === 'configure-actions') setEditingActions(true);
+            if (id === 'organize-list') setOrganizing(true);
+            else if (id === 'configure-actions') setEditingActions(true);
             else if (id === 'manage-sources') setEditingSources(true);
           }}
         />
@@ -1766,6 +1899,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const detailContent = (headerHosted: boolean): React.ReactNode => surface.selection === null ? null : (
     selectedRow !== null ? (
       <TriageDetailRegion
+        tabSelection={{ value: detailTab?.key === selectedKey ? detailTab.tab : 'overview', onChange: chooseDetailTab, onAvailableTabsChange: reportDetailTabs }}
         headerHosted={headerHosted}
         row={selectedRow}
         completePostMutation={completePostMutation}
@@ -1922,6 +2056,26 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           windowStatement={windowStatement}
           header={(
             <Stack gap="small">
+              {listedEntryRefs.length === 0 || !sessionActivity.incomplete ? null : (
+                <Row gap="small" align="center" wrap>
+                  <Status
+                    tone={sessionActivity.unavailable ? 'warning' : 'muted'}
+                    labelKey={sessionActivity.unavailable
+                      ? 'plugins.triage.surface.sessionActivity.unavailable'
+                      : 'plugins.triage.surface.sessionActivity.reading'}
+                    label={sessionActivity.unavailable
+                      ? 'Some linked Session activity could not be read.'
+                      : 'Reading linked Session activity…'}
+                  />
+                  {sessionActivity.unavailable ? (
+                    <Button
+                      title={text('plugins.triage.surface.actions.retry', 'Retry')}
+                      variant="plain"
+                      onPress={sessionActivity.retry}
+                    />
+                  ) : null}
+                </Row>
+              )}
           {/*
             An unmeasured region keeps the WIDE arm of the lens: folding five
             facet controls behind one trigger takes away things the reader can

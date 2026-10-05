@@ -12,7 +12,7 @@ import { resolveInstalledPath, resolveInstalledCliRoot } from '../paths/runtime.
 import { expandHome } from '../paths/canonical_home.mjs';
 import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './cliDistBuildLock.mjs';
 import { withDependencyRefresh } from './dependency_refresh.mjs';
-import { describeJsonOwnerLockOwner } from './jsonOwnerFileLock.mjs';
+import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
 import { resolveWorkspaceToolBinDirs } from './workspace_tool_bins.mjs';
 import { probeCliDistRuntimeImport, readCliDistIntegrity } from '../cli/cliDistIntegrity.mjs';
 import {
@@ -40,54 +40,6 @@ async function readJson(path) {
 function isServiceMode(env = process.env) {
   const raw = String(env?.HAPPIER_STACK_SERVICE_MODE ?? '').trim();
   return raw !== '' && raw !== '0';
-}
-
-function parsePositiveEnvInt(envValue, fallback) {
-  const raw = Number.parseInt(String(envValue ?? '').trim(), 10);
-  return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
-}
-
-function resolveWorkspaceBuildWaitNoticeAfterMs(env = process.env) {
-  return parsePositiveEnvInt(env.HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS, 5_000);
-}
-
-function resolveWorkspaceBuildWaitNoticeEveryMs(env = process.env) {
-  return parsePositiveEnvInt(env.HAPPIER_WORKSPACE_BUILD_NOTICE_EVERY_MS, 30_000);
-}
-
-function createWorkspaceBuildWaitNotifier({ env = process.env, label, kind }) {
-  const noticeAfterMs = resolveWorkspaceBuildWaitNoticeAfterMs(env);
-  const noticeEveryMs = resolveWorkspaceBuildWaitNoticeEveryMs(env);
-  let lastNoticeMs = null;
-
-  return (event = {}) => {
-    const waitedMs = Number(event.waitedMs ?? 0);
-    if (!Number.isFinite(waitedMs) || waitedMs < noticeAfterMs) {
-      return;
-    }
-
-    if (lastNoticeMs != null && waitedMs - lastNoticeMs < noticeEveryMs) {
-      return;
-    }
-    lastNoticeMs = waitedMs;
-
-    let message = '';
-    if (kind === 'lock') {
-      const ownerText = describeJsonOwnerLockOwner(event.owner, Date.now());
-      message = `[local] waiting for ${label} lock (${Math.ceil(waitedMs / 1000)}s): ${event.lockPath} (${ownerText})`;
-    } else if (kind === 'imports') {
-      const attempt = Number(event.attempt ?? 0);
-      const attempts = Number(event.attempts ?? 0);
-      const attemptLabel = Number.isFinite(attempts) && attempts > 0 ? `${attempt + 1}/${attempts}` : `${attempt + 1}/?`;
-      message = `[local] waiting for ${label} local imports to settle (${Math.ceil(waitedMs / 1000)}s, attempt ${attemptLabel}): ${event.entryPath}`;
-    } else {
-      message = `[local] waiting for ${label} (${Math.ceil(waitedMs / 1000)}s)`;
-    }
-
-    try {
-      process.stderr.write(`${message}\n`);
-    } catch {}
-  };
 }
 
 function resolveWorkspaceDistImportValidationRetryAttempts(env = process.env) {
@@ -904,32 +856,24 @@ export async function ensureDepsInstalled(
   await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
 }
 
+async function runStackWorkspacePackageScript(packageDir, script, { env, quiet, timeoutMs }) {
+  const pm = await getComponentPm(packageDir, env);
+  const stdio = quiet ? 'ignore' : 'inherit';
+  if (pm.name === 'yarn') await ensureYarnReady({ dir: packageDir, env, quiet, pm });
+  await runPm(pm, pm.name === 'yarn' ? ['-s', script] : ['run', '-s', script], {
+    ownedProcessGroup: true,
+    cwd: packageDir,
+    stdio,
+    env,
+    timeoutMs,
+    captureFailureDiagnostic: quiet,
+  });
+}
+
 const stackWorkspaceBuildBoundary = {
   prepareEnv: preparePmEnv,
-  runPackageBuild: async (packageDir, { env, quiet, timeoutMs }) => {
-    const pm = await getComponentPm(packageDir, env);
-    const stdio = quiet ? 'ignore' : 'inherit';
-    if (pm.name === 'yarn') {
-      await ensureYarnReady({ dir: packageDir, env, quiet, pm });
-      await runPm(pm, ['-s', 'build'], {
-        ownedProcessGroup: true,
-        cwd: packageDir,
-        stdio,
-        env,
-        timeoutMs,
-        captureFailureDiagnostic: quiet,
-      });
-      return;
-    }
-    await runPm(pm, ['run', '-s', 'build'], {
-      ownedProcessGroup: true,
-      cwd: packageDir,
-      stdio,
-      env,
-      timeoutMs,
-      captureFailureDiagnostic: quiet,
-    });
-  },
+  runPackageBuild: (packageDir, options) => runStackWorkspacePackageScript(packageDir, 'build', options),
+  runPackageScript: runStackWorkspacePackageScript,
 };
 
 export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNames, options = {}) {

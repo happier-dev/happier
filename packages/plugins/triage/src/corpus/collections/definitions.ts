@@ -2,7 +2,6 @@ import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-    MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TriageConfiguredSourceInstanceV1JsonSchema,
     TriageEntryRefV1JsonSchema,
@@ -219,14 +218,13 @@ export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
             [CORPUS_USER_MARKS_FIELD.entryRef]: TriageEntryRefV1JsonSchema,
             [CORPUS_USER_MARKS_FIELD.displayAtMark]: MARK_DISPLAY_SCHEMA,
             // The reader's fix-PR choice (`design/FIX-LINK.md`). Private payload:
-            // never projected, never indexed, sealed on an E2EE Account. Each
-            // list holds at most one detail page of refs; the writer refuses more.
+            // never projected, never indexed, sealed on an E2EE Account. Durable
+            // intent is retained independently of relationship query page sizes.
             [CORPUS_USER_MARKS_FIELD.fixPullRequests]: {
                 type: 'object',
                 properties: {
                     linked: {
                         type: 'array',
-                        maxItems: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
                         items: {
                             type: 'object',
                             properties: {
@@ -240,7 +238,6 @@ export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
                     },
                     dismissed: {
                         type: 'array',
-                        maxItems: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
                         items: TriageEntryRefV1JsonSchema,
                     },
                 },

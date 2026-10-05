@@ -55,6 +55,7 @@ export type { AgentExternalSessionsContribution } from '../../externalSessions.j
 export type { AgentExternalSessionsFailureCode } from '../../externalSessions.js';
 export type { AgentExternalSessionsInvocation } from '../../externalSessions.js';
 export type { AgentExternalSessionsInvocationBounds } from '../../externalSessions.js';
+export type { AgentExternalSessionsRipgrep } from '../../externalSessions.js';
 export type { AgentExternalSessionsListCandidatesRequest } from '../../externalSessions.js';
 export type { AgentExternalSessionsListCandidatesResult } from '../../externalSessions.js';
 export type { AgentExternalSessionsManagedEndpointRead } from '../../externalSessions.js';

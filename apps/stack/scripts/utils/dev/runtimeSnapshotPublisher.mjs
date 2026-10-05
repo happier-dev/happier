@@ -1,7 +1,9 @@
 import { fileURLToPath } from 'node:url';
+import { captureRuntimePublicationStartedSeq } from '../../build/build_stack_artifacts.mjs';
 
 import { appendBoundedTail, formatFailureDiagnostic, spawnProc } from '../proc/proc.mjs';
 import { resolveRuntimeComponentSourcePaths } from '../../build/runtime_artifact_identity.mjs';
+import { resolveRuntimePublicationPhase } from '../stack/runtime_state.mjs';
 import {
   readDevReloadWatchChangeSignature,
   readDevReloadWatchChangeSignatureAsync,
@@ -61,6 +63,7 @@ export async function publishRepositoryRuntimeSnapshotInChildProcess({
   rootDir,
   authority,
   requestedComponents,
+  observedStartedSeq = captureRuntimePublicationStartedSeq({ authority }),
   env = process.env,
   platform = process.platform,
   children = [],
@@ -71,6 +74,7 @@ export async function publishRepositoryRuntimeSnapshotInChildProcess({
     rootDir,
     authority,
     requestedComponents: normalizeComponents(requestedComponents),
+    observedStartedSeq,
   }), 'utf8').toString('base64url');
   let result = null;
   let resultError = null;
@@ -175,17 +179,19 @@ export function createRepositoryRuntimePublicationController({
   }
 
   return createBackgroundRuntimeSnapshotPublisher({
+    captureObservedStartedSeq: () => captureRuntimePublicationStartedSeq({ authority }),
     resolveComponents: async ({ requestedComponents }) => resolveRepositoryRuntimePublicationComponents({
       rootDir,
       authority,
       env,
       requestedComponents,
     }),
-    publishComponents: async ({ components }) => publishRepositoryRuntimeSnapshot({
+    publishComponents: async ({ components, observedStartedSeq }) => publishRepositoryRuntimeSnapshot({
       rootDir,
       authority,
       env,
       requestedComponents: components,
+      observedStartedSeq,
     }),
     publishStatus: async (status) => recordStackRuntimeUpdate(runtimeStatePath, {
       runtimePublication: status,
@@ -313,12 +319,13 @@ export function resolveRemoteRuntimePublicationComponents({
 
 /**
  * Keeps one repository-runtime publication active for a source stack. It deliberately
- * stores only transient coalescing state: restart recovery always compares current
- * component identities with the selected snapshot through the build owner.
+ * stores only transient coalescing state: restart reconciliation submits current
+ * component demand through the build owner.
  */
 export function createBackgroundRuntimeSnapshotPublisher({
   resolveComponents,
   publishComponents,
+  captureObservedStartedSeq = () => null,
   publishStatus = async () => {},
   isShuttingDown = () => false,
   logger = console,
@@ -332,6 +339,7 @@ export function createBackgroundRuntimeSnapshotPublisher({
 
   const componentStatus = new Map();
   const dirtyComponents = new Set();
+  const requestObservations = new Map();
   let currentSnapshotId = null;
   let inFlight = null;
   let publishAgain = false;
@@ -342,16 +350,8 @@ export function createBackgroundRuntimeSnapshotPublisher({
       component,
       { phase: value.phase, error: value.error ?? null },
     ]));
-    const phases = Array.from(componentStatus.values()).map((entry) => entry.phase);
-    const phase = phases.includes('publishing')
-      ? 'publishing'
-      : phases.includes('stale')
-        ? 'stale'
-        : phases.includes('failed')
-          ? 'failed'
-          : 'current';
     return {
-      phase,
+      phase: resolveRuntimePublicationPhase(components),
       components,
       currentSnapshotId,
     };
@@ -398,7 +398,9 @@ export function createBackgroundRuntimeSnapshotPublisher({
     for (;;) {
       if (closed || isShuttingDown?.()) return lastResult;
       const requestedComponents = normalizeComponents(Array.from(dirtyComponents));
+      const cycleRequestObservations = new Map(requestObservations);
       dirtyComponents.clear();
+      requestObservations.clear();
       publishAgain = false;
       if (!requestedComponents.length) return lastResult;
       let publishedInCycle = false;
@@ -418,6 +420,10 @@ export function createBackgroundRuntimeSnapshotPublisher({
         // arrives during resolution or publication remains dirty and gets the
         // one trailing recomputation.
         dirtyComponents.delete(component);
+        const observedStartedSeq = requestObservations.has(component)
+          ? requestObservations.get(component) : cycleRequestObservations.get(component);
+        requestObservations.delete(component);
+        process.stderr.write(`[local] resolving ${component} runtime publication inputs.\n`);
         let resolved;
         try {
           resolved = await resolveForPublication([component]);
@@ -451,6 +457,7 @@ export function createBackgroundRuntimeSnapshotPublisher({
             requestedComponents: [component],
             components: [component],
             currentSnapshotId,
+            observedStartedSeq,
           });
           if (closed || isShuttingDown?.()) return lastResult;
           const snapshotId = String(result?.snapshotId ?? '').trim();
@@ -467,6 +474,7 @@ export function createBackgroundRuntimeSnapshotPublisher({
           // the publisher's explicit input-change contract creates its own retry.
           if (retryInputChange) {
             dirtyComponents.add(component);
+            if (!requestObservations.has(component)) requestObservations.set(component, captureObservedStartedSeq());
             consumedInputChangeRetries.add(component);
             publishAgain = true;
           }
@@ -491,13 +499,17 @@ export function createBackgroundRuntimeSnapshotPublisher({
   const enqueue = (components) => {
     const normalizedComponents = normalizeComponents(components);
     if (!normalizedComponents.length || closed || isShuttingDown?.()) return inFlight ?? Promise.resolve(null);
+    const observation = captureObservedStartedSeq();
     for (const component of normalizedComponents) {
       dirtyComponents.add(component);
+      const previous = requestObservations.get(component);
+      requestObservations.set(component, observation === null ? null : Math.max(previous ?? 0, observation));
       componentStatus.set(component, { phase: 'stale', error: null });
     }
 
     if (inFlight) {
       publishAgain = true;
+      process.stderr.write(`[local] queued ${normalizedComponents.join(', ')} runtime publication; waiting for the active publication.\n`);
       return inFlight;
     }
 

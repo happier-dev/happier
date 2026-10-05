@@ -797,12 +797,14 @@ export function createClaudeAgentSdkTurnOperations(
         const modelId = readString(evidence.modelId);
         if (!modelId) return;
         const contextWindowTokens = readNonnegativeInteger(evidence.contextWindowTokens);
-        const key = `${modelId}|${contextWindowTokens ?? ''}`;
+        const reasoningEffort = readString(evidence.reasoningEffort);
+        const key = `${modelId}|${contextWindowTokens ?? ''}|${reasoningEffort ?? ''}`;
         if (key === lastEffectiveModelEvidenceKey) return;
         lastEffectiveModelEvidenceKey = key;
         const published = Object.freeze({
             modelId,
             ...(contextWindowTokens && contextWindowTokens > 0 ? { contextWindowTokens } : {}),
+            ...(reasoningEffort ? { reasoningEffort } : {}),
         });
         for (const listener of effectiveModelListeners) listener(published);
     }
@@ -1338,7 +1340,7 @@ export function createClaudeAgentSdkTurnOperations(
         completion.resolve();
     }
 
-    async function consumeTurnMessages(turnQuery: ClaudeSdkQuery, completion: DeferredCompletion): Promise<void> {
+    async function consumeTurnMessages(turnQuery: ClaudeSdkQuery, completion: DeferredCompletion, launchEffort?: string | null): Promise<void> {
         let sawResult = false;
         let retainQueryForNextTurn = false;
         let messageSequence = 0;
@@ -1393,6 +1395,10 @@ export function createClaudeAgentSdkTurnOperations(
                 if (nextMessage.done) break;
                 const message = nextMessage.value;
                 messageSequence += 1;
+                const initializedModel = isSdkSystemMessage(message) && message.subtype === 'init' ? readString(message.model) : null;
+                if (initializedModel && launchEffort) {
+                    publishEffectiveModel({ modelId: initializedModel, reasoningEffort: launchEffort });
+                }
                 const assistantModelId = readSdkAssistantModelId(message);
                 if (assistantModelId) publishEffectiveModel({ modelId: assistantModelId });
                 if (isClaudeProviderActivityHookObservationLoss(message, providerSessionId)) {
@@ -1867,6 +1873,8 @@ export function createClaudeAgentSdkTurnOperations(
                     ...(currentUltracode && isClaudeUltracodeSupportedModelId(currentModelId, currentProviderModel)
                         ? { ultracode: true } : {}),
                 };
+                // Capture the actual query launch, not mutable next-query intent at init arrival.
+                const launchEffort = launchSettings.ultracode ? 'xhigh' : currentEffort;
                 const denySettingsArgs = resolveClaudeLaunchSettingsOverlayArgs({
                     args: [], interactionKind: 'noninteractive_sdk', permissionMode: currentPermissionMode,
                     launchSettings, workspaceWrites: currentWorkspaceWrites,
@@ -1930,7 +1938,7 @@ export function createClaudeAgentSdkTurnOperations(
                 activeQuery = turnQuery;
                 if (pendingSubmission === submission) pendingSubmission = null;
                 disposeQuery = turnQuery;
-                void consumeTurnMessages(turnQuery, completion);
+                void consumeTurnMessages(turnQuery, completion, launchEffort);
                 const transportOutcome = await turnQuery.promptTransportOutcome;
                 const outcome: ClaudeRuntimePromptSubmissionOutcome = transportOutcome.kind === 'accepted'
                     ? transportOutcome

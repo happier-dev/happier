@@ -110,6 +110,7 @@ function invocation(overrides: Readonly<{
     deadlineAtMs: overrides.deadlineAtMs ?? Date.now() + 30_000,
     maxSerializedBytes: overrides.maxSerializedBytes ?? 64 * 1024,
     exec: overrides.exec ?? emptyThreadListingExec,
+    ripgrep: { run: async () => ({ exitCode: 1, stdout: '', stderr: '' }) },
   };
 }
 

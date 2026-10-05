@@ -41,6 +41,7 @@ export const CAPABILITY_HOST_BINDING_OWNERS_V1 = Object.freeze({
   roleFamilyProjection: 'apps/cli/src/plugins/projection/registry/roles.ts',
   /** Projects declared workflows into the existing workflow library. */
   workflowFamilyProjection: 'apps/cli/src/plugins/projection/registry/workflows.ts',
+  inputTypeFamilyProjection: 'apps/cli/src/plugins/projection/registry/inputTypes.ts',
   /** Admits contribution points and the contributions targeting them. */
   targetedContributionAdmission: 'apps/cli/src/plugins/projection/registry/targetedContributions.ts',
   /** Binds declared plugin commands onto the CLI command surface. */
@@ -136,6 +137,14 @@ export const MANIFEST_FAMILY_REALM_OWNERS_V1 = Object.freeze({
     CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
     CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
   ),
+  dragSources: realmOwners(
+    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
+    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
+  ),
+  dropTargets: realmOwners(
+    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
+    CAPABILITY_HOST_BINDING_OWNERS_V1.clientExecutableRegistration,
+  ),
   // Declarative families whose reachability is the client projection their own
   // projection-family owner builds.
   transcriptActivities: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginUiFamilyProjection),
@@ -169,6 +178,7 @@ export const MANIFEST_FAMILY_REALM_OWNERS_V1 = Object.freeze({
   executionRunProfiles: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.executionRunProfileHost),
   roles: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.roleFamilyProjection),
   workflows: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.workflowFamilyProjection),
+  inputTypes: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.inputTypeFamilyProjection),
   notifications: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.pluginNotificationsHost),
   systemTools: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.systemToolProjection),
   pluginContributionPoints: declarativeFamilyOwners(

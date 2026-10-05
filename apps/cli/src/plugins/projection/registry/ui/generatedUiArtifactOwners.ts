@@ -27,7 +27,7 @@ export type ResolvedGeneratedReactNativeArtifactOwner = Readonly<{
 }>;
 
 /**
- * A generic client executable remains owned by the Action that selected it.
+ * A client executable remains owned by the contribution that selected it.
  * This is deliberately separate from renderer and Voice owner discovery:
  * sharing a generated bundle never grants one contribution another family's
  * activation or byte-read authority.
@@ -190,6 +190,33 @@ export function collectResolvedGeneratedReactNativeClientContributionArtifactOwn
     });
     return owner ? [owner] : [];
   });
+  for (const [family, contributions] of [
+    ['dragSources', registry.dragSources ?? []],
+    ['dropTargets', registry.dropTargets ?? []],
+  ] as const) {
+    for (const contribution of contributions) {
+      if (contribution.identity.pluginId !== contribution.pluginId
+        || contribution.identity.localId !== contribution.definition.id) continue;
+      const manifestPath = contribution.manifestPath.trim();
+      if (!manifestPath) continue;
+      owners.push(Object.freeze({
+        kind: 'clientContribution',
+        pluginId: contribution.pluginId,
+        pluginSource: Object.freeze({ ...contribution.source }),
+        ...(contribution.pluginVersion ? { pluginVersion: contribution.pluginVersion } : {}),
+        // Family namespaces preserve two client leaves with the same local id.
+        contributionId: `${family}/${contribution.identity.localId}`,
+        artifactId: contribution.definition.client.artifactId,
+        pluginRootPath: contribution.pluginRootPath,
+        manifestPath,
+        ...(contribution.generatedUiArtifactsManifest
+          ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest }
+          : {}),
+        declaredPlatforms: Object.freeze([...contribution.definition.platforms]),
+        expectedExecutable: Object.freeze({ exportName: contribution.definition.client.exportName }),
+      }));
+    }
+  }
   return Object.freeze(owners);
 }
 

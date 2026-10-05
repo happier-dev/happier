@@ -438,7 +438,7 @@ async function resolveAdmittedTargetedOperationInput(params: Readonly<{
     try {
         mountedCallerCurrent = await params.seed.isMountedCallerCurrent();
     } catch {
-        // Current mounted-caller evidence is external to this service. A
+        // Current bound UI caller evidence is external to this service. A
         // failed re-read cannot authorize disclosure to a provider Action.
     }
     throwIfInactive(params.seed, params.signal, undefined, true);

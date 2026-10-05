@@ -7,14 +7,15 @@ import {
   Row,
   SessionChat,
   Stack,
+  Status,
   Tabs,
   Text,
-  usePluginHostApi,
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
 
-import { openLinkedSession } from '../../sessions/entrySessionOpen.js';
+import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
+import type { TriageDetailTabSelectionV1 } from './body.js';
 
 const FILL_STYLE = Object.freeze({ flex: 1, minWidth: 0, minHeight: 0 });
 const TOOLBAR_STYLE = Object.freeze({ paddingHorizontal: 16, paddingVertical: 8, minHeight: 44 });
@@ -27,29 +28,16 @@ const TOOLBAR_STYLE = Object.freeze({ paddingHorizontal: 16, paddingVertical: 8,
  */
 export function TriageSessionPanel(props: Readonly<{
   sessions: readonly TriageLinkedSessionProjectionV1[];
+  selectedSessionId?: TriageLinkedSessionProjectionV1['sessionId'] | null;
+  onSelectSession?: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => void;
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
-  const host = usePluginHostApi();
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
-  const [opening, setOpening] = React.useState(false);
-  const mounted = React.useRef(true);
-  React.useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; };
-  }, []);
+  const opener = useLinkedSessionOpen();
   // The first linked Session (projection order) until the person picks another; a pick that
   // leaves the projection falls back to the first rather than to nothing.
-  const selected = props.sessions.find((session) => session.sessionId === selectedId) ?? props.sessions[0];
-  const openSelected = React.useCallback(async () => {
-    if (selected === undefined || opening) return;
-    setOpening(true);
-    await openLinkedSession({
-      execute: async (actionId, input, options) => await host.executeAction(actionId, input, options),
-      sessionId: selected.sessionId,
-    });
-    if (mounted.current) setOpening(false);
-  }, [host, opening, selected]);
+  const selected = props.sessions.find((session) => session.sessionId === (props.selectedSessionId ?? selectedId)) ?? props.sessions[0];
   if (selected === undefined) return null;
   const titleOf = (session: TriageLinkedSessionProjectionV1) => (
     session.displayTitle ?? text('plugins.triage.surface.detail.session', 'Session')
@@ -75,6 +63,7 @@ export function TriageSessionPanel(props: Readonly<{
               radioGroups={[{ id: 'linked-session', accessibilityLabel: pickerLabel, selectedId: selected.sessionId }]}
               onSelect={(sessionId) => {
                 setSelectedId(sessionId);
+                props.onSelectSession?.(sessionId);
                 setPickerOpen(false);
               }}
             />
@@ -86,10 +75,14 @@ export function TriageSessionPanel(props: Readonly<{
           titleKey="plugins.triage.surface.detail.session.open"
           title="Open session"
           variant="secondary"
-          busy={opening}
-          onPress={() => { void openSelected(); }}
+          busy={opener.busySessionId !== null}
+          onPress={() => { void opener.open(selected.sessionId); }}
         />
       </Row>
+      {opener.failedSessionId !== selected.sessionId ? null : (
+        <Status tone="danger" labelKey="plugins.triage.surface.detail.sessionOpenFailed"
+          label="This Session could not be opened." />
+      )}
       <Stack style={FILL_STYLE}>
         <SessionChat
           // One provider per Session: switching the selection replaces the controller.
@@ -114,15 +107,26 @@ export function TriageSessionPanel(props: Readonly<{
  */
 export function TriageDetailWholeBody(props: Readonly<{
   sessions: readonly TriageLinkedSessionProjectionV1[];
+  tabSelection?: TriageDetailTabSelectionV1;
+  selectedSessionId?: TriageLinkedSessionProjectionV1['sessionId'] | null;
+  onSelectSession?: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => void;
   children: React.ReactNode;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [selected, setSelected] = React.useState<'details' | 'session'>('details');
+  const value = props.tabSelection === undefined ? selected : props.tabSelection.value === 'session' ? 'session' : 'details';
+  const reportAvailableTabs = props.tabSelection?.onAvailableTabsChange;
+  React.useLayoutEffect(() => {
+    reportAvailableTabs?.(props.sessions.length === 0 ? [] : ['details', 'session']);
+  }, [props.sessions.length, reportAvailableTabs]);
   if (props.sessions.length === 0) return <>{props.children}</>;
   return (
     <Tabs
-      value={selected}
-      onValueChange={(value) => setSelected(value === 'session' ? 'session' : 'details')}
+      value={value}
+      onValueChange={(value) => {
+        setSelected(value === 'session' ? 'session' : 'details');
+        props.tabSelection?.onChange(value);
+      }}
       ariaLabel={text('plugins.triage.surface.detail.tabs', 'Entry detail')}
       // The Session tab hosts the live chat, which needs the detail's remaining height.
       layout="fill"
@@ -131,7 +135,7 @@ export function TriageDetailWholeBody(props: Readonly<{
         {props.children}
       </Tabs.Item>
       <Tabs.Item value="session" title={text('plugins.triage.surface.detail.tab.session', 'Session')} retention="retain">
-        <TriageSessionPanel sessions={props.sessions} />
+        <TriageSessionPanel sessions={props.sessions} selectedSessionId={props.selectedSessionId} onSelectSession={props.onSelectSession} />
       </Tabs.Item>
     </Tabs>
   );

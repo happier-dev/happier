@@ -18,6 +18,9 @@ import type {
     ResolvedExecutionRunProfileContribution,
     ResolvedRoleContribution,
     ResolvedWorkflowContribution,
+    ResolvedInputTypeContribution,
+    ResolvedDragSourceContribution,
+    ResolvedDropTargetContribution,
     ResolvedEventContribution,
     ResolvedInstallableContribution,
     ResolvedMcpDiscoverySourceContribution,
@@ -305,6 +308,9 @@ export function projectLoadedPluginContributes(
     const voiceModelPackCandidates: ResolvedVoiceModelPackContribution[] = [];
     const roleCandidates: ResolvedRoleContribution[] = [];
     const workflowCandidates: ResolvedWorkflowContribution[] = [];
+    const inputTypeCandidates: ResolvedInputTypeContribution[] = [];
+    const dragSourceCandidates: ResolvedDragSourceContribution[] = [];
+    const dropTargetCandidates: ResolvedDropTargetContribution[] = [];
     const voiceProviderCandidates: ResolvedVoiceProviderContribution[] = [];
     const accountCollectionCandidates: ResolvedAccountCollectionContribution[] = [];
     const pluginContributionPointCandidates: ResolvedPluginContributionPointDeclaration[] = [];
@@ -871,6 +877,25 @@ export function projectLoadedPluginContributes(
         });
     }
 
+    for (const contribution of pluginRegistry.inputTypes) {
+        inputTypeCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
+
+    for (const contribution of pluginRegistry.dragSources) {
+        dragSourceCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, pluginRootPath: contribution.pluginRootPath, definition: contribution.definition,
+            ...(contribution.generatedUiArtifactsManifest ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest } : {}) });
+    }
+    for (const contribution of pluginRegistry.dropTargets) {
+        dropTargetCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, pluginRootPath: contribution.pluginRootPath, definition: contribution.definition,
+            ...(contribution.generatedUiArtifactsManifest ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest } : {}) });
+    }
+
     for (const contribution of pluginRegistry.voiceModelPacks) {
         voiceModelPackCandidates.push({
             provenance: params.provenance,
@@ -970,6 +995,9 @@ export function projectLoadedPluginContributes(
         voiceModelPacks: Object.freeze(voiceModelPackCandidates),
         roles: Object.freeze(roleCandidates),
         workflows: Object.freeze(workflowCandidates),
+        inputTypes: Object.freeze(inputTypeCandidates),
+        dragSources: Object.freeze(dragSourceCandidates),
+        dropTargets: Object.freeze(dropTargetCandidates),
         voiceProviders: Object.freeze(voiceProviderCandidates),
         accountCollections: Object.freeze(accountCollectionCandidates),
         pluginContributionPoints: Object.freeze(pluginContributionPointCandidates),

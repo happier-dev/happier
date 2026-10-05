@@ -1,5 +1,4 @@
 import {
-  cloneElement,
   createContext,
   useCallback,
   useContext,
@@ -45,16 +44,20 @@ import {
 } from '../presentation/collection/collectionTable.js';
 import { HappierDisclosure } from '../presentation/collection/Disclosure.js';
 import { resolveHappierListDetailGeometry } from '../presentation/collection/listDetailGeometry.js';
-import type { HappierCollectionModel } from '../presentation/collection/useCollection.js';
+import { useHappierCollectionViewport, type HappierCollectionModel, type HappierCollectionViewport } from '../presentation/collection/useCollection.js';
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import type { HappierLayoutChangeEvent, HappierPortableStyle } from '../presentation/portableTypes.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { CollectionCards, CollectionGroupActionButton, readCollectionLineHeight } from './CollectionCards.js';
 import { List, type ItemProps, type ListMultiSelectionCapabilityProps, type ListSectionData } from './List.js';
 import { ListCollectionControlContext, type ListCollectionControl } from './listCollectionControl.js';
+import { ListCollectionHeader, useListCollectionSearch } from './listCollectionHeader.js';
+import { ListMultiSelectionProvider } from './ListMultiSelection.js';
+import { renderCollectionItemDestination } from './collectionItemDestination.js';
 import { DetailsPane, useDetailsPaneAvailable, useDetailsPaneHostInstalled } from './DetailsPane.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import type { NavigationListDestination } from './NavigationList.js';
+import { CollectionDetailHeadingFocusContext, useCollectionDetailHeadingFocusInternal } from './Focus.js';
 
 /**
  * The Collection (COLLECTION.md §3–§4, §7, §10.1): one item anatomy drawn as a `table` at rest and as a `list` beside
@@ -63,8 +66,8 @@ import type { NavigationListDestination } from './NavigationList.js';
  * the pane is not beside the page), else the in-page split by measured geometry, else the pushed detail. The detail
  * is one component in every container.
  *
- * It presents through the one virtualized List engine (`List.tsx`), which keeps owning virtualization, roving
- * focus, `j`/`k`, selection, multi-selection and grid semantics. The Collection adds the anatomy, the column
+ * It presents through the one List row/virtualization engine (`List.tsx`). The model owns logical focus and
+ * navigation; List retains physical reveal, row actions, multi-selection and semantics. Collection adds the anatomy, the column
  * priorities, the peek row, the containers and the table ⇄ split shared-element move. Table and split are one
  * presentation with two geometries: the same List and the same row cells, so opening never remounts a row.
  */
@@ -83,6 +86,8 @@ export type CollectionField<Item> = Readonly<{
 
 /** The one item anatomy every presentation draws from. Renderers are pure. */
 export type CollectionAnatomy<Item> = Readonly<{
+  /** A domain card body inside the shared Board activation/focus/scroll owner. */
+  boardContent?: (item: Item) => ReactNode;
   /** Shareable qualified page/location for this item, without transferring selection or navigation ownership. */
   destination?: (item: Item) => NavigationListDestination | null;
   /** A core destination owner may decorate the shared row/card without replacing its anatomy or activation. */
@@ -170,6 +175,8 @@ export type CollectionProps<Item> = Readonly<{
    * choice (and remembers it); switching keeps the model, the open item and its mounted detail.
    */
   presentation?: HappierCollectionPresentation;
+  /** An explicit domain projection; omitted keeps the responsive column pager. */
+  boardLayout?: 'columns' | 'stacked';
   detail?: HappierCollectionDetailContainer;
   /** The one detail component, in every container. */
   renderDetail?: (key: HappierCollectionKey, context: CollectionDetailRenderContext) => ReactNode;
@@ -312,7 +319,6 @@ type RowMetrics = Readonly<{
 const NO_TRACKS: HappierCollectionMotionTracks = Object.freeze({});
 const NO_ROW_ACTIONS: CollectionRowActions = Object.freeze({});
 const NO_CELLS: readonly never[] = Object.freeze([]);
-const RETAIN_EVERY_CELL = (): boolean => true;
 const CollectionStageContext = createContext<CollectionStage<unknown> | null>(null);
 
 function useRowMetrics(): RowMetrics {
@@ -575,22 +581,14 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
       {rowContents}
     </List.Item>
   );
-  const destination = anatomy.destination?.(item);
-  const destinationRow = destination && host?.renderDestinationRow ? host.renderDestinationRow({
-    ...destination, children: rowItem,
-    renderWithSecondaryActions: additional => cloneElement(rowItem, {
-      secondaryActions: [...(actions.secondaryActions ?? []), ...additional.secondaryActions],
-      onSecondaryAction: id => additional.secondaryActions.some(action => action.id === id)
-        ? additional.onSecondaryAction(id) : actions.onSecondaryAction?.(id),
-    }),
-  }) : rowItem;
+  const destinationRow = renderCollectionItemDestination(host, anatomy, item, rowItem);
   return (
     <AnimatedView
       value={progress}
       tracks={travel === null ? NO_TRACKS : happierCollectionTravelTrack(offset)}
       {...(anatomy.testID === undefined ? {} : { testID: `${anatomy.testID(item)}:cell` })}
     >
-      {anatomy.wrapItem ? anatomy.wrapItem(item, destinationRow) : destinationRow}
+      {destinationRow}
     </AnimatedView>
   );
 }
@@ -749,11 +747,11 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   // One progress for the open item's container: 1 is the split, 0 the resting view.
   const progress = driver.useValue(target === 'split' ? 1 : 0);
   // Where focus returns once a detail closes: the row or card that opened it (a new object per request).
-  const [focusRequest, setFocusRequest] = useState<Readonly<{ key: HappierCollectionKey }> | null>(null);
   const [view, setView] = useState<CollectionView>(() => ({ composition: target, transition: null, scrollRequest: null }));
   const viewRef = useRef(view);
   viewRef.current = view;
-  const scrollOffsetRef = useRef(0);
+  const { viewport, scrollRequest: viewportScrollRequest } = useHappierCollectionViewport(model, presentation);
+  const scrollOffsetRef = viewport.offsetRef;
   const lastOpenKeyRef = useRef<HappierCollectionKey | null>(openKey);
   if (openKey !== null) lastOpenKeyRef.current = openKey;
   const reducedMotion = accessibility.reducedMotion;
@@ -770,7 +768,6 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       progress.set(target === 'split' ? 1 : 0);
       setView({ composition: target, transition: null, scrollRequest: null });
       // Closing a pushed detail over cards gives focus back to the card that opened it.
-      if (target === 'cards' && current.composition === 'detail' && anchorKey !== null) setFocusRequest({ key: anchorKey });
       return;
     }
     const kind: 'travel' | 'fade' = reducedMotion || driver.durationsMs.open === 0 ? 'fade' : 'travel';
@@ -925,8 +922,30 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   }), [anatomy, columns, composition, expandable, metrics, model, onPeekHeight, onPeekSettled, progress, props.useRowActions, rowGeometry, transition]);
 
   // ---- the List engine's Collection facts ----
+  const authorMultiple: NonNullable<CollectionProps<Item>['selection']>['multiple'] = props.selection?.multiple
+    ?? (model.selectionStore === null ? undefined : { store: model.selectionStore });
+  const multipleStore = authorMultiple?.store ?? null;
+  const navigationKeys = useMemo(() => model.sections.flatMap(section => section.items)
+    .filter(item => props.selection?.isItemActivatable?.(item) !== false).map(model.keyOf), [model.keyOf, model.sections, props.selection?.isItemActivatable]);
+  const selectableKeys = useMemo(() => model.sections.flatMap(section => section.items)
+    .filter(item => authorMultiple?.isItemSelectable?.(item) !== false).map(model.keyOf), [authorMultiple?.isItemSelectable, model.keyOf, model.sections]);
+  useEffect(() => {
+    // The headless model feeds its own store. An author-supplied store is fed here once for every view.
+    if (multipleStore === model.selectionStore) return;
+    multipleStore?.setVisibleRows({ visibleOrderedKeys: selectableKeys,
+      eligibleKeys: authorMultiple?.retainedSelectionKeys === undefined ? selectableKeys
+        : [...selectableKeys, ...authorMultiple.retainedSelectionKeys] });
+  }, [authorMultiple?.retainedSelectionKeys, model.selectionStore, multipleStore, selectableKeys]);
+  const tabStopKey = model.focusKey !== null && navigationKeys.includes(model.focusKey) ? model.focusKey
+    : openKey !== null && navigationKeys.includes(openKey) ? openKey : navigationKeys[0] ?? null;
   const toggleExpanded = model.actions.toggleExpanded;
   const control = useMemo<ListCollectionControl>(() => ({
+    ownsSelectionRows: true,
+    hideChrome: true,
+    focus: { key: model.focusKey, tabStopKey, request: model.focusRequest,
+      onRequestHandled: model.actions.consumeFocusRequest,
+      onKey: (key, from, event) => model.actions.navigate({ key, from, event, presentation,
+        store: multipleStore, eligibleKeys: navigationKeys }) },
     onRowKey: (key, itemKey) => {
       if ((key === ' ' || key === 'Spacebar') && expandable) {
         toggleExpanded(itemKey);
@@ -934,7 +953,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       }
       return false;
     },
-    scroll: { offsetRef: scrollOffsetRef, request: view.scrollRequest },
+    scroll: { offsetRef: scrollOffsetRef, request: view.scrollRequest ?? viewportScrollRequest },
     sectionHeaderTitleRole: 'caption',
     sectionHeaderStyle: {
       height: metrics.groupHeader,
@@ -965,10 +984,11 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         {header}
       </driver.AnimatedView>
     ),
-  }), [driver, expandable, metrics.groupHeader, model.sections, pageScroll, progress, props.groupAction, props.testID, theme.colors.divider, theme.colors.surface, toggleExpanded, transition, view.scrollRequest]);
+  }), [driver, expandable, metrics.groupHeader, model, multipleStore, navigationKeys, pageScroll, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, tabStopKey, theme.colors.divider, theme.colors.surface, toggleExpanded, transition, view.scrollRequest, viewportScrollRequest]);
 
   // ---- Escape returns to the table from anywhere inside the Collection (web keyboard) ----
   const rootRef = useRef<View | null>(null);
+  const search = useListCollectionSearch(props.search, rootRef);
   const close = model.actions.close;
   const hasOpen = openKey !== null;
   useEffect(() => {
@@ -991,22 +1011,27 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   useEffect(() => {
     const previous = paneOpenKeyRef.current;
     paneOpenKeyRef.current = openKey;
-    if (pane && previous !== null && openKey === null) setFocusRequest({ key: previous });
-  }, [openKey, pane]);
+    if (previous !== null && openKey === null) model.actions.requestFocus(previous);
+  }, [model.actions, openKey]);
+  const authorFocusRequest = props.selection?.focusRequest;
+  useEffect(() => {
+    if (authorFocusRequest !== undefined) model.actions.requestFocus(authorFocusRequest.key);
+    // A caller's request is one object identity, not a request on every model update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authorFocusRequest]);
 
   const onSelectedKeyChange = model.actions.open;
   const focus = model.actions.focus;
   const authorFocus = props.selection?.onFocusedKeyChange;
-  const onFocusedKeyChange = useCallback((key: string) => {
-    focus(key);
+  const onFocusedKeyChange = useCallback((key: string, observedViewport?: HappierCollectionViewport) => {
+    focus(key, observedViewport ?? viewport);
     authorFocus?.(key);
-  }, [authorFocus, focus]);
+  }, [authorFocus, focus, viewport]);
   const authorActivatable = props.selection?.isItemActivatable;
   const isItemActivatable = useCallback(
     (cell: CollectionCell<Item>) => cell.kind === 'item' && (authorActivatable?.(cell.item) ?? true),
     [authorActivatable],
   );
-  const authorMultiple = props.selection?.multiple;
   const authorSelectable = authorMultiple?.isItemSelectable;
   const isItemSelectable = useCallback(
     (cell: CollectionCell<Item>) => cell.kind === 'item' && (authorSelectable?.(cell.item) ?? true),
@@ -1019,7 +1044,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   // A Collection with nothing in it is its empty state alone: no column header, no keys for rows that are not there.
   const hasRows = model.keys.length > 0;
   const cardsWide = composition === 'cards';
-  const showHints = (wide || (cardsWide && geometry?.mode === 'split')) && desktop && hasRows;
+  const showHints = (wide || (cardsWide && detail !== 'none' && geometry?.mode === 'split')) && desktop && hasRows;
   const transitionTracks = transition?.kind === 'travel' ? HAPPIER_COLLECTION_TRANSITION_TRACKS.columns : NO_TRACKS;
   // The bar above the rows keeps its height in the table and beside a detail, so opening or closing never moves
   // the rows under it: the table's column titles, or the window's first fact beside a detail (the lab's list bar).
@@ -1069,7 +1094,9 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
     ? [['J', 'K', hint.move], ['esc', translate('happier.plugin-ui.collection.hint.table', 'table')]]
     : [
         ['J', 'K', hint.move],
-        ['space', translate('happier.plugin-ui.collection.hint.peek', 'peek')],
+        ['space', multipleStore === null
+          ? translate('happier.plugin-ui.collection.hint.peek', 'peek')
+          : translate('happier.plugin-ui.collection.hint.select', 'select')],
         ['↵', hint.open],
         ['esc', translate('happier.plugin-ui.collection.hint.back', 'back')],
         ['⌘K', translate('happier.plugin-ui.collection.hint.anything', 'anything')],
@@ -1127,11 +1154,14 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   );
 
   // ---- the panes ----
+  const headingFocus = useCollectionDetailHeadingFocusInternal(detail === 'none' ? null : openKey);
   // The detail that is leaving stays on screen while it leaves: the caller has already closed it, so its last
   // rendering is kept for exactly the close, and it takes no input.
   const lastDetailRef = useRef<ReactNode>(null);
   const detailNode = openKey !== null && props.renderDetail !== undefined && detail !== 'none'
-    ? props.renderDetail(openKey, { headerHosted: pane && props.detailHeader !== undefined })
+    ? <CollectionDetailHeadingFocusContext.Provider value={pane && props.detailHeader !== undefined ? null : headingFocus}>
+        {props.renderDetail(openKey, { headerHosted: pane && props.detailHeader !== undefined })}
+      </CollectionDetailHeadingFocusContext.Provider>
     : transition !== null ? lastDetailRef.current : null;
   lastDetailRef.current = openKey !== null ? detailNode : transition !== null ? lastDetailRef.current : null;
   const detailLeaving = openKey === null && transition !== null;
@@ -1157,9 +1187,6 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
     onSelectedKeyChange,
     onFocusedKeyChange,
     isItemActivatable,
-    ...(props.selection?.focusRequest !== undefined
-      ? { focusRequest: props.selection.focusRequest }
-      : focusRequest !== null && !cards ? { focusRequest } : {}),
     ...(authorMultiple === undefined ? {} : {
       multiple: {
         store: authorMultiple.store,
@@ -1170,11 +1197,12 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   };
 
   return (
+    <ListMultiSelectionProvider store={multipleStore}>
     <HappierCollectionLayoutContext.Provider value={layoutState}>
       <View ref={rootRef} testID={props.testID} style={rootStyle}>
         {/* A page-sized collection scrolls the page's own header and footer with its items. */}
         {pageScroll ? null : props.header}
-        <PageScroller enabled={pageScroll}>
+        <PageScroller enabled={pageScroll} viewport={viewport} request={viewportScrollRequest}>
         {pageScroll ? props.header : null}
         <View testID={props.testID === undefined ? undefined : `${props.testID}:stage`} onLayout={onLayout} style={pageScroll ? pageStageStyle : rootStyle}>
         <driver.AnimatedView value={progress} tracks={fadeTracks} style={pageScroll ? pageStageRowStyle : stageStyle}>
@@ -1185,6 +1213,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
               importantForAccessibility={listVisible ? 'auto' : 'no-hide-descendants'}
               style={[paneStyle, { flex: listFlex }, listVisible ? null : hiddenStyle]}
             >
+              <ListCollectionHeader search={search.control} store={multipleStore} selectable={selectableKeys.length > 0} />
               {cards ? (
                 <>
                   <CollectionCards<Item>
@@ -1194,9 +1223,14 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
                     accessibilityLabel={props.accessibilityLabel}
                     width={size?.width ?? null}
                     narrow={geometry === null || geometry.mode !== 'split'}
+                    boardLayout={props.boardLayout}
                     selectedKey={openKey}
-                    focusRequest={focusRequest}
+                    focusRequest={model.focusRequest}
                     onFocusedKeyChange={onFocusedKeyChange}
+                    tabStopKey={tabStopKey}
+                    eligibleKeys={navigationKeys}
+                    selection={{ ...props.selection, ...(authorMultiple === undefined ? {} : { multiple: authorMultiple }) }}
+                    useRowActions={props.useRowActions}
                     {...(props.minCardWidth === undefined ? {} : { minCardWidth: props.minCardWidth })}
                     {...(props.groupAction === undefined ? {} : { groupAction: props.groupAction })}
                     {...(props.loading === undefined ? {} : { loading: props.loading })}
@@ -1220,17 +1254,6 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
                     renderItem={renderCollectionCell as (cell: CollectionCell<Item>) => ReactElement}
                     selection={listSelection}
                     header={columnHeader}
-                    {...(props.search === undefined ? {} : {
-                      search: {
-                        label: props.search.label,
-                        value: props.search.value,
-                        onValueChange: props.search.onValueChange,
-                        filter: RETAIN_EVERY_CELL,
-                        ...(props.search.onComposingValueChange === undefined ? {} : { onComposingValueChange: props.search.onComposingValueChange }),
-                        ...(props.search.placeholder === undefined ? {} : { placeholder: props.search.placeholder }),
-                        ...(props.search.testID === undefined ? {} : { testID: props.search.testID }),
-                      },
-                    })}
                     empty={props.empty}
                     footer={props.footer === undefined && footerLine === null ? undefined : (
                       <>
@@ -1264,6 +1287,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         {pane ? (
           // The page's app details pane: the same detail, beside the page with the pane's own motion, width and
           // Escape; the list narrows beneath it and keeps the open item marked.
+          <CollectionDetailHeadingFocusContext.Provider value={props.detailHeader === undefined ? null : headingFocus}>
           <DetailsPane
             open={openKey !== null}
             {...(openKey !== null && props.detailHeader !== undefined ? props.detailHeader(openKey) : {})}
@@ -1272,9 +1296,11 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
           >
             {detailNode}
           </DetailsPane>
+          </CollectionDetailHeadingFocusContext.Provider>
         ) : null}
       </View>
     </HappierCollectionLayoutContext.Provider>
+    </ListMultiSelectionProvider>
   );
 }
 
@@ -1289,12 +1315,17 @@ const pageStageRowStyle: HappierPortableStyle = { flexDirection: 'row', minWidth
  * The page's one scroller for a page-sized collection. The element is the same in both modes' positions it can
  * take, so switching a Collection's `scroll` is a deliberate remount, never an accidental one.
  */
-function PageScroller(props: Readonly<{ enabled: boolean; children?: ReactNode }>): ReactElement {
+function PageScroller(props: Readonly<{ enabled: boolean; viewport: HappierCollectionViewport; request: Readonly<{ offset: number }>; children?: ReactNode }>): ReactElement {
   const renderPageScroller = useOptionalPluginUiPresentationHost()?.renderPageScroller;
+  const scroll = useRef<ScrollView | null>(null);
+  useLayoutEffect(() => {
+    if (props.enabled) scroll.current?.scrollTo({ y: props.request.offset, animated: false });
+  }, [props.enabled, props.request]);
   if (!props.enabled) return <>{props.children}</>;
   if (renderPageScroller !== undefined) return <>{renderPageScroller(props.children)}</>;
   return (
-    <ScrollView style={pageScrollerStyle} keyboardShouldPersistTaps="handled">
+    <ScrollView ref={scroll} style={pageScrollerStyle} keyboardShouldPersistTaps="handled" scrollEventThrottle={16}
+      onScroll={event => { props.viewport.offsetRef.current = event.nativeEvent.contentOffset.y; }}>
       {props.children}
     </ScrollView>
   );

@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../../scripts/testing/vitestWorkers';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,6 +17,7 @@ export default defineConfig({
     { packageName: '@happier-dev/cli-common', packageSourceRoot: resolve(packageRoot, '../../cli-common/src') },
   ], 'happier-xai-workspace-package-sources')],
   test: {
+    ...resolveVitestWorkers(),
     environment: 'node',
     include: ['src/**/*.{spec,test}.{ts,tsx}'],
     env: { HAPPIER_FEATURE_POLICY_ENV: '' },

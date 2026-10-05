@@ -437,6 +437,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
   const unifiedPromptAcceptanceOperations =
     operations.promptCustody === 'unified_terminal' ? operations : null;
   const supportsEffort = operations.supportsEffort === true;
+  let observedEffort: Readonly<{ modelId: string; value: string }> | null = null;
   const projectRuntimeModel = (model: AgentSessionModel): AgentSessionModel => {
     if (supportsEffort) return model;
     const { modelOptions: _effortOptions, ...modelWithoutEffortOptions } = model;
@@ -464,8 +465,14 @@ export function createClaudeNativeSessionRuntimeFromOperations(
       }));
   const modelListeners = new Set<(snapshot: ReturnType<typeof readModels>) => void>();
   function readModels() {
+    const effort = observedEffort;
     return {
-      models,
+      // The active witness overlays admitted controls; it never becomes retained catalog truth.
+      models: effort ? models.map(model => (model.id === effort.modelId || model.extendedContextModelId === effort.modelId)
+        && model.modelOptions
+        ? { ...model, modelOptions: model.modelOptions.map(option => option.id === 'reasoning_effort'
+          ? { ...option, currentValue: effort.value } : option) }
+        : model) : models,
       observedAt: 0,
       currentModelId,
     };
@@ -584,8 +591,13 @@ export function createClaudeNativeSessionRuntimeFromOperations(
     currentModelId = modelId;
     const index = models.findIndex((model) => model.id === modelId);
     const previous = index >= 0 ? models[index] : undefined;
+    const variant = models.find(model => model.extendedContextModelId === modelId);
+    const reasoningEffort = evidence.reasoningEffort?.trim();
+    if (observedEffort?.modelId !== modelId) observedEffort = null;
+    if (reasoningEffort) observedEffort = { modelId, value: reasoningEffort };
     const next = projectRuntimeModel({
       ...(previous ?? {}),
+      ...(!previous && variant?.modelOptions ? { modelOptions: variant.modelOptions } : {}),
       id: modelId,
       name: evidence.displayName?.trim() || previous?.name || modelId,
       ...(evidence.contextWindowTokens !== null && evidence.contextWindowTokens !== undefined
@@ -1188,6 +1200,7 @@ export function createClaudeNativeRuntime(
         return {
           kind: unified && (host === 'tmux' || host === 'zellij') ? 'managed_terminal' : 'runner',
           startingMode: unified ? 'terminal' : 'remote',
+          ...(unified ? { retainedTerminalRecovery: 'adopt' as const } : {}),
           runtimeDescriptorV1: {
             ...(source?.agentId === 'claude' ? source : {}),
             v: 1,

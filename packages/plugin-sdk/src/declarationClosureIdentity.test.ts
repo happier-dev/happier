@@ -645,6 +645,7 @@ describe('normal SDK declaration closure identities', () => {
             './ui.ts',
             './ui/compatibility.ts',
             './ui/declarativeDocument.ts',
+            './entityDragDrop.ts',
             './ui/hostApi.ts',
             './ui/hostedWeb.ts',
             './testing/types.ts',

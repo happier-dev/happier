@@ -57,7 +57,43 @@ const preparedSelection = {
 };
 
 describe('plugin UI domain client transport adapter', () => {
+    it('carries declared-area operations without accepting author-chosen host scope', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({
+            authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' }, identity, createRequestId: () => 'area-request',
+            transport: {
+                subscribe(listener) { receive = listener; return { dispose() {} }; },
+                send(message) {
+                    sent.push(message);
+                    if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                        apiVersion: '1.0.0', methods: ['widgetArea'], surface });
+                    else if (message.kind === 'request') receive?.({ wireVersion: 1, kind: 'result', identity,
+                        requestId: message.requestId, method: message.method,
+                        result: { ok: false, errorCode: 'widget_area_not_declared', error: 'widget_area_not_declared' } });
+                },
+            },
+        });
+        const request = { area: 'pinned', context: { filter: 'open' }, operation: { actionId: 'widgets.instance.list' as const } };
+        await expect(api.widgetArea({ ...request, accountId: 'other' } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(sent.filter(message => message.kind === 'request')).toHaveLength(0);
+        await expect(api.widgetArea(request)).resolves.toMatchObject({ ok: false, errorCode: 'widget_area_not_declared' });
+        expect(sent.at(-1)).toMatchObject({ kind: 'request', method: 'widgetArea', payload: request });
+    });
     afterEach(() => vi.useRealTimers());
+    it('negotiates mounted entity commands and rejects author-supplied host scope', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: ['readEntityDragItem', 'updateEntityDragDrop'], surface });
+                if (message.kind === 'request') receive?.({ wireVersion: 1, kind: 'result', identity, requestId: message.requestId, method: message.method, result: message.method === 'readEntityDragItem' ? null : { accepted: true } });
+            },
+        } });
+        await expect(api.readEntityDragItem({ kind: 'session' })).resolves.toBeNull();
+        await expect(api.updateEntityDragDrop({ kind: 'mountSource', mountId: 'row', sourceId: 'issue', reference: { id: 'x' } })).resolves.toEqual({ accepted: true });
+        await expect(api.updateEntityDragDrop({ kind: 'mountSource', mountId: 'row', sourceId: 'issue', reference: { id: 'x' }, scope: { accountId: 'other' } } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
+    });
 
     it('reads an exact stored-image reference and refuses path-bearing input or malformed disclosure', async () => {
         let receive: ((message: unknown) => void) | undefined;
@@ -1287,7 +1323,7 @@ describe('plugin UI domain client transport adapter', () => {
     it('returns the literal no-invoke Session draft without an executable Action', async () => {
         const serverStartDraft = {
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-            directory: '/workspace',
+            directory: { kind: 'path' as const, path: '/workspace' },
             agentTarget: {
                 kind: 'agent' as const,
                 identity: { pluginId: 'happier.agent.claude', localId: 'claude' },

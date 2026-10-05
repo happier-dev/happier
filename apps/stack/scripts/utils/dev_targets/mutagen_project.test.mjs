@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { parseDevTargetsConfig } from './config.mjs';
 
 import {
   buildMutagenProjectArgs,
@@ -25,6 +26,37 @@ const targets = [
     remoteServerPort: null,
   },
 ];
+
+test('alpha polling follows configured runtime roles rather than command eligibility alone', () => {
+  const configuredTargets = ['server', 'expo', 'daemon', 'worker', 'unused'].map((name) => ({
+    ...targets[0], name,
+  }));
+  const config = parseDevTargetsConfig({
+    version: 3,
+    targets: configuredTargets,
+    runtimePlacement: {
+      server: { mode: 'prefer-target', target: 'server' },
+      expo: { mode: 'prefer-target', target: 'expo' },
+      daemon: { mode: 'local-and-targets', targets: ['daemon'] },
+    },
+    commandExecution: { mode: 'auto', targets: ['worker', 'expo'] },
+  });
+  const renderIntervals = (config) => {
+    const rendered = renderMutagenProject({ sourceDir: '/source', targets: configuredTargets, config });
+    return Object.fromEntries(configuredTargets.map(({ name }) => {
+      const session = rendered.split(`  ${resolveMutagenSessionName(name)}:\n`)[1].split('\n  happier-')[0];
+      return [name, Number(session.match(/pollingInterval: (\d+)/)?.[1])];
+    }));
+  };
+  assert.deepEqual(renderIntervals(config), { server: 10, expo: 10, daemon: 10, worker: 150, unused: 10 });
+  const moved = parseDevTargetsConfig({
+    ...config,
+    runtimePlacement: { ...config.runtimePlacement, expo: { mode: 'prefer-target', target: 'worker' } },
+  });
+  assert.deepEqual(renderIntervals(moved), { server: 10, expo: 150, daemon: 10, worker: 10, unused: 10 });
+  const legacy = parseDevTargetsConfig({ version: 1, targets: configuredTargets });
+  assert.deepEqual(renderIntervals(legacy), { server: 10, expo: 10, daemon: 10, worker: 10, unused: 10 });
+});
 
 test('renderMutagenProject creates one-way source replicas while retaining target-local build state', () => {
   const rendered = renderMutagenProject({

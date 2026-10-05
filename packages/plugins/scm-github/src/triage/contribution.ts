@@ -36,8 +36,8 @@ export const GITHUB_TRIAGE_ACTION_IDS_V1 = Object.freeze({
  * `PluginUiHostApi`, which has no storage member and no transport of its own, so
  * an Action is the ONLY way this source's detail body can reach GitHub at all.
  * They are declared separately from the role-bound Actions above precisely because
- * they are not roles: the aggregate never invokes them, and only this plugin's
- * own detail renderer does.
+ * they are not roles: the aggregate never invokes them. UI and agent callers
+ * reach the same configured-entry admission through these native Actions.
  */
 export const GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 = Object.freeze({
   readCapabilities: 'triage/read-github-capabilities',
@@ -54,10 +54,9 @@ export const GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 = Object.freeze({
  *
  * They are declared separately from every read above because they are a
  * different kind of thing: each is ONE exact externally visible write with its
- * own strict input and its own confirmation presentation, and none of them
- * declares `agent` or `mcp` so no agent or MCP caller can reach it at all. There
- * is no generic `mutate({ operation, payload })` Action here and there will not
- * be one.
+ * own strict input and its own confirmation presentation. UI and agent callers
+ * use the shared host approval policy, which requires approval by default.
+ * There is no generic `mutate({ operation, payload })` Action here.
  *
  * The two reviewer ids are a pair of exact DELTAS and never one "set reviewers"
  * id with a direction field. A single id would put the direction in the payload,

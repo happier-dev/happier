@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolve } from 'node:path';
 
 import { resolveWorkspaceBundlePublicationMode } from '../../../../scripts/workspaces/workspaceBundlePublication.mjs';
+import { resolveWorkspaceBuildMode } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import {
   buildCliPublication,
   resolveCliPublicationBuildSteps,
@@ -10,6 +11,16 @@ import {
 const packageRoot = resolve(process.cwd());
 
 describe('CLI publication build', () => {
+  it('runs release compiler children strictly even when invoked from a QA environment', () => {
+    buildCliPublication({
+      packageRoot,
+      env: { HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime' },
+      exec: (_command, _args, options) => {
+        expect(resolveWorkspaceBuildMode({ env: options?.env })).toBe('strict');
+        return '';
+      },
+    });
+  });
   it('compiles the shared closure in artifact mode before the dist build it fingerprints', () => {
     // The shared build regenerates the runtime artifact records plus the build-owned
     // current prepared plugin package tree. The runtime records are an
@@ -31,6 +42,9 @@ describe('CLI publication build', () => {
     // build.mjs resolves the package it builds from its working directory.
     for (const step of steps) {
       expect(step.cwd).toBe(packageRoot);
+      expect(resolveWorkspaceBuildMode({
+        env: { HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime', ...step.env },
+      })).toBe('strict');
     }
   });
 

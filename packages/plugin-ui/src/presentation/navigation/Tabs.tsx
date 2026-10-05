@@ -236,6 +236,7 @@ export function HappierTabs(props: Readonly<{
    */
   tabList?: 'shown' | 'host';
   layout?: HappierTabsLayout;
+  sharedPanel?: ReactNode;
 }>) {
   const fill = props.layout === 'fill';
   const nativeMinimumTouchTarget = useHappierNativeMinimumInteractiveTargetSize();
@@ -342,11 +343,13 @@ export function HappierTabs(props: Readonly<{
   if (props.tabList === 'host') {
     return (
       <View testID={props.testID} style={{ flex: 1, minHeight: 0 }}>
-        {selected === undefined ? null : (
-          <HappierTabPanel key={selected.value} active fill={fill}>
-            {selected.children}
+        {selected === undefined ? null : props.sharedPanel !== undefined ? (
+          <HappierTabPanel active fill={fill}>{props.sharedPanel}</HappierTabPanel>
+        ) : tabs.map((tab) => mountedPanels.includes(tab.value) ? (
+          <HappierTabPanel key={tab.value} active={tab.value === selectedValue} fill={fill}>
+            {tab.children}
           </HappierTabPanel>
-        )}
+        ) : null)}
       </View>
     );
   }
@@ -426,7 +429,17 @@ export function HappierTabs(props: Readonly<{
           })}
         </View>
       </HappierScrollArea>
-      {tabs.map((tab, tabIndex) => (mountedPanels.includes(tab.value) ? (
+      {props.sharedPanel !== undefined && selected !== undefined ? (
+        <HappierTabPanel
+          active
+          nativeID={`${instanceId}-panel-${tabs.indexOf(selected)}`}
+          labelledBy={`${instanceId}-tab-${tabs.indexOf(selected)}`}
+          onFocusWithinChange={(focused) => { recordFocusWithin(selected.value, focused); }}
+          fill={fill}
+        >
+          {props.sharedPanel}
+        </HappierTabPanel>
+      ) : tabs.map((tab, tabIndex) => (mountedPanels.includes(tab.value) ? (
         <HappierTabPanel
           key={tab.value}
           active={tab.value === selectedValue}

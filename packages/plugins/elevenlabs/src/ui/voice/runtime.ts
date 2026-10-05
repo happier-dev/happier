@@ -91,9 +91,10 @@ RealtimeVoiceProviderRuntime & Readonly<{
   >();
   const lifecycle = createElevenLabsSessionLifecycle({
     takeHostedConversation(leaseId) {
-      const service = hostedConversationsByLeaseId.get(leaseId) ?? null;
+      return hostedConversationsByLeaseId.get(leaseId) ?? null;
+    },
+    forgetHostedConversation(leaseId) {
       hostedConversationsByLeaseId.delete(leaseId);
-      return service;
     },
   });
   const provider = createElevenLabsProtocolAdapter({
@@ -267,14 +268,22 @@ RealtimeVoiceProviderRuntime & Readonly<{
     encodeContextUpdate: (text) => Object.freeze([{ type: 'voice.context_update', text }]),
     encodeTextTurn: (text) => Object.freeze([{ type: 'voice.user_text', text }]),
     async dispose() {
-      if (disposed) return;
+      // Revoke media immediately, but keep unresolved hosted bookkeeping
+      // reachable on subsequent cleanup calls until attestation succeeds.
       disposed = true;
-      await activeConnection?.close({ code: 'replaced' }).catch(() => {});
-      activeConnection = null;
-      await provider.endSession();
-      hostedConversationsByLeaseId.clear();
       activeHandle?.dispose();
       activeHandle = null;
+      let closeFailure: unknown;
+      try {
+        await activeConnection?.close({ code: 'replaced' });
+        activeConnection = null;
+      } catch (error) {
+        closeFailure = error;
+      }
+      await provider.endSession();
+      activeConnection = null;
+      hostedConversationsByLeaseId.clear();
+      if (closeFailure) throw closeFailure;
     },
   });
 }

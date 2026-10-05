@@ -5,6 +5,7 @@ import {
   describeActionForVoiceTool,
 } from '@happier-dev/plugin-sdk/voice/client';
 import {
+  getActionSpec,
   listVoiceSdkSafeToolActionSpecs,
   zodSchemaToJsonSchemaObject,
 } from '@happier-dev/protocol';
@@ -22,6 +23,20 @@ const TRANSCRIPTION_USAGE = Object.freeze({
 });
 
 describe('OpenAI Realtime protocol adapter', () => {
+  it('preserves generated session.spawn_new tool metadata without a live-value depth quota', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parameters = zodSchemaToJsonSchemaObject(spec.inputSchema);
+    const tool = {
+      name: String(spec.bindings?.voiceClientToolName),
+      description: describeActionForVoiceTool(spec),
+      parameters,
+    };
+    expect(createOpenAiToolSessionUpdate([tool])).toEqual({
+      type: 'session.update',
+      session: { type: 'realtime', tool_choice: 'auto', tools: [{ type: 'function', ...tool }] },
+    });
+  });
+
   it.each([
     ['session_expired', 'voice_session_expired', true],
     ['rate_limit_exceeded', 'rate_limited', false],
@@ -710,15 +725,24 @@ describe('OpenAI Realtime protocol adapter', () => {
       description: 'reject non-JSON provider tool parameters',
       parameters: { generatedAt: new Date() },
     }])).toThrow();
-    // Tool parameters use the r0.45 data-only composition path, but this
-    // entry point returns the canonical Protocol Voice transport DTO. Its
-    // final parse retains the Protocol-owned wire bound rather than reviving
-    // the removed SDK helper profile.
+    // Metadata does not inherit the live tool-value budget.
     expect(() => createOpenAiToolSessionUpdate([{
       name: 'tool',
-      description: 'respect the canonical Voice transport envelope',
+      description: 'preserve generated metadata',
       parameters: { description: 'x'.repeat(64 * 1024 + 1) },
-    }])).toThrow();
+    }])).not.toThrow();
+    expect(() => encodeOpenAiRealtimeClientEvent({
+      type: 'response.create', response: { instructions: 'x'.repeat(64 * 1024 + 1) },
+    })).toThrow();
+    expect(() => encodeOpenAiRealtimeClientEvent({
+      type: 'response.cancel', unexpected: true,
+    })).toThrow();
+    expect(() => encodeOpenAiRealtimeClientEvent({
+      type: 'session.update', session: { type: 'realtime', tools: [], tool_choice: 'auto', unexpected: true },
+    })).toThrow();
+    expect(() => encodeOpenAiRealtimeClientEvent({
+      type: 'session.update', session: { type: 'realtime', tool_choice: 'auto', tools: [{ type: 'function', name: 'tool', description: 'tool', parameters: {}, unexpected: true }] },
+    })).toThrow();
     expect(() => encodeOpenAiRealtimeClientEvent({
       type: 'response.create',
       response: { generatedAt: new Date() },
@@ -731,6 +755,10 @@ describe('OpenAI Realtime protocol adapter', () => {
       order: 0,
       status: 'success',
       output: {},
+    })).toThrow();
+    expect(() => encodeOpenAiToolResult({
+      v: 1, responseId: 'response-1', callId: 'call-1', toolName: 'tool', order: 0,
+      status: 'success', output: { text: 'x'.repeat(64 * 1024 + 1) },
     })).toThrow();
     expect(() => encodeOpenAiRealtimeClientEvent({
       type: 'response.cancel',

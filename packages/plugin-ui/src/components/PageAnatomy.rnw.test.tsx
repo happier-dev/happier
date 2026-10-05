@@ -227,8 +227,11 @@ describe('plugin page anatomy through the shared page owners', () => {
 
     const line = mount.container.querySelector<HTMLElement>('[data-testid="line-empty"]')!;
     expect(textOf(line)).toBe('No matches');
-    // A line is a row, not a centred state: it carries the list-item role.
-    expect(line.getAttribute('role')).toBe('listitem');
+    // ItemGroup is a group, not a list. An empty-state sentence is not a collection item
+    // and stays quiet unless its caller requests a lifecycle announcement.
+    expect(line.closest('[role="group"]')?.getAttribute('aria-label')).toBe('Projects');
+    expect(line.getAttribute('role')).toBeNull();
+    expect(line.getAttribute('aria-live')).toBeNull();
 
     const add = mount.container.querySelector<HTMLElement>('[data-testid="add-empty"]')!;
     expect(add.style.borderTopStyle).toBe('dashed');

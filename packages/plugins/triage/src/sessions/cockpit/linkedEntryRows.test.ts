@@ -1,4 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import {
+    TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+} from '@happier-dev/triage-protocol/v1';
+import { resolveTriageSourceWorkflowSubjectV1 } from '../../ui/detail/sourceSurface.js';
 
 import { CORPUS_SESSION_LINKS_FIELD } from '../../corpus/collections/ids.js';
 import { testkitEntryRef, testkitPresentOutcome, testkitSnapshot, TESTKIT_SOURCE_INSTANCE_ID } from '../../corpus/testkit/observations.test-support.js';
@@ -45,6 +52,18 @@ function state(
 
 /** The reference the private link row held, as every `ready` read carries it. */
 const ENTRY_REF = testkitEntryRef();
+const SOURCE_PROTOCOL = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
+const SOURCE_CONTEXT = createSurfaceContextFixture({ targetedContributions: {
+    target: { pluginId: 'happier.triage', occurrenceId: 'triage-occurrence', sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } },
+    points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{ protocol: SOURCE_PROTOCOL, contributions: [{
+        contributor: { pluginId: ENTRY_REF.source.pluginId, contributionId: ENTRY_REF.source.localId,
+            occurrenceId: 'source-occurrence', sourceCustody: { kind: 'development', registeredRootId: 'source-root' } },
+        protocol: SOURCE_PROTOCOL,
+        descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example forge',
+            kinds: [{ id: ENTRY_REF.kindId, workflowSubject: 'pullRequest', displayName: 'Pull request' }] },
+        operations: [], surfaces: [],
+    }] }] }],
+} });
 
 function hydration(
     entries: readonly (readonly [string, TriageSessionLinkHydrationV1])[],
@@ -71,6 +90,7 @@ describe('the Session cockpit linked-entry projection', () => {
                 ['unknown', { kind: 'ready', revision: 1, displayPath: 'other/path', entryRef: { ...ENTRY_REF, collisionScope: 'another/repo' } }],
             ]),
             entries: window.rows,
+            workflowSubject: (entryRef) => resolveTriageSourceWorkflowSubjectV1(SOURCE_CONTEXT.targetedContributions, entryRef),
         });
         if (view.kind !== 'linked') throw new Error('expected links');
         expect(view.rows[0]?.presentation).toMatchObject({ kind: 'linked', entry: {

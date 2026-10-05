@@ -4,7 +4,7 @@ import { join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { execYarn } from '../../../../../scripts/workspaces/execYarnCommand.mjs';
-import { withDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 
 export const REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS = [
   'install',
@@ -67,7 +67,7 @@ export async function bootstrapRemoteDependencies({
     // Source tests consume installed tools, not the Stack dependency owner's
     // compiled closure. Keep installation freshness and its lock authoritative.
     return await withDependencyRefreshImpl(
-      { installDir: repoDir, componentDir, env },
+      { installDir: repoDir, componentDir, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE },
       async () => await installInitialDependenciesImpl({ repoDir, env }),
     );
   }
@@ -82,7 +82,7 @@ export async function bootstrapRemoteDependencies({
   const dependencyOwnerReady = dependencyOwnerEntrypoints.every((entrypoint) => packageExists(entrypoint));
   if (!dependencyOwnerReady) {
     await withDependencyRefreshImpl(
-      { installDir: repoDir, componentDir, env },
+      { installDir: repoDir, componentDir, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE },
       async () => await installInitialDependenciesImpl({ repoDir, env }),
     );
     const { ensureWorkspacePackagesBuiltByName } = await loadWorkspaceBuildOwner();

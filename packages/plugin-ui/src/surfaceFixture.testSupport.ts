@@ -35,6 +35,10 @@ export function createHostApiStub(
   return {
     version: () => ({ apiVersion: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.ui.hostApiVersion, wireVersion: 1, methods: [] }),
     context: async () => context,
+    widgetArea: async () => unsupportedHostMethod(),
+    readEntityDragItem: async () => unsupportedHostMethod(),
+    updateEntityDragDrop: async () => unsupportedHostMethod(),
+    watchEntityDragDrop: async () => unsupportedHostMethod(),
     watchContext: async (): Promise<Disposable> => ({ dispose() {} }),
     publishCurrentUiContext: () => undefined,
     executeAction: async () => unsupportedHostMethod(),

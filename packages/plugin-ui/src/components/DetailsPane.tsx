@@ -10,6 +10,7 @@ import { IconButton } from './Button.js';
 import { Icon } from './Icon.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { usePluginUiSurfaceBridge } from './surfaceBridge.js';
+import { useCollectionDetailHeadingBindingInternal } from './Focus.js';
 
 export type DetailsPaneProps = Readonly<{
   /** Whether the detail is open. The plugin keeps the open item in its own location (`replacePageLocation`). */
@@ -75,6 +76,7 @@ function useNoPane(): boolean {
  * ```
  */
 export function DetailsPane(props: DetailsPaneProps): ReactElement | null {
+  const headingRef = useCollectionDetailHeadingBindingInternal();
   const binding = useOptionalPluginUiPresentationHost()?.detailsPane ?? NO_PANE_HOST;
   const available = useBindingAvailable(binding);
   const bridge = usePluginUiSurfaceBridge();
@@ -83,6 +85,7 @@ export function DetailsPane(props: DetailsPaneProps): ReactElement | null {
       <>
         {binding.renderDetailsPane({
           open: props.open,
+          ...(headingRef === undefined ? {} : { headingRef }),
           ...(props.title === undefined ? {} : { title: props.title }),
           ...(props.subtitle === undefined ? {} : { subtitle: props.subtitle }),
           ...(props.actions === undefined ? {} : { actions: bridge(props.actions) }),

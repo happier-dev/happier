@@ -59,6 +59,12 @@ function discoverReferences(manifest: UnknownRecord): Map<string, Set<string>> {
         const client = asRecord(provider.client);
         addReference(references, client?.artifactId, client?.exportName);
     }
+    for (const family of ['dragSources', 'dropTargets'] as const) {
+        for (const contribution of asRecords(contributes?.[family])) {
+            const client = asRecord(contribution.client);
+            addReference(references, client?.artifactId, client?.exportName);
+        }
+    }
     let migrationArtifact: Readonly<{ artifactId: string; exportName: 'collectionMigrations' }> | null = null;
     for (const collection of asRecords(contributes?.accountCollections)) {
         if (asRecords(collection.migrations).length === 0) continue;

@@ -447,13 +447,13 @@ describe('the Triage entry detail in the host details pane', () => {
 
         const pane = detailsPaneNode();
         expect(pane, 'the entry opens in the host details pane').not.toBeNull();
-        // The detail lives in the pane: its heading and its own Close, and the entry detail read it made from there
+        // The detail lives in the pane: its heading and the shared pane's close control, and the read it made there
         // through the plugin's Host API — the context the pane carries across (a lost context throws instead).
         expect(pane?.textContent).toContain(ENTRY_TITLE);
-        expect(pane?.querySelector('[aria-label="Close"]')).not.toBeNull();
+        expect(pane?.querySelector('[aria-label="Close details"]')).not.toBeNull();
         expect(requestedActions).toContain(TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1);
         // Nothing of it stays in the page: no in-page split, no second copy.
-        expect(document.querySelectorAll('[aria-label="Close"]')).toHaveLength(1);
+        expect(document.querySelectorAll('[aria-label="Close details"]')).toHaveLength(1);
         expect(document.querySelector(`[data-testid="${TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1}"]`)?.textContent ?? '').toBe('');
         // The table stays on screen beside it, with the entry selected; the location names it.
         expect(listRegionNode().style.display).toBe('');
@@ -497,14 +497,13 @@ describe('the Triage entry detail in the host details pane', () => {
         await act(async () => {
             await shell.press(await shell.getByRole('radio', { name: 'Board' }));
         });
-        expect(collectionNode()).toBeNull();
-        await act(async () => {
-            await shell.press(await shell.getByRole('option', { name: ENTRY_TITLE }));
-        });
-        await act(async () => { await Promise.resolve(); });
+        const boardCollection = collectionNode();
+        expect(boardCollection).not.toBeNull();
+        await openTheRow(shell);
 
         expect(detailsPaneNode()?.textContent).toContain(ENTRY_TITLE);
-        await expect(shell.getByRole('option', { name: ENTRY_TITLE })).resolves.toBeDefined();
+        expect(collectionNode()).toBe(boardCollection);
+        await expect(shell.getByRole('button', { name: ENTRY_TITLE })).resolves.toBeDefined();
 
         // Back to List: the same open entry, still in the pane, beside the table.
         await act(async () => {

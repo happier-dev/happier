@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1500,6 +1501,7 @@ describe('target activation publication', () => {
             pluginDiagnosticsByPluginId: Object.freeze({}),
             activatedPluginIds: new Set([pluginId]),
             activateContributionsOnDemand: async () => [],
+            resolveCaptureSource: unexpectedCaptureSourceResolution,
             resolvePromptAssetBlocks: async () => [],
             createAgentInvocationServices: async () => createUnavailablePluginServices(),
             readPluginOccurrenceId: () => occurrenceId as PluginRuntimeOccurrenceId,

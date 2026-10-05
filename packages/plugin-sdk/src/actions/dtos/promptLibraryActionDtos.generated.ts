@@ -7,6 +7,21 @@ export type PromptLibraryActionInputById = {
     readonly "prompt_doc.get": {
         artifactId: string;
     };
+    readonly "prompt_doc.create": {
+        title: string;
+        markdown: string;
+        folderId?: string | null | undefined;
+        tags?: string[] | undefined;
+        favorite?: boolean | undefined;
+    };
+    readonly "prompt_doc.favorite.set": {
+        artifactId: string;
+        favorite: boolean;
+    };
+    readonly "prompts.library.list": {
+        query?: string | undefined;
+        includeBundles?: false | undefined;
+    };
     readonly "prompt_doc.update": {
         [x: string]: unknown;
         artifactId: string;
@@ -62,6 +77,25 @@ export type PromptLibraryActionResultById = {
         artifactId: string;
         title: string;
         markdown: string;
+    };
+    readonly "prompt_doc.create": {
+        ok: true;
+        artifactId: string;
+    };
+    readonly "prompt_doc.favorite.set": {
+        ok: true;
+        artifactId: string;
+    };
+    readonly "prompts.library.list": {
+        coverage: 'complete' | 'partial' | 'unavailable';
+        items: {
+            artifactId: string;
+            title: string;
+            folderId: string | null;
+            tags: string[];
+            favorite: boolean;
+            updatedAtMs: number;
+        }[];
     };
     readonly "prompt_doc.update": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;

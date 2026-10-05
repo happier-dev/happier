@@ -6,10 +6,19 @@
  * mapping from Happier's own owner facts (Sessions, workflow runs, worker updates) onto this
  * presentation. A plugin maps its own facts onto the same three fields; the words stay the owner's.
  */
+import type { HappierTone } from '../semantics.js';
+
 export type HappierWorkStatusBucket = 'needs_you' | 'working' | 'finished' | 'idle' | 'offline';
 
 /** Healthy work is `neutral`; work that needs the person is `attention`; trouble is `danger`. */
 export type HappierWorkStatusTone = 'neutral' | 'attention' | 'danger';
+
+/** The shared semantic treatment for a Work tone in a status label or badge. */
+export const HAPPIER_WORK_STATUS_SEMANTIC_TONE = {
+  neutral: 'neutral',
+  attention: 'warning',
+  danger: 'danger',
+} as const satisfies Readonly<Record<HappierWorkStatusTone, HappierTone>>;
 
 export type HappierWorkStatusPresentation = Readonly<{
   bucket: HappierWorkStatusBucket;

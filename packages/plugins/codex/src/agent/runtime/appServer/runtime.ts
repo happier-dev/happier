@@ -103,6 +103,7 @@ import {
 } from './connectedServiceRuntimeIdentity.js';
 import {
   createCodexAppServerTurnFailure,
+  isCodexAppServerContextWindowExhaustedError,
   isCodexAppServerWorkspaceRoutingUnauthorizedError,
 } from './turns/failure.js';
 import { createCodexAppServerAssistantReasoningProjector } from './projection/assistantReasoning.js';
@@ -703,7 +704,9 @@ function buildCodexAppServerTurnFailureIssue(
     v: 1,
     scope: 'primary_session',
     status: 'failed',
-    code: CODEX_APP_SERVER_TURN_FAILURE_CODE,
+    code: isCodexAppServerContextWindowExhaustedError(error, { structuredOnly: true })
+      ? 'agent_context_window_exceeded'
+      : CODEX_APP_SERVER_TURN_FAILURE_CODE,
     source: resolveCodexRuntimeIssueSource(error),
     occurredAt: Date.now(),
     agentId: 'codex',
@@ -1921,13 +1924,17 @@ export function createCodexAppServerRuntime(
       ...(agentTurnId ? { agentTurnId } : {}),
       issue: buildCodexAppServerTurnFailureIssue(terminalPendingTurnFailure, activeTurn),
     });
-    publishRuntimeEvent({
-      kind: 'backend-error',
-      error: {
-        code: CODEX_APP_SERVER_TURN_FAILURE_CODE,
-        message: CODEX_APP_SERVER_TURN_FAILURE_PREVIEW,
-      },
-    });
+    // Structured context rejection settles this input, while the native thread
+    // remains available for a distinct host-admitted turn.
+    if (!isCodexAppServerContextWindowExhaustedError(error, { structuredOnly: true })) {
+      publishRuntimeEvent({
+        kind: 'backend-error',
+        error: {
+          code: CODEX_APP_SERVER_TURN_FAILURE_CODE,
+          message: CODEX_APP_SERVER_TURN_FAILURE_PREVIEW,
+        },
+      });
+    }
     void reportProviderRuntimeAuthFailureForRecovery(
       terminalPendingTurnFailure,
       quotaEvidence,

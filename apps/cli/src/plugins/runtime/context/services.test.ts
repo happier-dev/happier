@@ -677,7 +677,7 @@ describe('A.11 plugin context services', () => {
             terminate: vi.fn(async () => undefined),
             signal: vi.fn(async () => undefined),
         };
-        const launchCurrentHostProcess = vi.fn(async () => process);
+        const launchCurrentHostProcess = vi.fn(async () => ({ ...process, launcherIdentity: null }));
         const onHostCreated = vi.fn(async (handle: TerminalHostHandle) => ({
             ...handle,
             attachmentId: 'borrowed-attachment' as NonNullable<TerminalHostHandle['attachmentId']>,
@@ -752,6 +752,7 @@ describe('A.11 plugin context services', () => {
         };
         const process = {
             whenExited: new Promise<never>(() => undefined),
+            launcherIdentity: null,
             terminate: vi.fn(async () => undefined),
             signal: vi.fn(async () => undefined),
         };

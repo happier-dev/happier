@@ -313,10 +313,23 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
           limit: request.maxItems,
           searchTerm: request.searchTerm,
           searchMode: request.searchMode,
+          searchTarget: request.searchTarget,
+          ripgrep: request.ripgrep,
           includeThreads: request.includeThreads,
           signal: request.signal,
           deadlineAtMs: request.deadlineAtMs,
           exec: request.exec,
+          resultBudget: {
+            fits(page) {
+              return fitsResult(ok({
+                candidates: page.candidates.map(projectCodexExternalSessionCandidateToAgent),
+                nextCursor: page.nextCursor,
+                ...(page.searchIncomplete !== undefined ? { searchIncomplete: page.searchIncomplete } : {}),
+                ...(page.preparation !== undefined ? { preparation: page.preparation } : {}),
+                ...(page.contentCoverage !== undefined ? { contentCoverage: page.contentCoverage } : {}),
+              }), request.maxSerializedBytes);
+            },
+          },
         });
         const after = getAgentExternalSessionsInvocationFailure(request);
         if (after) return after;
@@ -325,6 +338,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
           nextCursor: listed.nextCursor,
           ...(listed.searchIncomplete !== undefined ? { searchIncomplete: listed.searchIncomplete } : {}),
           ...(listed.preparation !== undefined ? { preparation: listed.preparation } : {}),
+          ...(listed.contentCoverage !== undefined ? { contentCoverage: listed.contentCoverage } : {}),
         }, request.maxSerializedBytes, 'Codex candidate page cannot fit the result byte bound.');
       } catch (error) {
         const after = getAgentExternalSessionsInvocationFailure(request);

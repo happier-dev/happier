@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 devtools = ["wry/devtools"]
 
 [build-dependencies]
-tauri-build = { version = "2.5", features = [] }
+tauri-build = { version = "2.7.1", features = [] }
 flate2 = "1.1"
 serde_json = "1.0"
 
@@ -29,7 +29,7 @@ url = "2"
 log = "0.4"
 libc = "0.2"
 flate2 = "1.1"
-tauri = { version = "2.11.5", features = ["tray-icon", "macos-private-api"] }
+tauri = { version = "2.12.1", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-http = "=2.5.2"
 tauri-plugin-notification = "2"
@@ -54,16 +54,18 @@ tauri-plugin-updater = "2.9"
 [target."cfg(target_os = \"macos\")".dependencies]
 block2 = "0.6.1"
 objc2 = "0.6.2"
-objc2-app-kit = { version = "0.3.1", features = ["NSApplication", "NSBitmapImageRep", "NSEvent", "NSImage", "NSImageRep", "NSResponder", "NSScreen", "NSWindow"] }
+objc2-app-kit = { version = "0.3.1", features = ["NSAccessibility", "NSApplication", "NSBitmapImageRep", "NSEvent", "NSImage", "NSImageRep", "NSResponder", "NSScreen", "NSWindow", "NSWorkspace"] }
 objc2-core-graphics = "0.3.1"
-objc2-foundation = { version = "0.3.1", features = ["NSData", "NSDate", "NSDictionary", "NSError", "NSKeyValueObserving", "NSObject", "NSRunLoop", "NSString"] }
+objc2-foundation = { version = "0.3.1", features = ["block2", "NSData", "NSDate", "NSDictionary", "NSError", "NSKeyValueObserving", "NSNotification", "NSObject", "NSOperation", "NSRunLoop", "NSString"] }
 objc2-web-kit = { version = "0.3.1", features = ["WKSnapshotConfiguration", "WKWebView", "block2", "objc2-app-kit"] }
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+window-vibrancy = "=0.8.1"
 
 [target."cfg(target_os = \"windows\")".dependencies]
 webview2-com = "0.38"
 # The tray reads the taskbar theme from the registry; already in the tree via hyper-util.
 windows-registry = "0.6"
+windows = { version = "0.62.2", features = ["Foundation", "UI_ViewManagement", "Win32_Graphics_Dwm"] }
 
 [target."cfg(target_os = \"linux\")".dependencies]
 gtk = "0.18"

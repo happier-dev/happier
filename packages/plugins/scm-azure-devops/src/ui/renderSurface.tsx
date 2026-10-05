@@ -45,7 +45,6 @@ import {
   Metadata,
   Row,
   Screen,
-  ScrollArea,
   Stack,
   Status,
   Tabs,
@@ -56,7 +55,7 @@ import {
   type MetadataEntry,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
-import { TriageDetailPanel } from '@happier-dev/triage-sources/ui';
+import { TriageDetailInstance, TriageDetailPanel, TriageDetailStory, TriageDetailChanges, TriageDetailChecks, TriageDetailActivity } from '@happier-dev/triage-sources/ui';
 import {
   TriageDetailSurfaceInputV1Schema,
   type TriageDetailSurfaceInputV1,
@@ -264,6 +263,48 @@ function AzureActionsPanel({
   );
 }
 
+function AzureStoryChecks({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
+  const { state } = useAzurePolicies(input);
+  if (state.kind !== 'ready' || state.pending || state.failure !== null) return null;
+  const view = state.value;
+  if (view.evaluationsPartial || view.omittedRowCount > 0 || view.projectionTruncated) return null;
+  const rollup = { failingCount: 0, runningCount: 0, passingCount: 0 };
+  for (const row of view.evaluations) {
+    if (row.truncated) return null;
+    switch (row.status) {
+      case 'approved': rollup.passingCount += 1; break;
+      case 'rejected': rollup.failingCount += 1; break;
+      case 'running':
+      case 'queued': rollup.runningCount += 1; break;
+      // No authoritative aggregate meaning for an unknown provider status.
+      default: return null;
+    }
+  }
+  return <TriageDetailChecks title="Policies" titleKey="plugins.azureDevops.ui.tab.policies" rollup={rollup} />;
+}
+
+function AzureStoryChanges({ input, iterations, onRefreshIterations }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  iterations: AzureReadStateV1<AzureIterationsViewV1>;
+  onRefreshIterations: () => void;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const controller = useAzureIterationChanges(input, iterations.kind === 'ready' ? iterations.value.currentIterationId : undefined);
+  const { state } = controller;
+  return <TriageDetailChanges>
+    {state.kind === 'idle' || state.kind === 'loading' ? <LoadingState title="Reading changed files" titleKey="plugins.azureDevops.ui.readingFiles" />
+      : state.kind === 'unavailable' ? <ErrorState title="The changed files are unavailable" titleKey="plugins.azureDevops.ui.filesUnavailable"
+        description={failureDescription(state.failure, text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'))} />
+      : <><PageFailureBanner state={state} />
+        <Metadata title="Changed files" titleKey="plugins.azureDevops.ui.tab.files" entries={state.rows.map((row) => ({ label: row.path, value: changedFileSubtitle(row) }))} />
+        <PagedFooter state={state} onLoadMore={controller.loadMore} onRefresh={() => { onRefreshIterations(); controller.refresh(); }}
+          loadMoreTitle="Show more files"
+          refreshLabel="Re-read the changed files from Azure DevOps" refreshLabelKey="plugins.azureDevops.ui.rereadFiles"
+          summary={`${state.rows.length} file(s) read.`} summaryKey="plugins.azureDevops.ui.filesRead" summaryValues={{ count: state.rows.length }} />
+      </>}
+  </TriageDetailChanges>;
+}
+
 function OverviewPanel({
   input,
   overview,
@@ -294,8 +335,10 @@ function OverviewPanel({
   });
 
   return (
-    <ScrollArea>
-      <Stack gap="large">
+      <TriageDetailStory kind={withWrites ? undefined : 'ask'}
+        changes={withWrites ? null : <AzureStoryChanges input={input} iterations={iterations} onRefreshIterations={onRefreshIterations} />}
+        checks={withWrites ? null : <AzureStoryChecks input={input} />}>
+        {input.observation.snapshot.summary === undefined ? null : <Text value={input.observation.snapshot.summary} />}
         <SettledReadEvidence state={iterations} />
         {iterations.kind !== 'unavailable' ? null : (
           <Banner
@@ -381,8 +424,7 @@ function OverviewPanel({
             accessibilityLabelKey="plugins.azureDevops.ui.rereadIterations"
           />
         </Row>
-      </Stack>
-    </ScrollArea>
+      </TriageDetailStory>
   );
 }
 
@@ -1101,12 +1143,7 @@ function AzureDetailBody({
   const nowMs = Date.now();
   const overview = React.useMemo(() => projectAzureDetailOverview(input), [input]);
 
-  // The body's own lifetime. The iteration read belongs to the ROOT, so it must
-  // outlive any one tab: a read that died when `Files` was left would leave
-  // `Activity` comparing against nothing.
-  const bodyLifetime = React.useMemo(() => new AbortController(), []);
-  React.useEffect(() => () => bodyLifetime.abort(), [bodyLifetime]);
-  const iterations = useAzureIterations(input, bodyLifetime.signal);
+  const iterations = useAzureIterations(input);
 
   const panels: Readonly<Record<AzureDetailTabIdV1, React.ReactNode>> = {
     overview: (
@@ -1147,6 +1184,9 @@ function AzureDetailBody({
         <TriageDetailPanel
           panel={input.panel}
           ariaLabel={text('plugins.azureDevops.ui.tabsLabel', 'Azure DevOps pull request detail')}
+          retention={Object.fromEntries(AZURE_DETAIL_TABS_V1
+            .filter((declaration) => declaration.id !== 'threads')
+            .map((declaration) => [declaration.id === 'policies' ? 'checks' : declaration.id, declaration.retention]))}
           panels={{
             overview: (
               <OverviewPanel
@@ -1160,10 +1200,10 @@ function AzureDetailBody({
               />
             ),
             activity: (
-              <Stack gap="large" style={{ flex: 1, minHeight: 0 }}>
+              <TriageDetailActivity>
                 <Stack style={{ flex: 1, minHeight: 0 }}>{panels.threads}</Stack>
                 <Stack style={{ flex: 1, minHeight: 0 }}>{panels.activity}</Stack>
-              </Stack>
+              </TriageDetailActivity>
             ),
             files: panels.files,
             checks: panels.policies,
@@ -1225,7 +1265,7 @@ function AzureDetailSurface(context: RenderContext): React.ReactElement {
     );
   }
 
-  return <AzureDetailBody input={admitted.input} />;
+  return <TriageDetailInstance><AzureDetailBody input={admitted.input} /></TriageDetailInstance>;
 }
 
 /**

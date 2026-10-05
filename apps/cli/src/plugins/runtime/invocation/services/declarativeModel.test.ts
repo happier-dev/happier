@@ -52,6 +52,30 @@ function expectPluginError(operation: () => unknown, code: string): void {
 }
 
 describe('stable declarative plugin model', () => {
+    it('projects declared drag nodes with occurrence-qualified inventories', () => {
+        const model = createStablePluginDeclarativeModel({
+            pluginId: 'com.acme.forms', occurrenceId: 'occurrenceId-7', actions: [], settings: [],
+            dragSources: [{ identity: { pluginId: 'com.acme.forms', localId: 'card' }, referenceSchema: { type: 'string' } }],
+            dropTargets: [{ pluginId: 'com.acme.forms', localId: 'tray' }],
+            renderer: { id: 'drag', kind: 'declarative', root: { kind: 'dropTarget', targetId: 'tray', children: [
+                { kind: 'dragSource', sourceId: 'card', reference: '42', children: [{ kind: 'text', text: 'Card' }] },
+            ] } },
+        });
+        expect(model.root).toMatchObject({ target: { qualifiedId: 'com.acme.forms/tray', occurrenceId: 'occurrenceId-7' },
+            children: [{ source: { qualifiedId: 'com.acme.forms/card' }, reference: '42' }] });
+        expect(model.declarativeInventory).toMatchObject({ dragSources: [{ qualifiedId: 'com.acme.forms/card', referenceSchema: { type: 'string' } }],
+            dropTargets: [{ qualifiedId: 'com.acme.forms/tray' }] });
+    });
+    it('projects a page widget area node by name and readable context for the host area owner', () => {
+        const model = createStablePluginDeclarativeModel({
+            pluginId: 'com.acme.forms', occurrenceId: 'occurrenceId-7', actions: [], settings: [],
+            renderer: { id: 'page', kind: 'declarative', root: { kind: 'stack', children: [
+                { kind: 'widgetArea', area: 'pinned', context: { repository: 'happier' } },
+            ] } },
+        });
+        expect(model.root).toMatchObject({ children: [{ kind: 'widgetArea', path: 'root.children[0]', area: 'pinned', context: { repository: 'happier' } }] });
+        expect(PluginDeclarativeProjectedModelV1Schema.safeParse(model).success).toBe(true);
+    });
     it('projects host Action requests without borrowing the contributed Action inventory', () => {
         const model = createStablePluginDeclarativeModel({
             pluginId: 'com.acme.forms', occurrenceId: 'occurrenceId-7', actions: [], settings: [],

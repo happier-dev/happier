@@ -19,12 +19,20 @@ if [ "$repo_root" = "$script_dir" ]; then
 fi
 invoked_cwd=$(pwd -P) || exit 1
 
+heavyweight_memory_floor_kib() {
+  # The 2026-10-05 remote QA placement brief measured full UI typechecks at
+  # 10–21 GB. Interpret its upper peak conservatively as 21 GiB. Focused
+  # validation retains the prior measured compiler + suite 6 GiB floor.
+  case "$1" in compilation) printf '22020096' ;; *) printf '6291456' ;; esac
+}
+
 score_load_sample() {
-  # Placement ranks reachable machines. Resource admission belongs exclusively
-  # to the selected machine's existing heavyweight queue.
-  printf '%s\n' "$1" | awk -v heavy="${2-0}" '
+  # Exclude physically incapable machines, while capable busy machines remain
+  # eligible to wait in their existing target-side admission queue.
+  printf '%s\n' "$1" | awk -v heavy="${2-0}" -v minimum_capacity="${3-0}" '
     {
       if ($1 <= 0 || $2 < 0 || ($4 != "" && $4 < 1048576)) exit
+      if (minimum_capacity > 0 && $8 < minimum_capacity) exit
       ratio = $3
       if ($8 > 0) ratio = $7 / $8
       if (ratio < 0) ratio = 0
@@ -160,6 +168,53 @@ heavyweight_try_reentrant_admission() {
   return 0
 }
 
+heavyweight_resource_is_ready() {
+  heavyweight_resource_reason=ready
+  heavyweight_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)
+  heavyweight_run_queue=$(awk '{split($4, running, "/"); print running[1]}' /proc/loadavg 2>/dev/null || true)
+  heavyweight_cpu_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/cpu 2>/dev/null || true)
+  heavyweight_memory=$(awk '/MemTotal:/ {total=$2} /MemAvailable:/ {available=$2} END {print available, total}' /proc/meminfo 2>/dev/null || true)
+  IFS=' ' read -r heavyweight_mem_available heavyweight_mem_total <<EOF
+$heavyweight_memory
+EOF
+  heavyweight_memory_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/memory 2>/dev/null || true)
+  case "$heavyweight_mem_available:$heavyweight_mem_total" in
+    *[!0-9:]*|'':*) ;;
+    *)
+      heavyweight_memory_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class")
+      if [ "$heavyweight_admission_class" = compilation ] && [ "$heavyweight_mem_total" -lt "$heavyweight_memory_floor" ]; then
+        printf '[preferred-execution] insufficient memory capacity on %s for compilation (total=%s KiB, requires=%s KiB)\n' \
+          "$heavyweight_admission_machine" "$heavyweight_mem_total" "$heavyweight_memory_floor" >&2
+        exit 1
+      fi
+      if [ "$heavyweight_mem_total" -gt 0 ] && awk -v available="$heavyweight_mem_available" -v total="$heavyweight_mem_total" \
+        -v floor="$heavyweight_memory_floor" 'BEGIN { exit !(available < floor || available / total < 0.1) }'; then
+        heavyweight_resource_reason="memory-available=$heavyweight_mem_available/$heavyweight_mem_total"
+        return 1
+      fi
+      ;;
+  esac
+  if [ -n "$heavyweight_memory_psi" ] && awk -v pressure="$heavyweight_memory_psi" 'BEGIN { exit !((pressure + 0) >= 10) }'; then
+    heavyweight_resource_reason="memory-psi=$heavyweight_memory_psi/threshold=10"
+    return 1
+  fi
+  case "$heavyweight_cpu:$heavyweight_run_queue:$heavyweight_cpu_psi" in
+    *[!0-9:.]*|'':*|*::*|*:) ;;
+    *)
+      # Do not turn ordinary concurrency into a fixed job-count limit. Pause
+      # only when two independent Linux signals agree that runnable work is
+      # already severely starved: at least one queued task per online CPU and
+      # at least half of the preceding ten seconds lost to CPU contention.
+      if awk -v cpu="$heavyweight_cpu" -v run_queue="$heavyweight_run_queue" -v pressure="$heavyweight_cpu_psi" \
+        'BEGIN { exit !(cpu > 0 && run_queue >= (cpu * 2) && pressure >= 50) }'; then
+        heavyweight_resource_reason="cpu-pressure=$heavyweight_cpu_psi/run-queue=$heavyweight_run_queue/cpu=$heavyweight_cpu"
+        return 1
+      fi
+      ;;
+  esac
+  return 0
+}
+
 heavyweight_run_admitted_command() {
   # Admission reuse does not imply cgroup placement: nested dispatch can have
   # moved this process into the protected control slice since its parent ran.
@@ -189,7 +244,26 @@ run_heavyweight_admission() {
     exit 1
   }
 
+  heavyweight_pressure_retry_seconds=$((3 + $$ % 2))
   if heavyweight_try_reentrant_admission; then
+    heavyweight_recorded_class=$(sed -n '1p' "$heavyweight_owner_path/class" 2>/dev/null || true)
+    heavyweight_inherited_floor=$(heavyweight_memory_floor_kib "$heavyweight_recorded_class")
+    heavyweight_requested_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class")
+    if [ "$heavyweight_requested_floor" -gt "$heavyweight_inherited_floor" ]; then
+      # A focused parent's admission cannot establish compilation headroom.
+      # Escalate through the same resource owner while retaining its record;
+      # descendants must never queue for a second owner behind their parent.
+      heavyweight_last_wait_state=
+      while ! heavyweight_resource_is_ready; do
+        if [ "$heavyweight_resource_reason" != "$heavyweight_last_wait_state" ]; then
+          printf '[preferred-execution] waiting for heavyweight admission on %s (class=%s, %s, inherited owner)\n' \
+            "$heavyweight_admission_machine" "$heavyweight_admission_class" "$heavyweight_resource_reason" >&2
+          heavyweight_last_wait_state=$heavyweight_resource_reason
+        fi
+        sleep "$heavyweight_pressure_retry_seconds"
+      done
+      printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class" || exit 1
+    fi
     # This wrapper is a descendant of the owner and therefore must not create
     # a waiter, acquire the capacity lock, or release the owner's reservation.
     heavyweight_run_admitted_command "$@"
@@ -226,7 +300,6 @@ run_heavyweight_admission() {
   # three-second backoff: even 100 contending waiters stay at or below roughly
   # 150 external starts/sec while a live lock is held.
   heavyweight_fast_retry_seconds=$((2 + heavyweight_pid % 2))
-  heavyweight_pressure_retry_seconds=$((3 + heavyweight_pid % 2))
   heavyweight_registered_at=$(date +%s 2>/dev/null || printf 0)
   case "$heavyweight_registered_at" in ''|*[!0-9]*) heavyweight_registered_at=0 ;; esac
   printf '%s %s %s\n' "$heavyweight_pid" "$heavyweight_token" "$heavyweight_registered_at" > "$heavyweight_waiter_path" || {
@@ -312,49 +385,6 @@ run_heavyweight_admission() {
     for heavyweight_entry in "$heavyweight_waiters_dir"/*; do
       [ -f "$heavyweight_entry" ] && heavyweight_waiting_count=$((heavyweight_waiting_count + 1))
     done
-  }
-
-  heavyweight_resource_is_ready() {
-    heavyweight_resource_reason=ready
-    heavyweight_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)
-    heavyweight_run_queue=$(awk '{split($4, running, "/"); print running[1]}' /proc/loadavg 2>/dev/null || true)
-    heavyweight_cpu_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/cpu 2>/dev/null || true)
-    heavyweight_memory=$(awk '/MemTotal:/ {total=$2} /MemAvailable:/ {available=$2} END {print available, total}' /proc/meminfo 2>/dev/null || true)
-    IFS=' ' read -r heavyweight_mem_available heavyweight_mem_total <<EOF
-$heavyweight_memory
-EOF
-    heavyweight_memory_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/memory 2>/dev/null || true)
-    case "$heavyweight_mem_available:$heavyweight_mem_total" in
-      *[!0-9:]*|'':*) ;;
-      *)
-        # The audit measured a ~5.3 GB compiler and ~1.1 GB suite; their
-        # combined footprint established the existing 6 GiB / 10% floor.
-        if [ "$heavyweight_mem_total" -gt 0 ] && awk -v available="$heavyweight_mem_available" -v total="$heavyweight_mem_total" \
-          'BEGIN { exit !(available < 6291456 || available / total < 0.1) }'; then
-          heavyweight_resource_reason="memory-available=$heavyweight_mem_available/$heavyweight_mem_total"
-          return 1
-        fi
-        ;;
-    esac
-    if [ -n "$heavyweight_memory_psi" ] && awk -v pressure="$heavyweight_memory_psi" 'BEGIN { exit !((pressure + 0) >= 10) }'; then
-      heavyweight_resource_reason="memory-psi=$heavyweight_memory_psi/threshold=10"
-      return 1
-    fi
-    case "$heavyweight_cpu:$heavyweight_run_queue:$heavyweight_cpu_psi" in
-      *[!0-9:.]*|'':*|*::*|*:) ;;
-      *)
-        # Do not turn ordinary concurrency into a fixed job-count limit. Pause
-        # only when two independent Linux signals agree that runnable work is
-        # already severely starved: at least one queued task per online CPU and
-        # at least half of the preceding ten seconds lost to CPU contention.
-        if awk -v cpu="$heavyweight_cpu" -v run_queue="$heavyweight_run_queue" -v pressure="$heavyweight_cpu_psi" \
-          'BEGIN { exit !(cpu > 0 && run_queue >= (cpu * 2) && pressure >= 50) }'; then
-          heavyweight_resource_reason="cpu-pressure=$heavyweight_cpu_psi/run-queue=$heavyweight_run_queue/cpu=$heavyweight_cpu"
-          return 1
-        fi
-        ;;
-    esac
-    return 0
   }
 
   heavyweight_acquire_lock() {
@@ -1028,6 +1058,12 @@ relative_cwd=${relative_cwd#/}
 [ "$explicit_relative_cwd_set" -eq 1 ] && relative_cwd=$explicit_relative_cwd
 heavyweight_admission_required=0
 [ -n "$policy_heavyClass" ] && heavyweight_admission_required=1
+minimum_memory_capacity_kib=0
+if [ "$policy_heavyClass" = compilation ]; then
+  minimum_memory_capacity_kib=$(heavyweight_memory_floor_kib "$policy_heavyClass")
+fi
+heavyweight_remote_class=$command_class
+[ "$policy_heavyClass" != compilation ] || heavyweight_remote_class=$policy_heavyClass
 
 stack_dir=$(dirname -- "$config_path")
 cache_dir="$stack_dir/dev-target-command-load-native"
@@ -1251,8 +1287,14 @@ read_fresh_cache() {
     telemetry_path=${cache_path%.cache}.telemetry
     if [ -n "$cached_sample" ] || [ -r "$telemetry_path" ]; then
       [ -n "$cached_sample" ] || cached_sample=$(sed -n '1p' "$telemetry_path")
-      score=$(score_load_sample "$cached_sample" "$heavyweight_admission_required")
-      [ -n "$score" ] || return 1
+      score=$(score_load_sample "$cached_sample" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
+      if [ -z "$score" ]; then
+        # Capacity eligibility belongs to this invocation. Keep the healthy
+        # raw sample reusable by focused work on the same smaller machine.
+        [ -n "$(score_load_sample "$cached_sample" "$heavyweight_admission_required")" ] || return 1
+        printf '2 - %s\n' "$capacity"
+        return 0
+      fi
       available=1
     elif [ "$heavyweight_admission_required" -eq 1 ] || [ "$available" = 2 ]; then
       # Refresh legacy samples so memory can participate in ranking.
@@ -1260,6 +1302,11 @@ read_fresh_cache() {
     fi
   fi
   printf '%s %s %s\n' "$available" "$score" "$capacity"
+}
+
+report_insufficient_memory_capacity() {
+  printf '[preferred-execution] insufficient memory capacity on %s for compilation (requires=%s KiB total)\n' \
+    "$1" "$minimum_memory_capacity_kib" >&2
 }
 
 probe_target() {
@@ -1285,6 +1332,10 @@ probe_target() {
     cached_available=${cached%% *}
     if [ "$cached_available" = 1 ]; then
       printf '%s %s %s cached\n' "$number" "$name" "$cached"
+      return
+    elif [ "$cached_available" = 2 ]; then
+      report_insufficient_memory_capacity "$name"
+      printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"
       return
     fi
   fi
@@ -1313,6 +1364,11 @@ probe_target() {
       now=$(date +%s)
       cached=$(read_fresh_cache "$cache_path" "$now" 2>/dev/null || true)
       if [ -n "$cached" ]; then
+        if [ "${cached%% *}" = 2 ]; then
+          report_insufficient_memory_capacity "$name"
+          printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"
+          return
+        fi
         printf '%s %s %s cached\n' "$number" "$name" "$cached"
         return
       fi
@@ -1333,13 +1389,15 @@ probe_target() {
   fi
   now=$(date +%s)
   score=
+  sample_score=
   capacity=
   if [ -n "$sample" ]; then
     # APFS rounds capacity to 100% while still reporting multiple GiB as
     # available. Admit from the authoritative available-block count instead;
     # one GiB is the minimum useful scratch budget for the routed build/test
     # commands. Older three-field cached/test probes remain valid until refreshed.
-    score=$(score_load_sample "$sample" "$heavyweight_admission_required")
+    sample_score=$(score_load_sample "$sample" "$heavyweight_admission_required")
+    score=$(score_load_sample "$sample" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
     capacity=$(printf '%s\n' "$sample" | awk '{if ($1 ~ /^[0-9]+$/ && $1 > 0) print $1}')
     telemetry=$(printf '%s\n' "$sample" | awk '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform}')
     telemetry_cache="$cache_dir/$name.telemetry"
@@ -1351,12 +1409,17 @@ probe_target() {
     fi
   fi
   temporary=$(create_cache_temporary "$cache_path" 2>/dev/null || true)
-  if [ -n "$score" ] && [ -n "$capacity" ]; then
+  if [ -n "$sample_score" ] && [ -n "$capacity" ]; then
     if [ -n "$temporary" ]; then
-      printf '%s 1 %s %s %s\n' "$now" "$score" "$capacity" "$sample" > "$temporary" && mv -f -- "$temporary" "$cache_path"
+      printf '%s 1 %s %s %s\n' "$now" "$sample_score" "$capacity" "$sample" > "$temporary" && mv -f -- "$temporary" "$cache_path"
       rm -f -- "$temporary" 2>/dev/null || true
     fi
-    printf '%s %s 1 %s %s fresh\n' "$number" "$name" "$score" "$capacity"
+    if [ -n "$score" ]; then
+      printf '%s %s 1 %s %s fresh\n' "$number" "$name" "$score" "$capacity"
+    else
+      report_insufficient_memory_capacity "$name"
+      printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"
+    fi
   else
     if [ -n "$temporary" ]; then
       printf '%s 0 - 1\n' "$now" > "$temporary"
@@ -1406,7 +1469,7 @@ EOF
   local_candidate_cpu=$cpu
   local_candidate_load=$load_value
   local_disk_free=$(df -Pk "$repo_root" 2>/dev/null | awk 'NR==2 {print $4}')
-  local_score=$(score_load_sample "$cpu $load_value $free ${local_disk_free:-1048576} 0 0 ${local_mem_available:-0} ${local_mem_total:-0}" "$heavyweight_admission_required")
+  local_score=$(score_load_sample "$cpu $load_value $free ${local_disk_free:-1048576} 0 0 ${local_mem_available:-0} ${local_mem_total:-0}" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
   if [ -z "$local_score" ]; then
     printf '0 local 0 - %s local\n' "$cpu" > "$probe_tmp/local"
   else
@@ -1830,7 +1893,7 @@ if [ "$heavyweight_admission_required" -eq 1 ]; then
   # The same native launcher owns local and target admission. The target's
   # POSIX account home is machine-local rather than target-config-local, so
   # independently routed jobs contend even when their CLI homes differ.
-  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$command_class") $(quote_remote "--machine=$selected_name") --"
+  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") --"
 fi
 if [ -n "$heavyweight_admission_prefix" ]; then
   # Dependency bootstrap can itself perform the initial package install. Keep

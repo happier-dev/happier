@@ -403,6 +403,7 @@ export const CLAUDE_PLUGIN = definePlugin({
           externalLinkedTakeover: { writerSafety: 'unsupported' },
           sources: [{
             sourceKind: 'claudeConfig',
+            contentSearch: true,
             schema: { fields: [
               { name: 'kind', kind: 'literal', value: 'claudeConfig' },
               { name: 'configDir', kind: 'string', min: 1, max: 10_000, nullish: true },

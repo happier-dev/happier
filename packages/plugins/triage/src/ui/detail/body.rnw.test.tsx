@@ -5,7 +5,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
-import { defineUiSurface, EmptyState } from '@happier-dev/plugin-ui';
+import { Button, defineUiSurface, EmptyState, Text, useTabPanelActivity } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -23,8 +23,8 @@ import { TriageAgentStep } from './storyRail.js';
 import { planTriageDetailTabsV1, type TriageDetailTabV1 } from './tabs.js';
 
 /**
- * The tabbed detail body mounts the owning source once per tab, asking it for
- * exactly that tab's `panel` (r0.42).
+ * The tabbed detail body keeps the owning source instance while asking it for
+ * exactly the selected tab's `panel` (r0.42).
  *
  * The source here is admitted through the SDK testkit's real cold admission,
  * which validates the launch input against the mount's `inputSchema` before a
@@ -121,12 +121,14 @@ const MANIFEST = definePlugin({
 const INPUT = createTriageSourceV1Fixture().detailInput as TriageDetailSurfaceInputV1;
 
 let tabs: readonly TriageDetailTabV1[] = [];
+let session: React.ReactNode;
 const renderBody = defineUiSurface(function Body(_context: RenderContext): React.ReactElement {
   return (
     <TriageDetailTabbedBody
       tabs={tabs}
       entry={{ surface: SURFACE, input: INPUT, instanceKey: 'entry-a' }}
       fixPullRequest={null}
+      session={session}
       overviewTail={(
         <TriageAgentStep
           sessions={[{ sessionId: 'session-a', displayTitle: 'Fix rounding' }]}
@@ -145,8 +147,9 @@ afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
-async function mountBody(nextTabs: readonly TriageDetailTabV1[]) {
+async function mountBody(nextTabs: readonly TriageDetailTabV1[], probe?: React.ReactNode, nextSession?: React.ReactNode) {
   tabs = nextTabs;
+  session = nextSession;
   const fixture = await createPluginUiTestkit({
     identity: { instanceId: 'fixture-instance-detail-body', mountNonce: 'fixture-mount-detail-body' },
     authorPlugin: { id: 'happier.triage', version: '0.0.0' },
@@ -154,8 +157,9 @@ async function mountBody(nextTabs: readonly TriageDetailTabV1[]) {
     surfaceContext: context,
     adapter: createPluginUiRnwSemanticSurfaceAdapter({
       targetedSurfaces: {
-        readCurrentMounts: () => [MOUNT],
+        readCurrentMounts: () => [probe === undefined ? MOUNT : { ...MOUNT, inputSchema: TriageDetailSurfaceInputV1JsonSchema }],
         readContributorManifest: () => MANIFEST,
+        ...(probe === undefined ? {} : { renderAdmittedContent: () => probe }),
       },
     }),
     handlers: { executeAction: async () => ({}) },
@@ -176,6 +180,46 @@ const PR_TABS = planTriageDetailTabsV1({
 });
 
 describe('the tabbed detail body (r0.42)', () => {
+  it('keeps one admitted source selection and settled pages across panels, then cancels on retirement', async () => {
+    const intervals: AbortSignal[] = [];
+    const secondUuid = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    function SourceSelectionProbe() {
+      const [uuid, select] = React.useState('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+      const [pages, setPages] = React.useState(1);
+      const { activeSignal } = useTabPanelActivity();
+      React.useEffect(() => { intervals.push(activeSignal); }, [activeSignal]);
+      return <>
+        <Button title="Select second event" onPress={() => select(secondUuid)} />
+        <Button title="Next source page" onPress={() => setPages((count) => count + 1)} />
+        <Text value={`Selected ${uuid}, pages ${pages}`} />
+      </>;
+    }
+    const body = await mountBody(PR_TABS.kind === 'tabs' ? PR_TABS.tabs : [], <SourceSelectionProbe />, <Text value="Linked session" />);
+    await act(async () => { await body.press(await body.getByRole('button', { name: 'Select second event' })); });
+    await act(async () => { await body.press(await body.getByRole('button', { name: 'Next source page' })); });
+    await act(async () => { await body.press(await body.getByRole('tab', { name: 'Activity' })); });
+    await expect(body.getByText(`Selected ${secondUuid}, pages 2`)).resolves.toBeDefined();
+    await act(async () => { await body.press(await body.getByRole('tab', { name: 'Overview' })); });
+    await expect(body.getByText(`Selected ${secondUuid}, pages 2`)).resolves.toBeDefined();
+    const sourceInterval = intervals.at(-1)!;
+    await act(async () => { await body.press(await body.getByRole('tab', { name: 'Session' })); });
+    expect(sourceInterval.aborted).toBe(true);
+    await expect(body.queryByText(`Selected ${secondUuid}, pages 2`)).resolves.toBeUndefined();
+    await act(async () => { await body.press(await body.getByRole('tab', { name: 'Overview' })); });
+    await expect(body.getByText(`Selected ${secondUuid}, pages 2`)).resolves.toBeDefined();
+    expect(intervals.at(-1)?.aborted).toBe(false);
+    await body.dispose();
+    expect(intervals.every((signal) => signal.aborted)).toBe(true);
+  });
+  it('keeps declared fix-PR panels visible with the unavailable state before the PR mount is ready', async () => {
+    const plan = planTriageDetailTabsV1({
+      workflowSubject: 'issue', entryTabs: [{ kind: 'shared', id: 'overview' }],
+      fixPullRequest: { detailTabs: [{ kind: 'shared', id: 'files' }, { kind: 'shared', id: 'checks' }] },
+    });
+    const body = await mountBody(plan.kind === 'tabs' ? plan.tabs : []);
+    await act(async () => { await body.press(await body.getByRole('tab', { name: 'Files' })); });
+    await expect(body.getByText(FALLBACK)).resolves.toBeDefined();
+  });
   it('opens on Overview with the story rail\'s agent step, and names the tabs in Triage\'s order', async () => {
     const body = await mountBody(PR_TABS.kind === 'tabs' ? PR_TABS.tabs : []);
 

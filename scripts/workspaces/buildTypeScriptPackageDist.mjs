@@ -19,6 +19,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import ts from 'typescript';
 import { exitWithCommandResult, runCommand } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 
 import { assertNoMissingLocalImports } from './distLocalImports.mjs';
@@ -30,6 +31,7 @@ import {
 } from './packageBuildOutputTargets.mjs';
 import { resolveYarnCommandInvocation } from './execYarnCommand.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
+import { resolveTypeScriptProjectPathFromArgs } from './prepareTypeScriptProjectBuild.mjs';
 import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
 import {
@@ -41,6 +43,9 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const STAGED_OUTPUT_SCRIPT_FLAG = '--happier-staged-output-script';
 const PERSISTENT_COMPILER_WORK_DIR_NAME = '.happier';
 const PERSISTENT_COMPILER_WORK_SUBDIR = 'typescript-package-build';
+const DIST_TEST_EXCLUDES = ['test', 'spec', 'testSupport', 'test-d']
+  .flatMap((kind) => [`**/*.${kind}.ts`, `**/*.${kind}.tsx`]);
+const DIST_TEST_SOURCE_PATTERN = /\.(?:test|spec|testSupport|test-d)\.tsx?$/u;
 
 function rand() {
   return Math.random().toString(16).slice(2);
@@ -231,6 +236,9 @@ async function replaceDistWithStagedBuild({ distDir, stagedDistDir, backupDir })
 function withOutputCompilerArgs(args, outputDir, tsBuildInfoFile) {
   return [
     ...args,
+    // Protocol's measured native checker replicas dominate cold build RSS.
+    // Keep package builds within one checker unless the caller sizes it explicitly.
+    ...(args.includes('--singleThreaded') ? [] : ['--singleThreaded']),
     '--outDir',
     outputDir,
     '--tsBuildInfoFile',
@@ -238,29 +246,68 @@ function withOutputCompilerArgs(args, outputDir, tsBuildInfoFile) {
   ];
 }
 
-function resolveCompilerProjectPath(args, packageDir) {
-  const values = Array.isArray(args) ? args : [];
-  for (let index = 0; index < values.length; index += 1) {
-    const value = String(values[index] ?? '');
+async function withDistProjectCompilerArgs(args, compilerWorkTree) {
+  const { projectPath, workDir } = compilerWorkTree;
+  const projectDir = dirname(projectPath);
+  // The retained TypeScript API owns config parsing and effective type roots.
+  // Compilation and option validation use resolveTypeScriptCliInvocation.
+  const config = ts.getParsedCommandLineOfConfigFile(projectPath, {}, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic(diagnostic) {
+      throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+    },
+  });
+  const exclude = config.raw.exclude ?? [
+    'node_modules', 'bower_components', 'jspm_packages',
+    ...(config.options.outDir ? [config.options.outDir] : []),
+  ];
+  const distConfig = {
+    extends: projectPath,
+    // An isolated compiler tree lives outside the package. Default @types
+    // lookup follows the top-level config, so anchor it to the original project.
+    // Explicit roots retain the path base of the config that defines them.
+    ...(!config.options.typeRoots ? {
+      compilerOptions: {
+        typeRoots: ts.getEffectiveTypeRoots(config.options, {
+          getCurrentDirectory: () => projectDir,
+        }),
+      },
+    } : {}),
+    exclude: [...exclude, ...DIST_TEST_EXCLUDES].map((path) => resolve(projectDir, path)),
+    // Explicit roots are not affected by exclude; preserve production roots
+    // while removing test roots even when a package uses a files list.
+    ...(Array.isArray(config.raw.files) ? {
+      files: config.raw.files
+        .filter((path) => !DIST_TEST_SOURCE_PATTERN.test(path))
+        .map((path) => resolve(projectDir, path)),
+    } : {}),
+  };
+  const distProjectPath = join(workDir, 'tsconfig.dist.json');
+  const contents = `${JSON.stringify(distConfig, null, 2)}\n`;
+  if (!existsSync(distProjectPath) || readFileSync(distProjectPath, 'utf8') !== contents) {
+    await writeFile(distProjectPath, contents);
+  }
+  const compilerArgs = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
     if (value === '-p' || value === '--project') {
-      const rawProjectPath = String(values[index + 1] ?? '').trim();
-      if (rawProjectPath) return resolve(packageDir, rawProjectPath);
-    }
-    if (value.startsWith('--project=')) {
-      const rawProjectPath = value.slice('--project='.length).trim();
-      if (rawProjectPath) return resolve(packageDir, rawProjectPath);
+      index += 1;
+    } else if (!value.startsWith('--project=')) {
+      compilerArgs.push(value);
     }
   }
-  return join(packageDir, 'tsconfig.json');
+  return [...compilerArgs, '--project', distProjectPath];
 }
 
 function resolvePersistentCompilerWorkTree({ packageDir, compilerArgs, outputMode }) {
-  const projectPath = resolveCompilerProjectPath(compilerArgs, packageDir);
+  const projectPath = resolveTypeScriptProjectPathFromArgs(compilerArgs, { cwd: packageDir })
+    || join(packageDir, 'tsconfig.json');
   const cacheKey = createHash('sha256')
     .update(JSON.stringify({
       project: relative(packageDir, projectPath).replaceAll('\\', '/'),
       compilerArgs: compilerArgs.map((arg) => String(arg)),
       outputMode,
+      exclude: DIST_TEST_EXCLUDES,
     }))
     .digest('hex')
     .slice(0, 20);
@@ -607,7 +654,7 @@ export async function buildTypeScriptPackageDist({
         HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: stagedDistDir,
       };
       const compilerArgs = withOutputCompilerArgs(
-        parsedArgs.compilerArgs,
+        await withDistProjectCompilerArgs(parsedArgs.compilerArgs, compilerWorkTree),
         compilerWorkTree.outputDir,
         compilerWorkTree.tsBuildInfoFile,
       );

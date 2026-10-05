@@ -16,6 +16,7 @@ import {
 } from './resourceStore.js';
 
 export type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+export { useWidgetAreaPort, type PluginUiWidgetAreaPortV1 } from './widgetArea.public.js';
 
 export {
   usePluginHostApi,
@@ -30,7 +31,9 @@ export {
 } from './reviewCommentProposals.public.js';
 export {
   useSessionState,
+  useSessionStates,
   type SessionStateReadV1,
+  type SessionStatesReadV1,
 } from './sessionState.public.js';
 export type {
   PluginUiEphemeralSharedScope,

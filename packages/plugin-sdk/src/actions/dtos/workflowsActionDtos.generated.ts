@@ -177,7 +177,7 @@ export type WorkflowsActionInputById = {
                             label: string;
                             typeLabel: string;
                             description?: string | undefined;
-                            icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                            icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                             tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                         };
                     }[] | undefined;
@@ -219,7 +219,7 @@ export type WorkflowsActionInputById = {
                                 label: string;
                                 typeLabel: string;
                                 description?: string | undefined;
-                                icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                                icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                                 tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                             };
                         }[] | undefined;
@@ -281,7 +281,7 @@ export type WorkflowsActionInputById = {
                             label: string;
                             typeLabel: string;
                             description?: string | undefined;
-                            icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                            icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                             tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                         };
                     }[] | undefined;
@@ -591,6 +591,10 @@ export type WorkflowsActionInputById = {
                     } | null | undefined;
                     description?: string | undefined;
                     optionsSourceId?: string | undefined;
+                    inputType?: {
+                        pluginId: string;
+                        localId: string;
+                    } | undefined;
                 }[];
                 defaults: {
                     agentTarget?: {
@@ -665,7 +669,7 @@ export type WorkflowsActionInputById = {
                     } | null | undefined;
                     transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                     terminal?: {
-                        mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                         tmux?: {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
@@ -675,12 +679,12 @@ export type WorkflowsActionInputById = {
                             sessionName?: string | undefined;
                         } | undefined;
                         windows?: {
-                            launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
                         } | undefined;
                     } | null | undefined;
-                    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                     windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                     windowsTerminalWindowName?: string | null | undefined;
                     runtimeDescriptorV1?: {
@@ -867,6 +871,10 @@ export type WorkflowsActionInputById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -941,7 +949,7 @@ export type WorkflowsActionInputById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -951,12 +959,12 @@ export type WorkflowsActionInputById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -1498,6 +1506,10 @@ export type WorkflowsActionInputById = {
                     } | null | undefined;
                     description?: string | undefined;
                     optionsSourceId?: string | undefined;
+                    inputType?: {
+                        pluginId: string;
+                        localId: string;
+                    } | undefined;
                 }[];
                 defaults: {
                     agentTarget?: {
@@ -1572,7 +1584,7 @@ export type WorkflowsActionInputById = {
                     } | null | undefined;
                     transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                     terminal?: {
-                        mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                         tmux?: {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
@@ -1582,12 +1594,12 @@ export type WorkflowsActionInputById = {
                             sessionName?: string | undefined;
                         } | undefined;
                         windows?: {
-                            launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
                         } | undefined;
                     } | null | undefined;
-                    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                     windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                     windowsTerminalWindowName?: string | null | undefined;
                     runtimeDescriptorV1?: {
@@ -1802,6 +1814,10 @@ export type WorkflowsActionInputById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -1876,7 +1892,7 @@ export type WorkflowsActionInputById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -1886,12 +1902,12 @@ export type WorkflowsActionInputById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -2272,6 +2288,10 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 description?: string | undefined;
                 optionsSourceId?: string | undefined;
+                inputType?: {
+                    pluginId: string;
+                    localId: string;
+                } | undefined;
             }[];
             defaults: {
                 agentTarget?: {
@@ -2346,7 +2366,7 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                 terminal?: {
-                    mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                     tmux?: {
                         sessionName?: string | undefined;
                         isolated?: boolean | undefined;
@@ -2356,12 +2376,12 @@ export type WorkflowsActionResultById = {
                         sessionName?: string | undefined;
                     } | undefined;
                     windows?: {
-                        launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                         console?: 'hidden' | 'visible' | undefined;
                         windowName?: string | undefined;
                     } | undefined;
                 } | null | undefined;
-                windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                 windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                 windowsTerminalWindowName?: string | null | undefined;
                 runtimeDescriptorV1?: {
@@ -2683,7 +2703,7 @@ export type WorkflowsActionResultById = {
             } | null | undefined;
             attentionRequired?: boolean | undefined;
         };
-        admission: 'existing' | 'created';
+        admission: 'created' | 'existing';
     };
     readonly "workflow.run.list": {
         runs: {
@@ -3028,6 +3048,9 @@ export type WorkflowsActionResultById = {
             } | null | undefined;
             attentionRequired?: boolean | undefined;
         };
+        callerAccess: {
+            canEdit: boolean;
+        };
         definition: Readonly<{
             version: 1;
             inputs: readonly {
@@ -3040,6 +3063,10 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 description?: string | undefined;
                 optionsSourceId?: string | undefined;
+                inputType?: {
+                    pluginId: string;
+                    localId: string;
+                } | undefined;
             }[];
             defaults: {
                 agentTarget?: {
@@ -3114,7 +3141,7 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                 terminal?: {
-                    mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                     tmux?: {
                         sessionName?: string | undefined;
                         isolated?: boolean | undefined;
@@ -3124,12 +3151,12 @@ export type WorkflowsActionResultById = {
                         sessionName?: string | undefined;
                     } | undefined;
                     windows?: {
-                        launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                         console?: 'hidden' | 'visible' | undefined;
                         windowName?: string | undefined;
                     } | undefined;
                 } | null | undefined;
-                windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                 windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                 windowsTerminalWindowName?: string | null | undefined;
                 runtimeDescriptorV1?: {
@@ -3398,7 +3425,7 @@ export type WorkflowsActionResultById = {
                     } | null | undefined;
                     transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                     terminal?: {
-                        mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                         tmux?: {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
@@ -3408,12 +3435,12 @@ export type WorkflowsActionResultById = {
                             sessionName?: string | undefined;
                         } | undefined;
                         windows?: {
-                            launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
                         } | undefined;
                     } | null | undefined;
-                    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                     windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                     windowsTerminalWindowName?: string | null | undefined;
                     runtimeDescriptorV1?: {
@@ -3577,6 +3604,275 @@ export type WorkflowsActionResultById = {
                     readonly [key: string]: JsonValue;
                 } | null> | undefined;
             }[];
+            frozenChildren: Record<string, Readonly<{
+                version: 1;
+                inputs: readonly {
+                    name: string;
+                    valueType: 'string' | 'number' | 'boolean' | 'json';
+                    required: boolean;
+                    enum?: string[] | undefined;
+                    default?: string | number | boolean | readonly JsonValue[] | {
+                        readonly [key: string]: JsonValue;
+                    } | null | undefined;
+                    description?: string | undefined;
+                    optionsSourceId?: string | undefined;
+                    inputType?: {
+                        pluginId: string;
+                        localId: string;
+                    } | undefined;
+                }[];
+                defaults: {
+                    agentTarget?: {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    } | null | undefined;
+                    modelSelection?: {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    } | null | undefined;
+                    profileId?: string | null | undefined;
+                    permissionMode?: string | null | undefined;
+                    acpSessionModeId?: string | null | undefined;
+                    sessionConfigOptionOverrides?: {
+                        [x: string]: unknown;
+                        v: 1;
+                        updatedAt: number;
+                        overrides: Record<string, {
+                            [x: string]: unknown;
+                            updatedAt: number;
+                            value: string | number | boolean | null;
+                        }>;
+                    } | null | undefined;
+                    mcpSelection?: {
+                        forceIncludeServerIds: string[];
+                        forceExcludeServerIds: string[];
+                        v: 1;
+                        managedServersEnabled: boolean;
+                    } | null | undefined;
+                    connectedServices?: {
+                        v: 2;
+                        bindingsByServiceId: Record<string, {
+                            source: 'native';
+                        } | {
+                            source: 'connected';
+                            selection: 'group';
+                            groupId: string;
+                            profileId?: string | undefined;
+                        } | {
+                            source: 'connected';
+                            selection: 'profile';
+                            profileId: string;
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                            disclosedMember?: undefined;
+                        }>;
+                    } | null | undefined;
+                    transcriptStorage?: 'direct' | 'persisted' | null | undefined;
+                    terminal?: {
+                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                        tmux?: {
+                            sessionName?: string | undefined;
+                            isolated?: boolean | undefined;
+                            tmpDir?: string | null | undefined;
+                        } | undefined;
+                        herdr?: {
+                            sessionName?: string | undefined;
+                        } | undefined;
+                        windows?: {
+                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                            console?: 'hidden' | 'visible' | undefined;
+                            windowName?: string | undefined;
+                        } | undefined;
+                    } | null | undefined;
+                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
+                    windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
+                    windowsTerminalWindowName?: string | null | undefined;
+                    runtimeDescriptorV1?: {
+                        v: 1;
+                        agentId: string;
+                        agent: {
+                            backendMode: string;
+                            home?: 'user' | 'connectedService' | undefined;
+                            connectedServiceId?: string | undefined;
+                            connectedServiceProfileId?: string | undefined;
+                            connectedServiceGroupId?: string | undefined;
+                        };
+                    } | null | undefined;
+                    conversation?: {
+                        kind: 'shared_run';
+                    } | {
+                        kind: 'fresh';
+                    } | {
+                        kind: 'origin_session';
+                    } | {
+                        kind: 'from_step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            };
+                        };
+                    } | {
+                        kind: 'existing_session';
+                        sessionId: string;
+                        machineId: string;
+                    } | undefined;
+                    workspace?: {
+                        kind: 'inherit';
+                    } | {
+                        kind: 'project_checkout';
+                    } | {
+                        kind: 'from_step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            };
+                        };
+                    } | {
+                        kind: 'new_worktree';
+                        source: {
+                            kind: 'original';
+                        } | {
+                            kind: 'workflow';
+                        } | {
+                            kind: 'step';
+                            producer: {
+                                blockId: string;
+                                scope: {
+                                    kind: 'current';
+                                } | {
+                                    kind: 'previous_iteration';
+                                    loopBlockId: string;
+                                } | {
+                                    kind: 'outer';
+                                    levels: number;
+                                };
+                            };
+                        };
+                    } | undefined;
+                    engine?: {
+                        role: string;
+                    } | {
+                        agentTarget: {
+                            kind: 'agent';
+                            identity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        };
+                        modelSelection?: {
+                            v: 1;
+                            ref: {
+                                agentTargetKey: string;
+                                providerConnectionId: null;
+                                modelId: string;
+                            } | {
+                                agentTargetKey: string;
+                                providerConnectionId: string;
+                                modelId: string;
+                            };
+                            updatedAt: number;
+                        } | null | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    executionTarget?: {
+                        kind: 'session';
+                    } | {
+                        kind: 'detached_run';
+                    } | undefined;
+                };
+                roles?: readonly ({
+                    roleId: string;
+                    engine?: {
+                        agentTargetKey: string;
+                        modelId?: string | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    runsAs?: {
+                        kind: 'session';
+                    } | {
+                        kind: 'background_run';
+                        intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    } | undefined;
+                    profileId?: string | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                } | {
+                    roleId: string;
+                    name: string;
+                    instructions: string;
+                    runsAs: {
+                        kind: 'session';
+                    } | {
+                        kind: 'background_run';
+                        intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    };
+                    engine?: {
+                        agentTargetKey: string;
+                        modelId?: string | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    profileId?: string | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                })[] | undefined;
+                blocks: readonly PluginActionWorkflowBlockV1[];
+                finalOutput?: {
+                    kind: 'result';
+                    producer: {
+                        blockId: string;
+                        scope: {
+                            kind: 'current';
+                        } | {
+                            kind: 'previous_iteration';
+                            loopBlockId: string;
+                        } | {
+                            kind: 'outer';
+                            levels: number;
+                        };
+                    };
+                    path: (string | number)[];
+                    optional?: true | undefined;
+                } | undefined;
+            }>>;
             workspaceTarget: {
                 project: {
                     machineId: string;
@@ -3752,7 +4048,7 @@ export type WorkflowsActionResultById = {
                     } | null | undefined;
                     transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                     terminal?: {
-                        mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                         tmux?: {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
@@ -3762,12 +4058,12 @@ export type WorkflowsActionResultById = {
                             sessionName?: string | undefined;
                         } | undefined;
                         windows?: {
-                            launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
                         } | undefined;
                     } | null | undefined;
-                    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                     windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                     windowsTerminalWindowName?: string | null | undefined;
                     runtimeDescriptorV1?: {
@@ -3931,6 +4227,275 @@ export type WorkflowsActionResultById = {
                     readonly [key: string]: JsonValue;
                 } | null> | undefined;
             }[];
+            frozenChildren: Record<string, Readonly<{
+                version: 1;
+                inputs: readonly {
+                    name: string;
+                    valueType: 'string' | 'number' | 'boolean' | 'json';
+                    required: boolean;
+                    enum?: string[] | undefined;
+                    default?: string | number | boolean | readonly JsonValue[] | {
+                        readonly [key: string]: JsonValue;
+                    } | null | undefined;
+                    description?: string | undefined;
+                    optionsSourceId?: string | undefined;
+                    inputType?: {
+                        pluginId: string;
+                        localId: string;
+                    } | undefined;
+                }[];
+                defaults: {
+                    agentTarget?: {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    } | null | undefined;
+                    modelSelection?: {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    } | null | undefined;
+                    profileId?: string | null | undefined;
+                    permissionMode?: string | null | undefined;
+                    acpSessionModeId?: string | null | undefined;
+                    sessionConfigOptionOverrides?: {
+                        [x: string]: unknown;
+                        v: 1;
+                        updatedAt: number;
+                        overrides: Record<string, {
+                            [x: string]: unknown;
+                            updatedAt: number;
+                            value: string | number | boolean | null;
+                        }>;
+                    } | null | undefined;
+                    mcpSelection?: {
+                        forceIncludeServerIds: string[];
+                        forceExcludeServerIds: string[];
+                        v: 1;
+                        managedServersEnabled: boolean;
+                    } | null | undefined;
+                    connectedServices?: {
+                        v: 2;
+                        bindingsByServiceId: Record<string, {
+                            source: 'native';
+                        } | {
+                            source: 'connected';
+                            selection: 'group';
+                            groupId: string;
+                            profileId?: string | undefined;
+                        } | {
+                            source: 'connected';
+                            selection: 'profile';
+                            profileId: string;
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                            disclosedMember?: undefined;
+                        }>;
+                    } | null | undefined;
+                    transcriptStorage?: 'direct' | 'persisted' | null | undefined;
+                    terminal?: {
+                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                        tmux?: {
+                            sessionName?: string | undefined;
+                            isolated?: boolean | undefined;
+                            tmpDir?: string | null | undefined;
+                        } | undefined;
+                        herdr?: {
+                            sessionName?: string | undefined;
+                        } | undefined;
+                        windows?: {
+                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                            console?: 'hidden' | 'visible' | undefined;
+                            windowName?: string | undefined;
+                        } | undefined;
+                    } | null | undefined;
+                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
+                    windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
+                    windowsTerminalWindowName?: string | null | undefined;
+                    runtimeDescriptorV1?: {
+                        v: 1;
+                        agentId: string;
+                        agent: {
+                            backendMode: string;
+                            home?: 'user' | 'connectedService' | undefined;
+                            connectedServiceId?: string | undefined;
+                            connectedServiceProfileId?: string | undefined;
+                            connectedServiceGroupId?: string | undefined;
+                        };
+                    } | null | undefined;
+                    conversation?: {
+                        kind: 'shared_run';
+                    } | {
+                        kind: 'fresh';
+                    } | {
+                        kind: 'origin_session';
+                    } | {
+                        kind: 'from_step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            };
+                        };
+                    } | {
+                        kind: 'existing_session';
+                        sessionId: string;
+                        machineId: string;
+                    } | undefined;
+                    workspace?: {
+                        kind: 'inherit';
+                    } | {
+                        kind: 'project_checkout';
+                    } | {
+                        kind: 'from_step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            };
+                        };
+                    } | {
+                        kind: 'new_worktree';
+                        source: {
+                            kind: 'original';
+                        } | {
+                            kind: 'workflow';
+                        } | {
+                            kind: 'step';
+                            producer: {
+                                blockId: string;
+                                scope: {
+                                    kind: 'current';
+                                } | {
+                                    kind: 'previous_iteration';
+                                    loopBlockId: string;
+                                } | {
+                                    kind: 'outer';
+                                    levels: number;
+                                };
+                            };
+                        };
+                    } | undefined;
+                    engine?: {
+                        role: string;
+                    } | {
+                        agentTarget: {
+                            kind: 'agent';
+                            identity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        };
+                        modelSelection?: {
+                            v: 1;
+                            ref: {
+                                agentTargetKey: string;
+                                providerConnectionId: null;
+                                modelId: string;
+                            } | {
+                                agentTargetKey: string;
+                                providerConnectionId: string;
+                                modelId: string;
+                            };
+                            updatedAt: number;
+                        } | null | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    executionTarget?: {
+                        kind: 'session';
+                    } | {
+                        kind: 'detached_run';
+                    } | undefined;
+                };
+                roles?: readonly ({
+                    roleId: string;
+                    engine?: {
+                        agentTargetKey: string;
+                        modelId?: string | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    runsAs?: {
+                        kind: 'session';
+                    } | {
+                        kind: 'background_run';
+                        intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    } | undefined;
+                    profileId?: string | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                } | {
+                    roleId: string;
+                    name: string;
+                    instructions: string;
+                    runsAs: {
+                        kind: 'session';
+                    } | {
+                        kind: 'background_run';
+                        intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    };
+                    engine?: {
+                        agentTargetKey: string;
+                        modelId?: string | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    profileId?: string | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                })[] | undefined;
+                blocks: readonly PluginActionWorkflowBlockV1[];
+                finalOutput?: {
+                    kind: 'result';
+                    producer: {
+                        blockId: string;
+                        scope: {
+                            kind: 'current';
+                        } | {
+                            kind: 'previous_iteration';
+                            loopBlockId: string;
+                        } | {
+                            kind: 'outer';
+                            levels: number;
+                        };
+                    };
+                    path: (string | number)[];
+                    optional?: true | undefined;
+                } | undefined;
+            }>>;
             workspaceTarget: {
                 project: {
                     machineId: string;
@@ -3985,6 +4550,275 @@ export type WorkflowsActionResultById = {
                 secondOpinion?: 'off' | 'encouraged' | undefined;
             }[] | undefined;
         };
+        authoredDefinition: Readonly<{
+            version: 1;
+            inputs: readonly {
+                name: string;
+                valueType: 'string' | 'number' | 'boolean' | 'json';
+                required: boolean;
+                enum?: string[] | undefined;
+                default?: string | number | boolean | readonly JsonValue[] | {
+                    readonly [key: string]: JsonValue;
+                } | null | undefined;
+                description?: string | undefined;
+                optionsSourceId?: string | undefined;
+                inputType?: {
+                    pluginId: string;
+                    localId: string;
+                } | undefined;
+            }[];
+            defaults: {
+                agentTarget?: {
+                    kind: 'agent';
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                } | null | undefined;
+                modelSelection?: {
+                    v: 1;
+                    ref: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    updatedAt: number;
+                } | null | undefined;
+                profileId?: string | null | undefined;
+                permissionMode?: string | null | undefined;
+                acpSessionModeId?: string | null | undefined;
+                sessionConfigOptionOverrides?: {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: string | number | boolean | null;
+                    }>;
+                } | null | undefined;
+                mcpSelection?: {
+                    forceIncludeServerIds: string[];
+                    forceExcludeServerIds: string[];
+                    v: 1;
+                    managedServersEnabled: boolean;
+                } | null | undefined;
+                connectedServices?: {
+                    v: 2;
+                    bindingsByServiceId: Record<string, {
+                        source: 'native';
+                    } | {
+                        source: 'connected';
+                        selection: 'group';
+                        groupId: string;
+                        profileId?: string | undefined;
+                    } | {
+                        source: 'connected';
+                        selection: 'profile';
+                        profileId: string;
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                        disclosedMember?: undefined;
+                    }>;
+                } | null | undefined;
+                transcriptStorage?: 'direct' | 'persisted' | null | undefined;
+                terminal?: {
+                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                    tmux?: {
+                        sessionName?: string | undefined;
+                        isolated?: boolean | undefined;
+                        tmpDir?: string | null | undefined;
+                    } | undefined;
+                    herdr?: {
+                        sessionName?: string | undefined;
+                    } | undefined;
+                    windows?: {
+                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                        console?: 'hidden' | 'visible' | undefined;
+                        windowName?: string | undefined;
+                    } | undefined;
+                } | null | undefined;
+                windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
+                windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
+                windowsTerminalWindowName?: string | null | undefined;
+                runtimeDescriptorV1?: {
+                    v: 1;
+                    agentId: string;
+                    agent: {
+                        backendMode: string;
+                        home?: 'user' | 'connectedService' | undefined;
+                        connectedServiceId?: string | undefined;
+                        connectedServiceProfileId?: string | undefined;
+                        connectedServiceGroupId?: string | undefined;
+                    };
+                } | null | undefined;
+                conversation?: {
+                    kind: 'shared_run';
+                } | {
+                    kind: 'fresh';
+                } | {
+                    kind: 'origin_session';
+                } | {
+                    kind: 'from_step';
+                    producer: {
+                        blockId: string;
+                        scope: {
+                            kind: 'current';
+                        } | {
+                            kind: 'previous_iteration';
+                            loopBlockId: string;
+                        } | {
+                            kind: 'outer';
+                            levels: number;
+                        };
+                    };
+                } | {
+                    kind: 'existing_session';
+                    sessionId: string;
+                    machineId: string;
+                } | undefined;
+                workspace?: {
+                    kind: 'inherit';
+                } | {
+                    kind: 'project_checkout';
+                } | {
+                    kind: 'from_step';
+                    producer: {
+                        blockId: string;
+                        scope: {
+                            kind: 'current';
+                        } | {
+                            kind: 'previous_iteration';
+                            loopBlockId: string;
+                        } | {
+                            kind: 'outer';
+                            levels: number;
+                        };
+                    };
+                } | {
+                    kind: 'new_worktree';
+                    source: {
+                        kind: 'original';
+                    } | {
+                        kind: 'workflow';
+                    } | {
+                        kind: 'step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            };
+                        };
+                    };
+                } | undefined;
+                engine?: {
+                    role: string;
+                } | {
+                    agentTarget: {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                    modelSelection?: {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    } | null | undefined;
+                    effort?: string | undefined;
+                } | undefined;
+                executionTarget?: {
+                    kind: 'session';
+                } | {
+                    kind: 'detached_run';
+                } | undefined;
+            };
+            roles?: readonly ({
+                roleId: string;
+                engine?: {
+                    agentTargetKey: string;
+                    modelId?: string | undefined;
+                    effort?: string | undefined;
+                } | undefined;
+                runsAs?: {
+                    kind: 'session';
+                } | {
+                    kind: 'background_run';
+                    intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                } | undefined;
+                profileId?: string | undefined;
+                workspaceWrites?: 'allow' | 'deny' | undefined;
+                secondOpinion?: 'off' | 'encouraged' | undefined;
+            } | {
+                roleId: string;
+                name: string;
+                instructions: string;
+                runsAs: {
+                    kind: 'session';
+                } | {
+                    kind: 'background_run';
+                    intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                };
+                engine?: {
+                    agentTargetKey: string;
+                    modelId?: string | undefined;
+                    effort?: string | undefined;
+                } | undefined;
+                profileId?: string | undefined;
+                workspaceWrites?: 'allow' | 'deny' | undefined;
+                secondOpinion?: 'off' | 'encouraged' | undefined;
+            })[] | undefined;
+            blocks: readonly PluginActionWorkflowBlockV1[];
+            finalOutput?: {
+                kind: 'result';
+                producer: {
+                    blockId: string;
+                    scope: {
+                        kind: 'current';
+                    } | {
+                        kind: 'previous_iteration';
+                        loopBlockId: string;
+                    } | {
+                        kind: 'outer';
+                        levels: number;
+                    };
+                };
+                path: (string | number)[];
+                optional?: true | undefined;
+            } | undefined;
+        }>;
         checkpoint: {
             kind: 'happier.workflow-checkpoint.v1';
             rootRecordId: string;
@@ -5647,6 +6481,12 @@ export type WorkflowsActionResultById = {
                     awaitedRuns?: {
                         key: string;
                         runId: string;
+                        observation?: {
+                            kind: 'review_walkthrough';
+                            comparisonId: string;
+                            resultId?: string | undefined;
+                            afterRevision?: number | undefined;
+                        } | undefined;
                     }[] | undefined;
                 } | {
                     localInputId: string;
@@ -5730,7 +6570,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -5740,12 +6580,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -5849,7 +6689,7 @@ export type WorkflowsActionResultById = {
                                         label: string;
                                         typeLabel: string;
                                         description?: string | undefined;
-                                        icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                                        icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                                     };
                                 }[];
@@ -6415,6 +7255,12 @@ export type WorkflowsActionResultById = {
                     awaitedRuns?: {
                         key: string;
                         runId: string;
+                        observation?: {
+                            kind: 'review_walkthrough';
+                            comparisonId: string;
+                            resultId?: string | undefined;
+                            afterRevision?: number | undefined;
+                        } | undefined;
                     }[] | undefined;
                 } | {
                     localInputId: string;
@@ -6498,7 +7344,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -6508,12 +7354,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -6617,7 +7463,7 @@ export type WorkflowsActionResultById = {
                                         label: string;
                                         typeLabel: string;
                                         description?: string | undefined;
-                                        icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                                        icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                                     };
                                 }[];
@@ -6841,7 +7687,7 @@ export type WorkflowsActionResultById = {
         disposition: 'completed' | 'generation_requested';
     };
     readonly "workflow.definition.list": {
-        definitions: {
+        definitions: ({
             kind: 'workflow-definition.v1';
             definitionId: string;
             revision: {
@@ -6852,6 +7698,39 @@ export type WorkflowsActionResultById = {
                 title: string;
                 description?: string | undefined;
             };
+            triggers: ({
+                kind: 'schedule';
+                schedule: {
+                    kind: 'cron';
+                    scheduleExpr: string;
+                    everyMs: null;
+                    timezone: string | null;
+                } | {
+                    kind: 'interval';
+                    scheduleExpr: null;
+                    everyMs: number;
+                    timezone: string | null;
+                };
+            } | {
+                kind: 'pluginEvent';
+                eventRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+            } | {
+                kind: 'sessionLifecycle';
+                events: ('parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnCancelled' | 'userActionRequired' | 'sessionStarted' | 'sessionArchived')[];
+            } | {
+                kind: 'runLifecycle';
+                condition: 'terminal' | 'needs_attention';
+            } | {
+                kind: 'prComment';
+            } | {
+                kind: 'ciFailed';
+            })[];
+            nextRunAt: number | null;
+            contentStatus: 'available';
+            stepCount: number;
             savedBy?: {
                 kind: 'person';
                 accountId: string;
@@ -6862,8 +7741,63 @@ export type WorkflowsActionResultById = {
             } | undefined;
             excerpt?: string | undefined;
             ownerAccountId?: string | undefined;
-            access?: 'view' | 'edit' | 'admin' | 'owner' | undefined;
-        }[];
+            access?: 'owner' | 'view' | 'edit' | 'admin' | undefined;
+        } | {
+            kind: 'workflow-definition.v1';
+            definitionId: string;
+            revision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+            metadata: {
+                title: string;
+                description?: string | undefined;
+            };
+            triggers: ({
+                kind: 'schedule';
+                schedule: {
+                    kind: 'cron';
+                    scheduleExpr: string;
+                    everyMs: null;
+                    timezone: string | null;
+                } | {
+                    kind: 'interval';
+                    scheduleExpr: null;
+                    everyMs: number;
+                    timezone: string | null;
+                };
+            } | {
+                kind: 'pluginEvent';
+                eventRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+            } | {
+                kind: 'sessionLifecycle';
+                events: ('parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnCancelled' | 'userActionRequired' | 'sessionStarted' | 'sessionArchived')[];
+            } | {
+                kind: 'runLifecycle';
+                condition: 'terminal' | 'needs_attention';
+            } | {
+                kind: 'prComment';
+            } | {
+                kind: 'ciFailed';
+            })[];
+            nextRunAt: number | null;
+            contentStatus: 'unavailable';
+            stepCount: null;
+            savedBy?: {
+                kind: 'person';
+                accountId: string;
+            } | {
+                kind: 'agent';
+                accountId: string;
+                sessionId?: string | undefined;
+            } | undefined;
+            excerpt?: string | undefined;
+            ownerAccountId?: string | undefined;
+            access?: 'owner' | 'view' | 'edit' | 'admin' | undefined;
+        })[];
         pluginWorkflows?: {
             workflow: string;
             pluginId: string;
@@ -6881,6 +7815,10 @@ export type WorkflowsActionResultById = {
                     } | null | undefined;
                     description?: string | undefined;
                     optionsSourceId?: string | undefined;
+                    inputType?: {
+                        pluginId: string;
+                        localId: string;
+                    } | undefined;
                 }[];
                 defaults: {
                     agentTarget?: {
@@ -6955,7 +7893,7 @@ export type WorkflowsActionResultById = {
                     } | null | undefined;
                     transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                     terminal?: {
-                        mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                         tmux?: {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
@@ -6965,12 +7903,12 @@ export type WorkflowsActionResultById = {
                             sessionName?: string | undefined;
                         } | undefined;
                         windows?: {
-                            launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
                         } | undefined;
                     } | null | undefined;
-                    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                     windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                     windowsTerminalWindowName?: string | null | undefined;
                     runtimeDescriptorV1?: {
@@ -7156,6 +8094,10 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 description?: string | undefined;
                 optionsSourceId?: string | undefined;
+                inputType?: {
+                    pluginId: string;
+                    localId: string;
+                } | undefined;
             }[];
             defaults: {
                 agentTarget?: {
@@ -7230,7 +8172,7 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                 terminal?: {
-                    mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                     tmux?: {
                         sessionName?: string | undefined;
                         isolated?: boolean | undefined;
@@ -7240,12 +8182,12 @@ export type WorkflowsActionResultById = {
                         sessionName?: string | undefined;
                     } | undefined;
                     windows?: {
-                        launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                         console?: 'hidden' | 'visible' | undefined;
                         windowName?: string | undefined;
                     } | undefined;
                 } | null | undefined;
-                windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                 windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                 windowsTerminalWindowName?: string | null | undefined;
                 runtimeDescriptorV1?: {
@@ -7413,6 +8355,7 @@ export type WorkflowsActionResultById = {
             title: string;
             description?: string | undefined;
         };
+        access: 'owner' | 'view' | 'edit' | 'admin';
         savedBy?: {
             kind: 'person';
             accountId: string;
@@ -7440,6 +8383,10 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 description?: string | undefined;
                 optionsSourceId?: string | undefined;
+                inputType?: {
+                    pluginId: string;
+                    localId: string;
+                } | undefined;
             }[];
             defaults: {
                 agentTarget?: {
@@ -7514,7 +8461,7 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                 terminal?: {
-                    mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                     tmux?: {
                         sessionName?: string | undefined;
                         isolated?: boolean | undefined;
@@ -7524,12 +8471,12 @@ export type WorkflowsActionResultById = {
                         sessionName?: string | undefined;
                     } | undefined;
                     windows?: {
-                        launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                         console?: 'hidden' | 'visible' | undefined;
                         windowName?: string | undefined;
                     } | undefined;
                 } | null | undefined;
-                windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                 windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                 windowsTerminalWindowName?: string | null | undefined;
                 runtimeDescriptorV1?: {
@@ -7697,6 +8644,7 @@ export type WorkflowsActionResultById = {
             title: string;
             description?: string | undefined;
         };
+        access: 'owner' | 'view' | 'edit' | 'admin';
         savedBy?: {
             kind: 'person';
             accountId: string;
@@ -7724,6 +8672,10 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 description?: string | undefined;
                 optionsSourceId?: string | undefined;
+                inputType?: {
+                    pluginId: string;
+                    localId: string;
+                } | undefined;
             }[];
             defaults: {
                 agentTarget?: {
@@ -7798,7 +8750,7 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                 terminal?: {
-                    mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                     tmux?: {
                         sessionName?: string | undefined;
                         isolated?: boolean | undefined;
@@ -7808,12 +8760,12 @@ export type WorkflowsActionResultById = {
                         sessionName?: string | undefined;
                     } | undefined;
                     windows?: {
-                        launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                         console?: 'hidden' | 'visible' | undefined;
                         windowName?: string | undefined;
                     } | undefined;
                 } | null | undefined;
-                windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                 windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                 windowsTerminalWindowName?: string | null | undefined;
                 runtimeDescriptorV1?: {
@@ -7981,6 +8933,7 @@ export type WorkflowsActionResultById = {
             title: string;
             description?: string | undefined;
         };
+        access: 'owner' | 'view' | 'edit' | 'admin';
         savedBy?: {
             kind: 'person';
             accountId: string;
@@ -8003,6 +8956,10 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 description?: string | undefined;
                 optionsSourceId?: string | undefined;
+                inputType?: {
+                    pluginId: string;
+                    localId: string;
+                } | undefined;
             }[];
             defaults: {
                 agentTarget?: {
@@ -8077,7 +9034,7 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
                 transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                 terminal?: {
-                    mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                     tmux?: {
                         sessionName?: string | undefined;
                         isolated?: boolean | undefined;
@@ -8087,12 +9044,12 @@ export type WorkflowsActionResultById = {
                         sessionName?: string | undefined;
                     } | undefined;
                     windows?: {
-                        launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                         console?: 'hidden' | 'visible' | undefined;
                         windowName?: string | undefined;
                     } | undefined;
                 } | null | undefined;
-                windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                 windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                 windowsTerminalWindowName?: string | null | undefined;
                 runtimeDescriptorV1?: {
@@ -8259,6 +9216,10 @@ export type WorkflowsActionResultById = {
         revision: {
             headerVersion: number;
             bodyVersion: number;
+        };
+        metadata: {
+            title: string;
+            description?: string | undefined;
         };
         changedBlockIds: string[];
     };
@@ -8313,21 +9274,21 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                     };
                     reporterSourceCustody: {
-                        readonly kind: 'managed';
-                        readonly immutableGenerationId: string;
-                        readonly installSource: 'npm' | 'archive' | 'localPath';
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'npm' | 'archive' | 'localPath';
                     } | {
-                        readonly kind: 'bundled_first_party';
-                        readonly packagedRuntime: {
-                            readonly kind: 'cli_version_root';
-                            readonly versionRootId: string;
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
                         } | {
-                            readonly kind: 'pinned_runner_snapshot';
-                            readonly snapshotId: string;
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
                         };
                     } | {
-                        readonly kind: 'development';
-                        readonly registeredRootId: string;
+                        kind: 'development';
+                        registeredRootId: string;
                     };
                     state: 'attention' | 'uninitialized' | 'baselined' | 'observing' | 'backingOff';
                     code: 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable' | null;
@@ -8458,6 +9419,7 @@ export type WorkflowsActionResultById = {
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
+                lockedReason?: 'session_key_required' | 'migration_required' | 'decryption_failed' | undefined;
                 placements?: {
                     machineId: string;
                     directory: string;
@@ -8480,6 +9442,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -8554,7 +9520,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -8564,12 +9530,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -8782,6 +9748,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -8856,7 +9826,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -8866,12 +9836,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -9088,21 +10058,21 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                     };
                     reporterSourceCustody: {
-                        readonly kind: 'managed';
-                        readonly immutableGenerationId: string;
-                        readonly installSource: 'npm' | 'archive' | 'localPath';
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'npm' | 'archive' | 'localPath';
                     } | {
-                        readonly kind: 'bundled_first_party';
-                        readonly packagedRuntime: {
-                            readonly kind: 'cli_version_root';
-                            readonly versionRootId: string;
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
                         } | {
-                            readonly kind: 'pinned_runner_snapshot';
-                            readonly snapshotId: string;
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
                         };
                     } | {
-                        readonly kind: 'development';
-                        readonly registeredRootId: string;
+                        kind: 'development';
+                        registeredRootId: string;
                     };
                     state: 'attention' | 'uninitialized' | 'baselined' | 'observing' | 'backingOff';
                     code: 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable' | null;
@@ -9233,6 +10203,7 @@ export type WorkflowsActionResultById = {
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
+                lockedReason?: 'session_key_required' | 'migration_required' | 'decryption_failed' | undefined;
                 placements?: {
                     machineId: string;
                     directory: string;
@@ -9255,6 +10226,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -9329,7 +10304,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -9339,12 +10314,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -9557,6 +10532,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -9631,7 +10610,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -9641,12 +10620,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -9865,21 +10844,21 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                     };
                     reporterSourceCustody: {
-                        readonly kind: 'managed';
-                        readonly immutableGenerationId: string;
-                        readonly installSource: 'npm' | 'archive' | 'localPath';
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'npm' | 'archive' | 'localPath';
                     } | {
-                        readonly kind: 'bundled_first_party';
-                        readonly packagedRuntime: {
-                            readonly kind: 'cli_version_root';
-                            readonly versionRootId: string;
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
                         } | {
-                            readonly kind: 'pinned_runner_snapshot';
-                            readonly snapshotId: string;
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
                         };
                     } | {
-                        readonly kind: 'development';
-                        readonly registeredRootId: string;
+                        kind: 'development';
+                        registeredRootId: string;
                     };
                     state: 'attention' | 'uninitialized' | 'baselined' | 'observing' | 'backingOff';
                     code: 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable' | null;
@@ -10010,6 +10989,7 @@ export type WorkflowsActionResultById = {
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
+                lockedReason?: 'session_key_required' | 'migration_required' | 'decryption_failed' | undefined;
                 placements?: {
                     machineId: string;
                     directory: string;
@@ -10032,6 +11012,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -10106,7 +11090,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -10116,12 +11100,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -10334,6 +11318,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -10408,7 +11396,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -10418,12 +11406,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -10642,21 +11630,21 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                     };
                     reporterSourceCustody: {
-                        readonly kind: 'managed';
-                        readonly immutableGenerationId: string;
-                        readonly installSource: 'npm' | 'archive' | 'localPath';
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'npm' | 'archive' | 'localPath';
                     } | {
-                        readonly kind: 'bundled_first_party';
-                        readonly packagedRuntime: {
-                            readonly kind: 'cli_version_root';
-                            readonly versionRootId: string;
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
                         } | {
-                            readonly kind: 'pinned_runner_snapshot';
-                            readonly snapshotId: string;
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
                         };
                     } | {
-                        readonly kind: 'development';
-                        readonly registeredRootId: string;
+                        kind: 'development';
+                        registeredRootId: string;
                     };
                     state: 'attention' | 'uninitialized' | 'baselined' | 'observing' | 'backingOff';
                     code: 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable' | null;
@@ -10787,6 +11775,7 @@ export type WorkflowsActionResultById = {
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
+                lockedReason?: 'session_key_required' | 'migration_required' | 'decryption_failed' | undefined;
                 placements?: {
                     machineId: string;
                     directory: string;
@@ -10809,6 +11798,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -10883,7 +11876,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -10893,12 +11886,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -11111,6 +12104,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -11185,7 +12182,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -11195,12 +12192,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -11419,21 +12416,21 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                     };
                     reporterSourceCustody: {
-                        readonly kind: 'managed';
-                        readonly immutableGenerationId: string;
-                        readonly installSource: 'npm' | 'archive' | 'localPath';
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'npm' | 'archive' | 'localPath';
                     } | {
-                        readonly kind: 'bundled_first_party';
-                        readonly packagedRuntime: {
-                            readonly kind: 'cli_version_root';
-                            readonly versionRootId: string;
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
                         } | {
-                            readonly kind: 'pinned_runner_snapshot';
-                            readonly snapshotId: string;
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
                         };
                     } | {
-                        readonly kind: 'development';
-                        readonly registeredRootId: string;
+                        kind: 'development';
+                        registeredRootId: string;
                     };
                     state: 'attention' | 'uninitialized' | 'baselined' | 'observing' | 'backingOff';
                     code: 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable' | null;
@@ -11564,6 +12561,7 @@ export type WorkflowsActionResultById = {
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
+                lockedReason?: 'session_key_required' | 'migration_required' | 'decryption_failed' | undefined;
                 placements?: {
                     machineId: string;
                     directory: string;
@@ -11586,6 +12584,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -11660,7 +12662,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -11670,12 +12672,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -11888,6 +12890,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -11962,7 +12968,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -11972,12 +12978,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -12151,7 +13157,10 @@ export type WorkflowsActionResultById = {
             provider: 'github';
             repository: string;
             number: number;
-        }[];
+        }[] | {
+            status: 'unavailable';
+            code: 'target_unavailable';
+        };
     };
     readonly "session.trigger.add": {
         set: {
@@ -12200,21 +13209,21 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                     };
                     reporterSourceCustody: {
-                        readonly kind: 'managed';
-                        readonly immutableGenerationId: string;
-                        readonly installSource: 'npm' | 'archive' | 'localPath';
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'npm' | 'archive' | 'localPath';
                     } | {
-                        readonly kind: 'bundled_first_party';
-                        readonly packagedRuntime: {
-                            readonly kind: 'cli_version_root';
-                            readonly versionRootId: string;
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
                         } | {
-                            readonly kind: 'pinned_runner_snapshot';
-                            readonly snapshotId: string;
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
                         };
                     } | {
-                        readonly kind: 'development';
-                        readonly registeredRootId: string;
+                        kind: 'development';
+                        registeredRootId: string;
                     };
                     state: 'attention' | 'uninitialized' | 'baselined' | 'observing' | 'backingOff';
                     code: 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable' | null;
@@ -12345,6 +13354,7 @@ export type WorkflowsActionResultById = {
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
+                lockedReason?: 'session_key_required' | 'migration_required' | 'decryption_failed' | undefined;
                 placements?: {
                     machineId: string;
                     directory: string;
@@ -12367,6 +13377,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -12441,7 +13455,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -12451,12 +13465,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -12669,6 +13683,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -12743,7 +13761,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -12753,12 +13771,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -12977,21 +13995,21 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                     };
                     reporterSourceCustody: {
-                        readonly kind: 'managed';
-                        readonly immutableGenerationId: string;
-                        readonly installSource: 'npm' | 'archive' | 'localPath';
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'npm' | 'archive' | 'localPath';
                     } | {
-                        readonly kind: 'bundled_first_party';
-                        readonly packagedRuntime: {
-                            readonly kind: 'cli_version_root';
-                            readonly versionRootId: string;
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
                         } | {
-                            readonly kind: 'pinned_runner_snapshot';
-                            readonly snapshotId: string;
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
                         };
                     } | {
-                        readonly kind: 'development';
-                        readonly registeredRootId: string;
+                        kind: 'development';
+                        registeredRootId: string;
                     };
                     state: 'attention' | 'uninitialized' | 'baselined' | 'observing' | 'backingOff';
                     code: 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable' | null;
@@ -13122,6 +14140,7 @@ export type WorkflowsActionResultById = {
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
+                lockedReason?: 'session_key_required' | 'migration_required' | 'decryption_failed' | undefined;
                 placements?: {
                     machineId: string;
                     directory: string;
@@ -13144,6 +14163,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -13218,7 +14241,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -13228,12 +14251,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -13446,6 +14469,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -13520,7 +14547,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -13530,12 +14557,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -13754,21 +14781,21 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                     };
                     reporterSourceCustody: {
-                        readonly kind: 'managed';
-                        readonly immutableGenerationId: string;
-                        readonly installSource: 'npm' | 'archive' | 'localPath';
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'npm' | 'archive' | 'localPath';
                     } | {
-                        readonly kind: 'bundled_first_party';
-                        readonly packagedRuntime: {
-                            readonly kind: 'cli_version_root';
-                            readonly versionRootId: string;
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
                         } | {
-                            readonly kind: 'pinned_runner_snapshot';
-                            readonly snapshotId: string;
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
                         };
                     } | {
-                        readonly kind: 'development';
-                        readonly registeredRootId: string;
+                        kind: 'development';
+                        registeredRootId: string;
                     };
                     state: 'attention' | 'uninitialized' | 'baselined' | 'observing' | 'backingOff';
                     code: 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable' | null;
@@ -13899,6 +14926,7 @@ export type WorkflowsActionResultById = {
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
+                lockedReason?: 'session_key_required' | 'migration_required' | 'decryption_failed' | undefined;
                 placements?: {
                     machineId: string;
                     directory: string;
@@ -13921,6 +14949,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -13995,7 +15027,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -14005,12 +15037,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {
@@ -14223,6 +15255,10 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         description?: string | undefined;
                         optionsSourceId?: string | undefined;
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | undefined;
                     }[];
                     defaults: {
                         agentTarget?: {
@@ -14297,7 +15333,7 @@ export type WorkflowsActionResultById = {
                         } | null | undefined;
                         transcriptStorage?: 'direct' | 'persisted' | null | undefined;
                         terminal?: {
-                            mode?: 'plain' | 'integrated' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
                             tmux?: {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
@@ -14307,12 +15343,12 @@ export type WorkflowsActionResultById = {
                                 sessionName?: string | undefined;
                             } | undefined;
                             windows?: {
-                                launchMode?: 'hidden' | 'windows_terminal' | 'console' | undefined;
+                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
                             } | undefined;
                         } | null | undefined;
-                        windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+                        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
                         windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
                         windowsTerminalWindowName?: string | null | undefined;
                         runtimeDescriptorV1?: {

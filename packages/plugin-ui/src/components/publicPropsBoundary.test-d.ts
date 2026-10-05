@@ -1,7 +1,11 @@
 import type { ButtonProps, IconButtonProps } from './Button.js';
 import { usePluginUiFocusTarget } from '../index.js';
-import type { PluginTranslationValues, PluginUiFocusTarget } from '../index.js';
+import type {
+  CollectionProps, CollectionAnatomy, DetailsPaneProps, StepProps, TabsProps, TabsItemProps,
+  PluginTranslationValues, PluginUiFocusTarget,
+} from '../index.js';
 import type { FormProps, SelectProps, TextFieldProps, TextSelection } from './Form.js';
+import type { ActionInputOptionValue } from '@happier-dev/plugin-sdk/actions';
 import type { HeadingProps, MetadataEntry } from './Foundation.js';
 import type { LayoutChangeEvent, RowProps, ScreenProps, ScrollAreaProps, StackProps } from './Layout.js';
 import type {
@@ -20,8 +24,16 @@ import type { SelectionTilesOption, SelectionTilesProps } from './SelectionTiles
 import type { StatusProps } from './Status.js';
 import type { TextProps } from './Text.js';
 import type { DiffViewerProps } from './Content.js';
+import type { DragSourceProps, DropTargetProps } from './EntityDragDrop.js';
 
 type Assert<Condition extends true> = Condition;
+
+type _SourceDoesNotExposeHostAuthority = Assert<
+  Extract<keyof DragSourceProps, 'scope' | 'occurrenceId' | 'item' | 'runtime' | 'isCurrent'> extends never ? true : false
+>;
+type _TargetDoesNotExposeActionExecution = Assert<
+  Extract<keyof DropTargetProps, 'scope' | 'acceptedKinds' | 'actions' | 'resolve' | 'execute' | 'runtime'> extends never ? true : false
+>;
 
 type _PrivateSteppedIconAdapterIsNotPublic = Assert<
   Extract<keyof typeof import('../index.js'), 'PluginUiIconGlyph'> extends never ? true : false
@@ -32,6 +44,30 @@ type IsEqual<Left, Right> = (
 ) extends (
   <T>() => T extends Right ? 1 : 2
 ) ? true : false;
+
+type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unknown>,
+  | 'model' | 'anatomy' | 'accessibilityLabel' | 'presentation' | 'boardLayout' | 'detail' | 'renderDetail' | 'detailHeader'
+  | 'minListWidth' | 'minDetailWidth' | 'preferredListRatio' | 'minCardWidth' | 'groupAction'
+  | 'scroll' | 'loading' | 'useRowActions' | 'selection' | 'search' | 'empty' | 'header' | 'footer'
+  | 'windowStatement' | 'testID' | 'listTestID' | 'detailTestID'
+>>;
+type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAnatomy<unknown>,
+  | 'boardContent' | 'destination' | 'wrapItem' | 'glyph' | 'title' | 'where' | 'reason' | 'signal' | 'agent' | 'age'
+  | 'fields' | 'peek' | 'preview' | 'description' | 'action' | 'accessibilityLabel' | 'accessibilityHint'
+  | 'testID' | 'columnTitles'
+>>;
+type _AuthorDetailsPaneKeysAreCurated = Assert<IsEqual<keyof DetailsPaneProps,
+  'open' | 'title' | 'subtitle' | 'actions' | 'onClose' | 'children' | 'testID'
+>>;
+type _AuthorStepKeysAreCurated = Assert<IsEqual<keyof StepProps,
+  'marker' | 'title' | 'titleKey' | 'trailing' | 'children' | 'testID'
+>>;
+type _AuthorTabsKeysAreCurated = Assert<IsEqual<keyof TabsProps,
+  'value' | 'onValueChange' | 'ariaLabel' | 'testID' | 'tabList' | 'layout' | 'sharedPanel' | 'children'
+>>;
+type _AuthorTabsItemKeysAreCurated = Assert<IsEqual<keyof TabsItemProps,
+  'value' | 'title' | 'icon' | 'badge' | 'disabled' | 'retention' | 'children'
+>>;
 
 type _AuthorFormFieldDoesNotExposeHostOptionSources = Assert<
   Extract<
@@ -100,6 +136,7 @@ type _AuthorFormFieldKeysAreCurated = Assert<IsEqual<keyof FormProps['hints']['f
   | 'description'
   | 'placeholder'
   | 'widget'
+  | 'inputType'
   | 'required'
   | 'requireExplicitSelection'
   | 'listSeparator'
@@ -110,19 +147,9 @@ type _AuthorFormFieldKeysAreCurated = Assert<IsEqual<keyof FormProps['hints']['f
   | 'disabledWhen'
 >>;
 
-type AuthorConnectedAccountOptionValue = Extract<
-  NonNullable<SelectProps['value']>,
-  Readonly<{ accountId: string }>
->;
-
-type _AuthorSelectOptionValueKeysAreCurated = Assert<IsEqual<
-  keyof AuthorConnectedAccountOptionValue,
-  'service' | 'accountId'
->>;
-
-type _AuthorSelectServiceRefKeysAreCurated = Assert<IsEqual<
-  keyof AuthorConnectedAccountOptionValue['service'],
-  'pluginId' | 'localId'
+type _AuthorSelectOptionValuesUseCanonicalActionValues = Assert<IsEqual<
+  SelectProps['value'],
+  ActionInputOptionValue | readonly ActionInputOptionValue[] | undefined
 >>;
 
 type _AuthorItemPropKeysAreCurated = Assert<IsEqual<keyof ItemProps,
@@ -193,10 +220,14 @@ type _AuthorItemGroupPropKeysAreCurated = Assert<IsEqual<keyof ItemGroupProps,
 // suppression, the content column) stays host-supplied.
 type _AuthorPageHeaderPropKeysAreCurated = Assert<IsEqual<keyof PageHeaderProps,
   | 'title'
+  | 'titleProminence'
   | 'titleKey'
   | 'description'
   | 'descriptionKey'
   | 'leading'
+  | 'details'
+  | 'detailsPlacement'
+  | 'compactPresentation'
   | 'meta'
   | 'actions'
   | 'testID'
@@ -244,11 +275,17 @@ type _MenuRadioGroupKeysAreCurated = Assert<IsEqual<keyof MenuRadioGroup,
   | 'selectedId'
 >>;
 
-// Tiles expose choices only: host density, column forcing, footers, badges and
-// action tiles stay with Happier core's adapter of the same owner.
+// Author tiles forward the same presentation controls to the one shared owner.
 type _AuthorSelectionTilesPropKeysAreCurated = Assert<IsEqual<keyof SelectionTilesProps,
   | 'options'
   | 'variant'
+  | 'tileSizing'
+  | 'density'
+  | 'minimumColumns'
+  | 'maximumColumns'
+  | 'minimumTileWidth'
+  | 'subtitleLines'
+  | 'renderOptionFooter'
   | 'accessibilityLabel'
   | 'accessibilityLabelKey'
   | 'testID'
@@ -264,6 +301,10 @@ type _AuthorSelectionTilesOptionKeysAreCurated = Assert<IsEqual<keyof SelectionT
   | 'subtitle'
   | 'subtitleKey'
   | 'icon'
+  | 'mark'
+  | 'badge'
+  | 'badgeKey'
+  | 'testID'
   | 'preview'
   | 'disabled'
 >>;
@@ -293,15 +334,11 @@ const connectedAccountSelect: SelectProps = {
   onChange: () => undefined,
 };
 
-const hostOwnedSelectMetadata: SelectProps = {
+const hostOwnedSelectCapability: SelectProps = {
   label: 'Account',
   options: [],
-  value: {
-    service: { pluginId: 'acme.github', localId: 'hosting' },
-    accountId: 'primary',
-    // @ts-expect-error Host account metadata is not part of an author selection value.
-    hostMetadata: { providerId: 'github' },
-  },
+  // @ts-expect-error Author option values carry JSON data, not callable host capabilities.
+  value: () => undefined,
   onChange: () => undefined,
 };
 
@@ -456,7 +493,7 @@ const authorSelectionFocusRequest: ListSelectionProps = {
 
 void staticAuthorForm;
 void connectedAccountSelect;
-void hostOwnedSelectMetadata;
+void hostOwnedSelectCapability;
 void hostResolvedOptionsSource;
 void hostProducedConnectedAccountOptions;
 void independentAccessoryPlacement;

@@ -40,6 +40,16 @@ function authorizationFacts(overrides: Readonly<{
 }
 
 describe('evaluateTargetActionPolicy', () => {
+  it('projects the effective approval setting for dangerous waivers and safe Ask-first actions', () => {
+    expect(evaluateTargetActionPolicy({
+      action: { ...action, dangerLevel: 'destructive', approvalRequiredByActionSettings: false },
+      authorizationFacts: authorizationFacts(), surface: 'cli',
+    }).requiresCurrentIntent).toBe(false);
+    expect(evaluateTargetActionPolicy({
+      action: { ...action, approvalRequiredByActionSettings: true },
+      authorizationFacts: authorizationFacts(), surface: 'cli',
+    }).requiresCurrentIntent).toBe(true);
+  });
   it.each([
     ['safe', false],
     ['writesLocal', true],

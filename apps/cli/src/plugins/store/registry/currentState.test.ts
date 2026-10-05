@@ -1,3 +1,4 @@
+import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -118,6 +119,7 @@ function createRevisionTaggedRuntimeRegistry(): ResolvedExecutablePluginRuntimeR
     pluginDiagnosticsByPluginId: Object.freeze({}),
     activatedPluginIds: new Set(),
     activateContributionsOnDemand: async () => [],
+    resolveCaptureSource: unexpectedCaptureSourceResolution,
     resolvePromptAssetBlocks: async () => [],
     addRuntimeDisposable: (_pluginId, disposable) => disposable,
     createAgentInvocationServices: async () => createUnavailablePluginServices(),

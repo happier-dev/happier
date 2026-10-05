@@ -69,4 +69,7 @@ try {
 }
 
 require('./sources/unistyles');
+// Publish the single sync runtime before Router mounts consumers (including
+// native headless tasks). Lazy screens import only its narrow public handle.
+require('./sources/sync/syncEngine');
 require('expo-router/entry');

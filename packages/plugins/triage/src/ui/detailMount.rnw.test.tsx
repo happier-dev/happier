@@ -22,6 +22,8 @@ import {
     type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
+import { TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
@@ -58,7 +60,7 @@ import {
     TRIAGE_ROUTE_DEFAULT_LENS_V1,
     buildTriageRouteSubPathV1,
 } from './navigation/location.js';
-import { TRIAGE_SHELL_FILL_TEST_ID_V1 } from './shell/root.js';
+import { TRIAGE_SHELL_FILL_TEST_ID_V1, TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1 } from './shell/root.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
@@ -313,7 +315,8 @@ const OTHER_ADMITTED_MOUNT = Object.freeze({
     },
 });
 
-function surfaceContext(options: Readonly<{ contributesDetail?: boolean }> = {}) {
+function surfaceContext(options: Readonly<{ contributesDetail?: boolean; tabbedDetail?: boolean;
+    fixPullRequestState?: 'unprojected' | 'unreachable'; }> = {}) {
     const contributesDetail = options.contributesDetail !== false;
     return createSurfaceContextFixture({
         mount: {
@@ -345,7 +348,19 @@ function surfaceContext(options: Readonly<{ contributesDetail?: boolean }> = {})
                     }, {
                         contributor: CONTRIBUTOR,
                         protocol: PROTOCOL,
-                        descriptor: DESCRIPTOR,
+                        descriptor: options.fixPullRequestState !== undefined ? {
+                            ...DESCRIPTOR, kinds: [{ ...DESCRIPTOR.kinds[0], workflowSubject: 'issue', detailTabs: [
+                                { kind: 'shared', id: 'overview' }, { kind: 'shared', id: 'activity' },
+                            ] }, { id: 'fix-pr', workflowSubject: 'pullRequest', displayName: 'Pull request',
+                                pluralDisplayName: 'Pull requests', detailTabs: [
+                                    { kind: 'shared', id: 'files' }, { kind: 'shared', id: 'checks' },
+                                ] }],
+                        } : options.tabbedDetail ? {
+                            ...DESCRIPTOR, kinds: DESCRIPTOR.kinds.map((kind) => ({ ...kind, detailTabs: [
+                                { kind: 'shared', id: 'overview' }, { kind: 'shared', id: 'activity' },
+                                { kind: 'shared', id: 'files' }, { kind: 'shared', id: 'checks' },
+                            ] })),
+                        } : DESCRIPTOR,
                         operations: [],
                         surfaces: contributesDetail ? [DETAIL_SURFACE] : [],
                     }],
@@ -691,6 +706,10 @@ async function mountShell(
         otherSourceEntry?: boolean;
         linkedSessionCount?: number;
         hostedDetail?: boolean;
+        tabbedDetail?: boolean;
+        activeSurface?: boolean;
+        fixPullRequestState?: 'unprojected' | 'unreachable';
+        publishCurrentUiContext?: (context: PluginUiContextEnrichmentV1 | null) => void;
         replacePageLocation?: (request: Readonly<{
             subPath: string;
             backLocation: string | undefined;
@@ -711,13 +730,16 @@ async function mountShell(
     }
     lastPageLocation = null;
     let fixture!: PluginUiTestkit;
+    let failFixRead = options.fixPullRequestState === 'unreachable';
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-186', mountNonce: 'fixture-mount-186' },
             authorPlugin: { id: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, version: '0.0.0' },
             ...(options.subPath === undefined ? {} : { subPath: options.subPath }),
             ...(options.launchInput === undefined ? {} : { launchInput: options.launchInput }),
-            surface: renderShellSurface,
+            // The semantic host's RenderContext omits its activity snapshot;
+            // supply this genuine host boundary fact for mounted-action cases.
+            surface: (context) => renderShellSurface({ ...context, activity: { active: options.activeSurface === true } }),
             surfaceContext: surfaceContext(options),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({
                 ephemeralSharedScope: harness.ephemeralSharedScope,
@@ -735,8 +757,16 @@ async function mountShell(
                 },
             }),
             handlers: {
-                publishCurrentUiContext: () => undefined,
-                executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
+                publishCurrentUiContext: ({ enrichment }) => options.publishCurrentUiContext?.(enrichment),
+                executeAction: async ({ action, input }) => {
+                    if (action === 'marks/read-fix-pull-requests-v1' && options.fixPullRequestState !== undefined) {
+                        if (failFixRead) { failFixRead = false; throw new Error('Account transport unavailable'); }
+                        const primary = { entryRef: { source: SOURCE, kindId: 'fix-pr', collisionScope: 'example/repository', entryId: '999' },
+                            origins: ['user'], status: 'unknown', display: { title: 'Unprojected fix' } };
+                        return { v: 1, candidates: [primary], primary, incomplete: false };
+                    }
+                    return await harness.executeAction({ action, input });
+                },
                 replacePageLocation: async ({ subPath, backLocation, signal }) => {
                     lastPageLocation = { subPath, backLocation };
                     return options.replacePageLocation === undefined
@@ -769,7 +799,7 @@ type LayoutHandler = (event: Readonly<{
 }>) => void;
 
 async function measureFillRegion(width: number): Promise<void> {
-    const node = document.querySelector(`[data-testid="${TRIAGE_SHELL_FILL_TEST_ID_V1}"]`);
+    const node = document.querySelector(`[data-testid="${TRIAGE_SHELL_FILL_TEST_ID_V1}:stage"]`);
     if (node === null) throw new Error('The Triage shell rendered no measured fill region.');
     const handler = (node as unknown as Record<string, unknown>).__reactLayoutHandler;
     if (typeof handler !== 'function') throw new Error('The Triage shell installed no layout observer.');
@@ -784,6 +814,21 @@ function queryDetailBodyNode(): Element | null {
     return Array.from(document.querySelectorAll('*')).find(
         (candidate) => candidate.children.length === 0 && candidate.textContent === DETAIL_BODY_TEXT,
     ) ?? null;
+}
+
+/** Controls belong to the selected detail, not the Collection's own pager. */
+function queryDetailButton(name: string): HTMLElement | undefined {
+    const region = document.querySelector(`[data-testid="${TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1}"]`);
+    if (region === null) throw new Error('The selected detail region is not mounted.');
+    return Array.from(region.querySelectorAll<HTMLElement>('[role="button"], button')).find(
+        (button) => (button.getAttribute('aria-label') ?? button.textContent) === name,
+    );
+}
+
+function pressDetailButton(name: string): void {
+    const button = queryDetailButton(name);
+    if (button === undefined) throw new Error(`The detail has no ${name} button.`);
+    button.click();
 }
 
 function detailBodyNode(): Element {
@@ -812,6 +857,68 @@ afterEach(async () => {
 });
 
 describe('opening a row into the source detail', () => {
+    it('keeps the declared Files and Checks tabs when the fix PR is outside the projection', async () => {
+        const shell = await mountShell({ fixPullRequestState: 'unprojected' });
+        await openTheRow(shell);
+        await act(async () => { await shell.press(await shell.findByRole('tab', { name: 'Files' })); });
+        await expect(shell.getByText("This source's detail view is unavailable")).resolves.toBeDefined();
+        await expect(shell.getByRole('tab', { name: 'Checks' })).resolves.toBeDefined();
+    });
+
+    it('shows a fix-PR relationship read failure and retries within the selected detail', async () => {
+        const shell = await mountShell({ fixPullRequestState: 'unreachable' });
+        await openTheRow(shell);
+        await expect(shell.getByText('Fix pull request links could not be read.')).resolves.toBeDefined();
+        await act(async () => { await shell.press(await shell.findByRole('button', { name: 'Retry: Fix pull request' })); });
+        await expect(shell.getByText('Unprojected fix')).resolves.toBeDefined();
+    });
+    it('lets an agent switch the mounted Collection to Board through the UI owner', async () => {
+        let published: PluginUiContextEnrichmentV1 | null = null;
+        const shell = await mountShell({ activeSurface: true, publishCurrentUiContext: (context) => { published = context; } });
+        const command = (published as PluginUiContextEnrichmentV1 | null)?.commands?.find((entry) => entry.title === 'Switch to Board');
+        expect(command).toBeDefined();
+        if (command?.command.kind !== 'executeAction') throw new Error('Expected the mounted action');
+        const input = TriageMountedUiInputV1Schema.parse(command.command.input);
+        const { createTriageMountedUiActionHandler } = await import('../actions/mountedUi.js');
+        const invoke = () => createTriageMountedUiActionHandler()(input, {
+            plugin: { id: 'happier.triage', version: '0.0.0' },
+            contribution: { id: 'ui/mounted-v1', qualifiedId: 'happier.triage/actions/ui/mounted-v1' },
+            invocationSurface: 'agent', signal: new AbortController().signal,
+            ui: shell.context.hostApi, ephemeralSharedScope: currentHarness!.ephemeralSharedScope,
+        });
+        await act(async () => {
+            expect(await invoke()).toEqual({ status: 'applied' });
+        });
+        expect(document.querySelector('[role="radio"][aria-label="Board"][aria-checked="true"]')).not.toBeNull();
+        await act(async () => { await shell.press(await shell.getByRole('radio', { name: 'List' })); });
+        expect(document.querySelector('[role="radio"][aria-label="List"][aria-checked="true"]')).not.toBeNull();
+        await act(async () => { await shell.dispose(); });
+        await expect(invoke()).resolves.toEqual({ status: 'unavailable' });
+    });
+
+    it('lets an agent open an entry on Checks and keeps UI tab presses on the same owner', async () => {
+        let published: PluginUiContextEnrichmentV1 | null = null;
+        const shell = await mountShell({ activeSurface: true, tabbedDetail: true, publishCurrentUiContext: (context) => { published = context; } });
+        const command = (published as PluginUiContextEnrichmentV1 | null)?.commands?.find((entry) => entry.title === 'Switch to Board');
+        expect(command).toBeDefined();
+        if (command?.command.kind !== 'executeAction') throw new Error('Expected the mounted action');
+        const { createTriageMountedUiActionHandler } = await import('../actions/mountedUi.js');
+        const address = TriageMountedUiInputV1Schema.parse(command.command.input);
+        await act(async () => {
+            expect(await createTriageMountedUiActionHandler()({ mountId: address.mountId, operation: {
+                kind: 'openDetail', entryRef: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' }, tab: 'checks',
+            } }, {
+                plugin: { id: 'happier.triage', version: '0.0.0' },
+                contribution: { id: 'ui/mounted-v1', qualifiedId: 'happier.triage/actions/ui/mounted-v1' },
+                invocationSurface: 'agent', signal: new AbortController().signal,
+                ui: shell.context.hostApi, ephemeralSharedScope: currentHarness!.ephemeralSharedScope,
+            })).toEqual({ status: 'applied' });
+        });
+        expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('Checks');
+        await act(async () => { await shell.press(await shell.getByRole('tab', { name: 'Activity' })); });
+        expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('Activity');
+    });
+
     it('retries an Account-read failure without closing the selected entry', async () => {
         const shell = await mountShell();
         const harness = currentHarness;
@@ -824,7 +931,7 @@ describe('opening a row into the source detail', () => {
         await expect(shell.getByRole('heading', { name: 'Replace the duplicated normalizer' }))
             .resolves.toBeDefined();
         await act(async () => {
-            await shell.press(await shell.getByRole('button', { name: 'Retry' }));
+            pressDetailButton('Retry');
         });
         for (let settle = 0; settle < 4; settle += 1) {
             await act(async () => { await Promise.resolve(); });
@@ -921,13 +1028,13 @@ describe('opening a row into the source detail', () => {
         harness.failNextLinkedSessionPage();
 
         await act(async () => {
-            await shell.press(await shell.getByRole('button', { name: 'Load more' }));
+            pressDetailButton('Load more');
         });
         await expect(shell.getByText('More linked Sessions could not be loaded.')).resolves.toBeDefined();
         await expect(shell.queryByText('Linked Session 201')).resolves.toBeUndefined();
 
         await act(async () => {
-            await shell.press(await shell.getByRole('button', { name: 'Retry' }));
+            pressDetailButton('Retry');
         });
 
         await expect(shell.getByRole('button', { name: 'Linked Session 201' })).resolves.toBeDefined();
@@ -943,8 +1050,8 @@ describe('opening a row into the source detail', () => {
         expect(loadedLinkedSessionNames).toHaveLength(MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1);
         expect(new Set(loadedLinkedSessionNames).size)
             .toBe(MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1);
-        await expect(shell.queryByRole('button', { name: 'Load more' })).resolves.toBeUndefined();
-        await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
+        expect(queryDetailButton('Load more')).toBeUndefined();
+        expect(queryDetailButton('Retry')).toBeUndefined();
     });
 
     it('settles a non-advancing linked-Session cursor while retaining the admitted page', async () => {
@@ -955,7 +1062,7 @@ describe('opening a row into the source detail', () => {
         harness.repeatNextLinkedSessionCursor();
 
         await act(async () => {
-            await shell.press(await shell.getByRole('button', { name: 'Load more' }));
+            pressDetailButton('Load more');
         });
 
         // The page itself was admitted; only its non-advancing continuation is
@@ -965,10 +1072,10 @@ describe('opening a row into the source detail', () => {
         await expect(shell.getByText('More linked Sessions could not be loaded.')).resolves.toBeDefined();
 
         await act(async () => {
-            await shell.press(await shell.getByRole('button', { name: 'Retry' }));
+            pressDetailButton('Retry');
         });
         await expect(shell.queryByText('More linked Sessions could not be loaded.')).resolves.toBeUndefined();
-        await expect(shell.queryByRole('button', { name: 'Load more' })).resolves.toBeUndefined();
+        expect(queryDetailButton('Load more')).toBeUndefined();
     });
 
     it('mounts the admitted source detail contribution', async () => {
@@ -1156,16 +1263,10 @@ describe('opening a row into the source detail', () => {
         await openTheRow(shell);
 
         await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
-        // The entry's own scope, and — separately — the configured connection
-        // this detail is being read through.
-        await expect(shell.getByText('example/repository')).resolves.toBeDefined();
-        await expect(shell.getByText('Example account')).resolves.toBeDefined();
-        // §2.2's Source and Type: the source's own name for itself and for this
-        // entry kind, decoded by nothing in this shell — the host parsed the
-        // descriptor at admission and `entries/read-detail-v1` carries the typed
-        // value here out of the admitted snapshot.
-        await expect(shell.getByText('Example forge')).resolves.toBeDefined();
-        await expect(shell.getByText('Pull request')).resolves.toBeDefined();
+        // Source, kind, scope, state and observing connection are composed in
+        // one context line, not five independently labelled header fields.
+        await expect(shell.getByText('Example forge · Pull request · example/repository · Open · via Example account'))
+            .resolves.toBeDefined();
     });
 
     it('returns to the list when the detail is closed', async () => {
@@ -1389,12 +1490,14 @@ describe('opening a row into the source detail', () => {
         // This page can name the launched connection from configured-source
         // facts, but it must not hand the first connection's observation to
         // the second connection's detail renderer.
-        await expect(shell.getByText('Second account')).resolves.toBeDefined();
+        await expect(shell.getByText('Example forge · Pull request · example/repository · Open · via Second account'))
+            .resolves.toBeDefined();
         await expect(shell.getByText('No connection to open this through')).resolves.toBeDefined();
         expect(harness.readDetailInstanceIds).toEqual([]);
         // The header and refusal both stay on the launched connection; neither
         // silently falls through to the window's qualified account.
-        await expect(shell.queryByText('Example account')).resolves.toBeUndefined();
+        await expect(shell.queryByText('Example forge · Pull request · example/repository · Open · via Example account'))
+            .resolves.toBeUndefined();
     });
 
     it('falls through to the page location when the launch input is not admitted', async () => {

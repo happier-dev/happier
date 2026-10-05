@@ -50,12 +50,12 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
     attemptId: number,
   ): Promise<void> => {
     const prepared = preparedByAttemptId.get(attemptId);
-    if (prepared?.controlSessionId !== controlSessionId) return;
+    if (prepared && prepared.controlSessionId !== controlSessionId) return;
+    await input.lifecycle.releasePrepared(attemptId, prepared?.session);
     preparedByAttemptId.delete(attemptId);
     if (currentAttemptIdByControlSessionId.get(controlSessionId) === attemptId) {
       currentAttemptIdByControlSessionId.delete(controlSessionId);
     }
-    await input.lifecycle.releasePrepared(attemptId, prepared.session);
   };
 
   const adapter: RealtimeVoiceProviderProtocol = {
@@ -74,6 +74,7 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
       if (priorAttemptId !== undefined) {
         await releasePreparedAttempt(controlSessionId, priorAttemptId);
       }
+      input.lifecycle.preparing(attemptId, hostedConversation);
       const requestRecord = readObject(request);
       const preparation = await input.preparation.prepare({
         controlSessionId,
@@ -175,8 +176,6 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
       if (attemptId === undefined) return;
       const preparedStart = preparedByAttemptId.get(attemptId);
       if (!preparedStart) return;
-      preparedByAttemptId.delete(attemptId);
-      currentAttemptIdByControlSessionId.delete(controlSessionId);
       input.lifecycle.started({
         controlSessionId,
         conversationId,
@@ -185,12 +184,12 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
       });
     },
     async endSession() {
+      await input.lifecycle.ended();
       for (const [attemptId, prepared] of preparedByAttemptId) {
-        await input.lifecycle.releasePrepared(attemptId, prepared.session);
+        await releasePreparedAttempt(prepared.controlSessionId, attemptId);
       }
       preparedByAttemptId.clear();
       currentAttemptIdByControlSessionId.clear();
-      await input.lifecycle.ended();
     },
   });
 }

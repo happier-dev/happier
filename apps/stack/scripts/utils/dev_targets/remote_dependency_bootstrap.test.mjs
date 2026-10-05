@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
+import { inspectDependencyRefresh, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 
 import {
   REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS,
@@ -11,6 +12,57 @@ import {
 } from './remote_dependency_bootstrap.mjs';
 
 const runDependencyRefreshImmediately = async (_options, refresh) => await refresh({});
+
+test('scriptless source-test refresh cannot admit changed UI patch inputs as postinstall-ready', async (t) => {
+  const repoDir = await mkdtemp(join(tmpdir(), 'happier-scriptless-ui-patch-'));
+  t.after(async () => rm(repoDir, { recursive: true, force: true }));
+  await mkdir(join(repoDir, 'apps/stack'), { recursive: true });
+  await mkdir(join(repoDir, 'apps/ui/patches'), { recursive: true });
+  for (const name of ['cli', 'server']) {
+    await mkdir(join(repoDir, 'apps', name), { recursive: true });
+    await writeFile(join(repoDir, 'apps', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}` }));
+  }
+  await writeFile(join(repoDir, 'apps/stack/package.json'), '{"name":"@fixture/stack"}');
+  await writeFile(join(repoDir, 'apps/ui/package.json'), JSON.stringify({
+    name: '@fixture/ui', happier: { installFreshnessInputs: ['patches'] },
+  }));
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({
+    private: true, workspaces: ['apps/*'],
+  }));
+  await writeFile(join(repoDir, 'yarn.lock'), '# fixture\n');
+  const patchPath = join(repoDir, 'apps/ui/patches/markdown.patch');
+  const installedOutput = join(repoDir, 'node_modules/patched-markdown.js');
+  await writeFile(patchPath, 'original patch\n');
+  let scriptlessInstalls = 0;
+  const options = {
+    repoDir, validationKind: 'source-test',
+    // Installation is the process boundary; bootstrap admission and freshness stay real.
+    installInitialDependencies: async () => {
+      scriptlessInstalls += 1;
+      await mkdir(join(repoDir, 'node_modules'), { recursive: true });
+    },
+  };
+  const fullInstall = async () => {
+    await writeFile(installedOutput, await readFile(patchPath));
+  };
+  await bootstrapRemoteDependencies(options);
+  assert.equal((await inspectDependencyRefresh({ installDir: repoDir })).required, true,
+    'a scriptless install must leave runtime postinstall admission stale');
+  await bootstrapRemoteDependencies(options);
+  assert.equal(scriptlessInstalls, 1, 'unchanged source tests reuse scriptless dependency readiness');
+  await withDependencyRefresh({ installDir: repoDir }, fullInstall);
+  await bootstrapRemoteDependencies(options);
+  assert.equal(scriptlessInstalls, 1, 'full dependency readiness also satisfies source tests');
+
+  await writeFile(patchPath, 'streaming reveal patch\n');
+  await bootstrapRemoteDependencies(options);
+  assert.equal(scriptlessInstalls, 2);
+  assert.equal((await inspectDependencyRefresh({ installDir: repoDir })).required, true,
+    'refreshing installed tools must not swallow changed UI postinstall inputs');
+  await withDependencyRefresh({ installDir: repoDir }, fullInstall);
+  assert.equal(await readFile(installedOutput, 'utf8'), 'streaming reveal patch\n');
+  assert.equal((await inspectDependencyRefresh({ installDir: repoDir })).required, false);
+});
 
 test('source-test bootstrap admits installed tools without requiring a compiled Stack owner', async (t) => {
   const repoDir = await mkdtemp(join(tmpdir(), 'happier-source-test-bootstrap-'));

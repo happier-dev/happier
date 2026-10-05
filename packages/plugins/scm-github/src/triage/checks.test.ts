@@ -197,11 +197,7 @@ describe('GitHub pull-request checks', () => {
     expect(oneReadFailed.surface.rowState).toEqual({ kind: 'failing', failingCount: 1 });
   });
 
-  it('reports a check walk stopped by its own page budget as known-incomplete', async () => {
-    // Every page advertises another page, so the walk exhausts its page budget while
-    // GitHub is still offering rows. `total_count` stays small and honest, so the
-    // ceiling signal never fires: exhaustion is the only evidence that the list is
-    // short, and without it a truncated read renders as a settled rollup.
+  it('reads an eleventh check-run page while the provider offers it', async () => {
     const pages: number[] = [];
     const { surface } = await readChecks((request) => {
       if (!request.url.includes('/check-runs')) return emptyStatus();
@@ -209,10 +205,10 @@ describe('GitHub pull-request checks', () => {
       pages.push(page);
       return {
         status: 200,
-        headers: {
+        headers: page < 11 ? {
           link: '<https://api.github.com/repos/octo-org/example-app/commits/'
             + `${HEAD_SHA}/check-runs?filter=all&per_page=100&page=${page + 1}>; rel="next"`,
-        },
+        } : {},
         body: githubCheckRunsResponse({
           runs: [githubCheckRun({
             id: page,
@@ -220,21 +216,18 @@ describe('GitHub pull-request checks', () => {
             status: 'completed',
             conclusion: 'success',
           })],
-          totalCount: 12,
+          totalCount: 11,
         }),
       };
     });
 
-    expect(pages).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    expect(surface.observations).toHaveLength(10);
+    expect(pages).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(surface.observations).toHaveLength(11);
     expect(surface.checkRunsFailure).toBeNull();
-    expect(surface.state).toBe('knownIncomplete');
+    expect(surface.state).toBe('resolved');
   });
 
-  it('reports a truncated commit-status walk as known-incomplete', async () => {
-    // The combined-status envelope gives this source no total to compare against a
-    // ceiling, so exhaustion is its ONLY incompleteness evidence. A check-runs walk
-    // that ended cleanly must not settle the surface on its sibling's behalf.
+  it('reads an eleventh commit-status page while the provider offers it', async () => {
     const { surface } = await readChecks((request) => {
       if (request.url.includes('/check-runs')) {
         return { status: 200, body: githubCheckRunsResponse({ runs: [] }) };
@@ -242,10 +235,10 @@ describe('GitHub pull-request checks', () => {
       const page = Number(new URL(request.url).searchParams.get('page') ?? '1');
       return {
         status: 200,
-        headers: {
+        ...(page < 11 ? { headers: {
           link: '<https://api.github.com/repos/octo-org/example-app/commits/'
             + `${HEAD_SHA}/status?per_page=100&page=${page + 1}>; rel="next"`,
-        },
+        } } : {}),
         body: githubCombinedStatusResponse({
           state: 'success',
           statuses: [githubCommitStatus({ id: page, context: `legacy/ci-${page}`, state: 'success' })],
@@ -253,9 +246,69 @@ describe('GitHub pull-request checks', () => {
       };
     });
 
-    expect(surface.observations).toHaveLength(10);
+    expect(surface.observations).toHaveLength(11);
     expect(surface.commitStatusFailure).toBeNull();
+    expect(surface.state).toBe('resolved');
+  });
+
+  it('does not mistake more than a thousand runs in one suite for suite truncation', async () => {
+    const { surface } = await readChecks((request) => request.url.includes('/check-runs')
+      ? { status: 200, body: githubCheckRunsResponse({ runs: Array.from({ length: 1_001 }, (_, index) => ({
+        ...githubCheckRun({ id: index + 1, name: `job-${index}`, status: 'completed', conclusion: 'success' }),
+        check_suite: { id: 1 },
+      })) }) } : emptyStatus());
+    expect(surface.state).toBe('resolved');
+    expect(surface.rowState).toEqual({ kind: 'allPassing' });
+    expect(surface.passingCount).toBe(1_001);
+  });
+
+  it('discloses saturation of the provider endpoint at a thousand distinct check suites', async () => {
+    const { surface } = await readChecks((request) => request.url.includes('/check-runs')
+      ? { status: 200, body: githubCheckRunsResponse({ runs: Array.from({ length: 1_000 }, (_, index) => ({
+        ...githubCheckRun({ id: index + 1, name: `job-${index}`, status: 'completed', conclusion: 'success' }),
+        check_suite: { id: index + 1 },
+      })) }) } : emptyStatus());
     expect(surface.state).toBe('knownIncomplete');
+    expect(surface.rowState).toBeNull();
+    expect(surface.passingCount).toBeNull();
+  });
+
+  it.each(['check-run', 'commit-status'] as const)('discloses an undecodable %s beside valid rows', async (resource) => {
+    const { surface } = await readChecks((request) => request.url.includes('/check-runs')
+      ? { status: 200, body: githubCheckRunsResponse({ runs: [
+        githubCheckRun({ id: 1, name: 'build', status: 'completed', conclusion: 'success' }),
+        ...(resource === 'check-run' ? [{ id: null }] : []),
+      ] }) }
+      : { status: 200, body: githubCombinedStatusResponse({ state: 'success', statuses: [
+        ...(resource === 'commit-status' ? [{ id: null }] : []),
+      ] }) });
+    expect(surface.observations).toHaveLength(1);
+    expect(surface.state).toBe('unknown');
+    expect(surface.rowState).toBeNull();
+    expect(resource === 'check-run' ? surface.checkRunsFailure : surface.commitStatusFailure)
+      .toMatchObject({ class: 'unsupportedContract', code: 'github_checks_rows_undecodable', omittedRowCount: 1 });
+  });
+
+  it('retains undecodable-row disclosure when a later page fails', async () => {
+    const { surface } = await readChecks((request) => {
+      if (!request.url.includes('/check-runs')) return emptyStatus();
+      if (new URL(request.url).searchParams.get('page') === '2') {
+        return { status: 500, body: { message: 'Server Error' } };
+      }
+      return {
+        status: 200,
+        body: githubCheckRunsResponse({ runs: [
+          githubCheckRun({ id: 1, name: 'build', status: 'completed', conclusion: 'success' }),
+          { id: null },
+        ] }),
+        headers: { link: `<${request.url}&page=2>; rel="next"` },
+      };
+    });
+    expect(surface.observations).toHaveLength(1);
+    expect(surface.state).toBe('unknown');
+    expect(surface.checkRunsFailure).toMatchObject({
+      class: 'transient', code: 'github_server_error', omittedRowCount: 1,
+    });
   });
 
   it('keeps the surviving read visible when only one of the two reads fails', async () => {

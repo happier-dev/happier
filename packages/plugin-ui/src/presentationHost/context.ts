@@ -4,7 +4,8 @@ import type { PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-
 import type { NavigationListDestination } from '../components/NavigationList.js';
 import type { ItemProps } from '../components/List.js';
 import type { HappierUiPalette, HappierUiTypography } from '../environment/types.js';
-import type { HappierFocusable } from '../presentation/portableTypes.js';
+import type { HappierFocusable, HappierStyleProp } from '../presentation/portableTypes.js';
+import type { HappierMaterialRole } from '../presentation/layout/material.js';
 import type { HappierDiffViewerRequest } from '../presentation/content/DiffViewer.js';
 import type { HappierPageChrome } from '../presentation/layout/pageChrome.js';
 import type { HappierCollectionMotionDriver } from '../presentation/collection/collectionMotion.js';
@@ -14,6 +15,10 @@ import type { HappierCapsuleHost } from '../presentation/status/capsuleHost.js';
 import type { HappierAgentCursorMotionDriver } from '../presentation/copresence/AgentCursor.js';
 import type { HappierLiveStreamProps } from '../presentation/media/LiveStream.js';
 import type { HappierStoredImageHost } from '../presentation/content/StoredImage.js';
+import type { DragSourceProps, DropTargetProps } from '../components/EntityDragDrop.js';
+import type { PluginUiWidgetAreaPortV1 } from '../hostApi/widgetArea.public.js';
+import type { SetupBlockGridProps, SetupBlockTileProps } from '../components/Setup.js';
+import type { DictationButtonProps, StatusCellProps, VoiceMarkArtProps } from '../components/Voice.js';
 
 export type PluginUiPopoverPresentation = 'popover' | 'menu' | 'dropdown' | 'context';
 
@@ -76,6 +81,22 @@ export type PluginUiSessionPartPresentation =
   | Readonly<{ part: 'chat'; sessionId: string; readOnly: boolean; presented?: boolean; testID?: string }>;
 
 /**
+ * One request to present a page's declared widget area (`WidgetSurface area="pinned"`). The
+ * operation port is the mounted Host API's `widgetArea`, already bound by the host to this page's
+ * plugin, Account and declared area; the context is the page's readable input, admitted against the
+ * area's declared schema on every operation. The host owns everything drawn inside: catalog,
+ * gallery, Set up, frames, layout and access.
+ */
+export type PluginUiWidgetAreaPresentation = Readonly<{
+  area: string;
+  context: Readonly<Record<string, JsonValue>>;
+  port: PluginUiWidgetAreaPortV1;
+  title?: string;
+  description?: string;
+  testID?: string;
+}>;
+
+/**
  * What a plugin's `DetailsPane` asks the host to show in the page's app details pane: the pane's header
  * band (title, subtitle, actions, close) and the detail itself. The host owns the pane's geometry,
  * persisted width, docked/overlay decision, Escape and focus return.
@@ -84,6 +105,8 @@ export type PluginUiDetailsPanePresentation = Readonly<{
   open: boolean;
   /** The header band's title; omitted, the detail draws its own heading and close control. */
   title?: string;
+  /** Private semantic binding to the incumbent pane header, never an author DOM/native-ref API. */
+  headingRef?: (target: HappierFocusable | null) => void;
   subtitle?: string;
   actions?: ReactNode;
   onClose(): void;
@@ -137,6 +160,23 @@ export type PluginUiPaneHeaderHost = Readonly<{
  * navigation roots, or modal/portal infrastructure.
  */
 export type PluginUiPresentationHost = Readonly<{
+  renderVoiceMarkArt?(input: Omit<VoiceMarkArtProps, 'fallback'>): ReactNode;
+  renderStatusCell?(input: Omit<StatusCellProps, 'label' | 'fallback'> & Readonly<{ presented: boolean }>): ReactNode;
+  renderSetupBlockTile?(input: Omit<SetupBlockTileProps, 'fallback'>): ReactNode;
+  renderSetupBlockGrid?(input: Omit<SetupBlockGridProps, 'fallback'>): ReactNode;
+  renderDictationButton?(input: Omit<DictationButtonProps, 'fallback'> & Readonly<{ presented: boolean }>): ReactNode;
+  /** Thin presentation requests; the existing mounted host owns identity, gestures and Actions. */
+  renderDragSource?(input: DragSourceProps): ReactNode;
+  renderDropTarget?(input: DropTargetProps): ReactNode;
+  /** The incumbent host material owner; no settings or platform policy enters the author API. */
+  renderMaterialSurface?(input: Readonly<{
+    role: HappierMaterialRole;
+    /** A same-role parent already owns this plane's material coat. */
+    nested?: boolean;
+    children?: ReactNode;
+    style?: HappierStyleProp;
+    testID?: string;
+  }>): ReactNode;
   /** Incumbent platform image decoder; Session-media acquisition remains in the mounted host API. */
   storedImageHost?: HappierStoredImageHost;
   /** Qualified row destinations use the incumbent workspace owner; absent hosts keep ordinary activation. */
@@ -238,6 +278,12 @@ export type PluginUiPresentationHost = Readonly<{
    * (isolated tests, hosted-web realms): the author's fallback renders instead.
    */
   renderSessionPart?(input: PluginUiSessionPartPresentation): ReactNode;
+  /**
+   * Render one declared widget area of this page through the host's one widget area owner (the
+   * public `WidgetSurface`). Absent where the host cannot present widgets (isolated tests, a
+   * hosted-web realm): the author's fallback renders instead.
+   */
+  renderWidgetArea?(input: PluginUiWidgetAreaPresentation): ReactNode;
   /**
    * Transfer an opaque public control target through the mounted app host.
    * The app retains layout currentness and platform-specific physical focus;

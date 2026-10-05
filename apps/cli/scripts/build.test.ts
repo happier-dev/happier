@@ -115,6 +115,75 @@ describe('buildCliDist', () => {
     }
   });
 
+  it('reuses the locked compiler cache without admitting changed errors or retaining deleted sources', async () => {
+    const packageRoot = createTempDirSync('happier-cli-build-incremental-');
+    try {
+      writeBuildPackageManifest(packageRoot);
+      mkdirSync(join(packageRoot, 'src'), { recursive: true });
+      writeFileSync(join(packageRoot, 'tsconfig.json'), JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          target: 'ESNext',
+          module: 'ESNext',
+          moduleResolution: 'bundler',
+          incremental: true,
+          noEmit: true,
+        },
+        include: ['src/**/*.ts'],
+      }));
+      writeFileSync(join(packageRoot, 'tsconfig.build.json'), JSON.stringify({
+        extends: './tsconfig.json',
+        compilerOptions: { tsBuildInfoFile: 'node_modules/.cache/tsc/cli.build.typecheck.tsbuildinfo' },
+      }));
+      const sourcePath = join(packageRoot, 'src', 'index.ts');
+      writeFileSync(sourcePath, 'export const runtime: string = "first";\n');
+      writeFileSync(join(packageRoot, 'src', 'deleted.ts'), 'export const removed = true;\n');
+      const compiledRoots: string[] = [];
+      const options = {
+        packageRoot,
+        repoRoot: packageRoot,
+        lockPath: join(packageRoot, 'build.lock'),
+        env: { HAPPIER_CLI_BUILD_OUTPUT_DIR: '' },
+        // Pkgroll is the compiler/process boundary. Keep source admission,
+        // TypeScript, cache handling, the lock and publication real.
+        runPkgrollBuildImpl: ({ packageJsonPath, outputDir }: { packageJsonPath: string; outputDir: string }) => {
+          const compiledRoot = dirname(packageJsonPath);
+          compiledRoots.push(compiledRoot);
+          mkdirSync(join(compiledRoot, outputDir), { recursive: true });
+          for (const name of ['index.mjs', 'index.cjs']) {
+            writeFileSync(join(compiledRoot, outputDir, name), name.endsWith('.mjs')
+              ? 'export const built = true;\n'
+              : 'module.exports = {};\n');
+          }
+        },
+      };
+      await buildCliDist(options);
+      const compilerCache = join(compiledRoots[0], 'node_modules/.cache/tsc/cli.build.typecheck.tsbuildinfo');
+      expect(existsSync(compilerCache)).toBe(true);
+      await buildCliDist(options);
+      expect(compiledRoots[1]).toBe(compiledRoots[0]);
+
+      writeFileSync(sourcePath, 'export const runtime: string = 42;\n');
+      await expect(buildCliDist(options)).rejects.toThrow('exited with status 1');
+      await expect(buildCliDist(options)).rejects.toThrow('exited with status 1');
+      expect(compiledRoots).toHaveLength(2);
+      expect(existsSync(join(packageRoot, 'dist', 'index.mjs'))).toBe(true);
+
+      writeFileSync(sourcePath, 'export const runtime: string = "recovered";\n');
+      rmSync(join(packageRoot, 'src', 'deleted.ts'));
+      await buildCliDist({
+        ...options,
+        runPkgrollBuildImpl: (params: { packageJsonPath: string; outputDir: string }) => {
+          expect(existsSync(join(dirname(params.packageJsonPath), 'src', 'deleted.ts'))).toBe(false);
+          options.runPkgrollBuildImpl(params);
+        },
+      });
+      expect(compiledRoots[2]).toBe(compiledRoots[0]);
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
   it('holds the CLI dist build lock across typecheck, bundle, and finalize without publishing package dist', async () => {
     const packageRoot = createTempDirSync('happier-cli-build-lock-section-');
     try {
@@ -157,7 +226,7 @@ describe('buildCliDist', () => {
       expect(typecheckInvocations).toEqual([
         [
           '/canonical/runTypeScriptCli.mjs',
-          ['-p', 'tsconfig.build.json', '--noEmit'],
+          ['-p', 'tsconfig.build.json', '--noEmit', '--singleThreaded'],
           expect.objectContaining({ cwd: realpathSync.native(packageRoot) }),
         ],
       ]);
