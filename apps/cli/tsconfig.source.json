@@ -618,6 +618,7 @@
   "exclude": [
     "node_modules",
     "src/**/*.tmp.test.ts",
+    "src/**/__tests__/**",
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/*.spec.ts",

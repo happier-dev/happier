@@ -122,6 +122,10 @@ test('compiler-only typecheck executes compilers after preparation and reports c
   };
   assert.equal(cliPackage.scripts.typecheck, '../stack/bin/hstack-exec --script=typecheck:local');
   assert.equal(cliPackage.scripts['typecheck:local'], 'yarn -s typecheck:source:finite');
-  assert.equal(cliPackage.scripts['typecheck:source:finite'],
-    'node ../../scripts/workspaces/runTypeScriptCli.mjs --project tsconfig.source.json --project tsconfig.test.json');
+  const [cliExecutable, cliOwner, ...cliCompilerArgs] = cliPackage.scripts['typecheck:source:finite'].trim().split(/\s+/u);
+  assert.equal(cliExecutable, 'node');
+  assert.equal(resolve('apps/cli', cliOwner), resolve('scripts/workspaces/runTypeScriptCli.mjs'));
+  assert.deepEqual(cliCompilerArgs.filter((_, index) => cliCompilerArgs[index - 1] === '--project'), [
+    'tsconfig.source.json', 'tsconfig.test.json',
+  ]);
 });

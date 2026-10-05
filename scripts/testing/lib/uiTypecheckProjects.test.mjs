@@ -27,6 +27,56 @@ function isSharedDeclaration(file) {
       || Boolean(statement.flags & ts.NodeFlags.GlobalAugmentation)));
 }
 
+function publicFiniteCompiler(packageDir, fixtureDir, write, invocation) {
+  const pkg = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
+  const [command, owner, ...compilerArgs] = pkg.scripts['typecheck:source:finite'].trim().split(/\s+/u);
+  assert.equal(command, 'node');
+  assert.equal(resolve(packageDir, owner), resolve('scripts/workspaces/runTypeScriptCli.mjs'));
+  const projects = [];
+  const fixtureArgs = compilerArgs.map((arg, index) => {
+    if (compilerArgs[index - 1] !== '--project') return arg;
+    projects.push(arg);
+    return join(fixtureDir, arg);
+  });
+  const spawnLog = join(fixtureDir, 'compiler-spawns.jsonl');
+  const preload = join(fixtureDir, 'record-compiler-spawns.cjs');
+  // Observe only the genuine OS spawn boundary; execute the native compiler
+  // unchanged, including the measured Linux adapter's compiler invocation.
+  write('record-compiler-spawns.cjs', `
+    const cp = require('node:child_process');
+    const spawn = cp.spawn;
+    cp.spawn = function(command, args, options) {
+      const compilerArgs = command === process.execPath && args[0] === ${JSON.stringify(invocation.argsPrefix[0])}
+        ? args.slice(1)
+        : command === 'python3' && args[3] === ${JSON.stringify(invocation.argsPrefix[0])}
+          ? args.slice(4) : null;
+      if (compilerArgs) require('node:fs').appendFileSync(${JSON.stringify(spawnLog)}, JSON.stringify(compilerArgs) + '\\n');
+      return spawn(command, args, options);
+    };
+    require('node:module').syncBuiltinESMExports();
+  `);
+  return {
+    projects,
+    run: () => spawnSync(process.execPath, [resolve(packageDir, owner), ...fixtureArgs], {
+      cwd: fixtureDir, encoding: 'utf8',
+      env: { ...process.env, CI: 'true', HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: '1',
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require=${JSON.stringify(preload)}` },
+    }),
+    nativeCalls: () => readFileSync(spawnLog, 'utf8').trim().split('\n').map(JSON.parse),
+  };
+}
+
+function assertOneCheckerInvocations(nativeCalls, projects) {
+  assert.deepEqual(nativeCalls.map((args) => args[args.indexOf('--project') + 1]), projects);
+  for (const args of nativeCalls) {
+    const checkerOption = args.indexOf('--singleThreaded');
+    assert.equal(args.filter((arg) => arg === '--singleThreaded').length, 1,
+      'each host project must execute the native compiler with one checker');
+    assert.ok(checkerOption >= 0 && args[checkerOption + 1] !== 'false',
+      'each host project must execute the native compiler with one checker');
+  }
+}
+
 function assertProjectCoverage(packageDir, sourceNames) {
   const original = readProject('tsconfig.json', packageDir);
   const sources = sourceNames.map((name) => readProject(name, packageDir));
@@ -178,7 +228,19 @@ for (const name of ['foundation', 'core']) {
 }
 
 test('CLI projects preserve every original root and compiler strictness', () => {
-  assertProjectCoverage(resolve('apps/cli'), ['tsconfig.source.json']);
+  const packageDir = resolve('apps/cli');
+  assertProjectCoverage(packageDir, ['tsconfig.source.json']);
+  const original = readProject('tsconfig.json', packageDir);
+  const source = readProject('tsconfig.source.json', packageDir);
+  const tests = readProject('tsconfig.test.json', packageDir);
+  const isTest = (path) => /\.(?:test|spec)\.tsx?$/u.test(path)
+    || path.replaceAll('\\', '/').includes('/__tests__/');
+  assert.equal(original.fileNames.some(isTest), true, 'inherited CLI project must contain test roots');
+  assert.equal(source.fileNames.some(isTest), false, 'CLI source must not declaration-emit test roots');
+  for (const file of original.fileNames.filter(isTest)) {
+    assert.ok(tests.fileNames.includes(file), `CLI test project lost ${file}`);
+  }
+  assert.notEqual(tests.options.tsBuildInfoFile, source.options.tsBuildInfoFile);
 });
 
 function assertNativeProjectBoundary(packageDir) {
@@ -240,17 +302,22 @@ function assertNativeProjectBoundary(packageDir) {
     assert.ok(!files.includes(join(fixtureDir, 'external/value.ts')));
     assert.ok(!files.includes(join(fixtureDir, 'node_modules/fixture-native-package/src/index.ts')),
       'authored dependency TypeScript must not be checked in both projects');
+    const publicCompiler = publicFiniteCompiler(packageDir, fixtureDir, write, invocation);
+    assert.deepEqual(publicCompiler.projects, ['tsconfig.source.json', 'tsconfig.test.json']);
+    write('sources/model.ts', 'export interface Model { label: string }; export const model: Model = { label: 42 };\n');
+    write('sources/model.test.ts', "import { model, type Model } from '@/model'; const valid: Model = { label: 'ok', enabled: true }; const label: number = model.label;\n");
+    const publicRed = publicCompiler.run();
+    assert.notEqual(publicRed.status, 0);
+    assert.match(publicRed.stdout + publicRed.stderr, /model\.ts.*TS2322/u);
+    assert.match(publicRed.stdout + publicRed.stderr, /model\.test\.ts.*TS2322/u);
+    write('sources/model.ts', "import { label } from '../external/value'; import flags from '../external/value.json'; import { dependencyLabel } from 'fixture-native-package'; export interface Model { label: string }; export const model: Model = { label }; export const enabled = flags.enabled; export const dependency = dependencyLabel;\n");
+    write('sources/model.test.ts', "import { model, type Model } from '@/model'; import { dependencyLabel } from 'fixture-native-package'; const valid: Model = { label: 'ok', enabled: true }; const label: string = model.label; const dependency: string = dependencyLabel;\n");
+    write('compiler-spawns.jsonl', '');
+    const measured = publicCompiler.run();
+    assert.equal(measured.status, 0, measured.stdout + measured.stderr);
+    assertOneCheckerInvocations(publicCompiler.nativeCalls(),
+      publicCompiler.projects.map((project) => join(fixtureDir, project)));
     if (process.platform === 'linux') {
-      const measured = spawnSync(process.execPath, [
-        resolve('scripts/workspaces/runTypeScriptCli.mjs'),
-        '--project', join(fixtureDir, 'tsconfig.source.json'),
-        '--project', join(fixtureDir, 'tsconfig.test.json'),
-        '--pretty', 'false',
-      ], {
-        cwd: fixtureDir, encoding: 'utf8',
-        env: { ...process.env, CI: 'true', HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: '1' },
-      });
-      assert.equal(measured.status, 0, measured.stdout + measured.stderr);
       const reports = measured.stderr.split('\n').filter((line) => line.startsWith('[typescript] {'))
         .map((line) => JSON.parse(line.slice('[typescript] '.length)));
       assert.deepEqual(reports.map(({ project, status, signal }) => ({ project, status, signal })), [
@@ -325,59 +392,21 @@ test('native UI projects redirect direct and transitive imports across the compl
     assert.notEqual(testRed.status, 0);
     assert.match(testRed.stdout + testRed.stderr, /entry\.test\.ts.*TS2322/u);
     write('entry.test.ts', "import { value } from './entry'; import { left } from './left'; import { label } from './foundation'; const result: string = value + left() + label;\n");
-    const uiPackage = JSON.parse(readFileSync(join(uiDir, 'package.json'), 'utf8'));
-    const [command, owner, ...compilerArgs] = uiPackage.scripts['typecheck:source:finite'].trim().split(/\s+/u);
-    assert.equal(command, 'node');
-    assert.equal(resolve(uiDir, owner), resolve('scripts/workspaces/runTypeScriptCli.mjs'));
-    const projects = [];
-    const fixtureArgs = compilerArgs.map((arg, index) => {
-      if (compilerArgs[index - 1] !== '--project') return arg;
-      projects.push(arg);
-      return join(fixtureDir, arg);
-    });
-    assert.deepEqual(projects, names.map((name) => `tsconfig.${name}.json`));
-    const spawnLog = join(fixtureDir, 'compiler-spawns.jsonl');
-    const preload = join(fixtureDir, 'record-compiler-spawns.cjs');
-    // Observe only the genuine OS spawn boundary; execute the native compiler
-    // unchanged, including the measured Linux adapter's compiler invocation.
-    write('record-compiler-spawns.cjs', `
-      const cp = require('node:child_process');
-      const spawn = cp.spawn;
-      cp.spawn = function(command, args, options) {
-        const compilerArgs = command === process.execPath && args[0] === ${JSON.stringify(invocation.argsPrefix[0])}
-          ? args.slice(1)
-          : command === 'python3' && args[3] === ${JSON.stringify(invocation.argsPrefix[0])}
-            ? args.slice(4) : null;
-        if (compilerArgs) require('node:fs').appendFileSync(${JSON.stringify(spawnLog)}, JSON.stringify(compilerArgs) + '\\n');
-        return spawn(command, args, options);
-      };
-      require('node:module').syncBuiltinESMExports();
-    `);
-    const runPublicCommand = () => spawnSync(process.execPath, [resolve(uiDir, owner), ...fixtureArgs], {
-      cwd: fixtureDir, encoding: 'utf8',
-      env: { ...process.env, CI: 'true', HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: '1',
-        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require=${JSON.stringify(preload)}` },
-    });
+    const publicCompiler = publicFiniteCompiler(uiDir, fixtureDir, write, invocation);
+    assert.deepEqual(publicCompiler.projects, names.map((name) => `tsconfig.${name}.json`));
     write('right.ts', "import { left } from './left'; export const right: number = 'bad'; export const invoke = () => left();\n");
     write('entry.test.ts', "import { value } from './entry'; import { left } from './left'; import { label } from './foundation'; const result: number = value + left() + label;\n");
-    const publicRed = runPublicCommand();
+    const publicRed = publicCompiler.run();
     assert.notEqual(publicRed.status, 0);
     assert.match(publicRed.stdout + publicRed.stderr, /right\.ts.*TS2322/u);
     assert.match(publicRed.stdout + publicRed.stderr, /entry\.test\.ts.*TS2322/u);
     write('right.ts', "import { left } from './left'; export const right: string = 'ok'; export const invoke = () => left();\n");
     write('entry.test.ts', "import { value } from './entry'; import { left } from './left'; import { label } from './foundation'; const result: string = value + left() + label;\n");
     write('compiler-spawns.jsonl', '');
-    const serial = runPublicCommand();
+    const serial = publicCompiler.run();
     assert.equal(serial.status, 0, serial.stdout + serial.stderr);
-    const nativeCalls = readFileSync(spawnLog, 'utf8').trim().split('\n').map(JSON.parse);
-    assert.deepEqual(nativeCalls.map((args) => args[args.indexOf('--project') + 1]),
-      projects.map((project) => join(fixtureDir, project)));
-    for (const args of nativeCalls) {
-      const checkerOption = args.indexOf('--singleThreaded');
-      assert.equal(args.filter((arg) => arg === '--singleThreaded').length, 1);
-      assert.ok(checkerOption >= 0 && args[checkerOption + 1] !== 'false',
-        'each UI project must execute the native compiler with one checker');
-    }
+    assertOneCheckerInvocations(publicCompiler.nativeCalls(),
+      publicCompiler.projects.map((project) => join(fixtureDir, project)));
     const testGreen = run('test', ['--listFiles']);
     assert.equal(testGreen.status, 0, testGreen.stdout + testGreen.stderr);
     const inputs = testGreen.stdout.split(/\r?\n/u).map((file) => resolve(file.trim()));
