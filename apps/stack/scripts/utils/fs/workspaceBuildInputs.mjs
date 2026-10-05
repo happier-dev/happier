@@ -14,6 +14,7 @@ export function readWorkspaceBuildInputs(packageDir, {
   readDir = readdirSync,
   stat = lstatSync,
   includeShippedFiles = false,
+  includeDirectories = false,
   excludeGeneratedPluginManifest = false,
   excludeGeneratedPluginArtifacts = false,
 } = {}) {
@@ -43,6 +44,7 @@ export function readWorkspaceBuildInputs(packageDir, {
       return;
     }
     if (entryStat.isDirectory()) {
+      if (includeDirectories) inputs.add(relativePath);
       for (const childName of readDir(path)) visit(join(path, childName), { ignoreTests });
       return;
     }
@@ -103,11 +105,12 @@ export function readWorkspaceBuildInputs(packageDir, {
 export function resolveWorkspaceBuildInputWatchPaths(packageDir, {
   existsSyncImpl = existsSync,
   excludeGeneratedPluginManifest = true,
+  includeShippedFiles = false,
 } = {}) {
   const membershipRoots = ['src', 'sources', 'scripts', '.happier-plugin/ui/hosted-web'];
   return [...new Set([
     ...membershipRoots.map((path) => join(packageDir, path)),
-    ...readWorkspaceBuildInputs(packageDir, { excludeGeneratedPluginManifest })
+    ...readWorkspaceBuildInputs(packageDir, { excludeGeneratedPluginManifest, includeShippedFiles, includeDirectories: includeShippedFiles })
       .filter((path) => !membershipRoots.some((root) => path.startsWith(`${root}/`)))
       .map((path) => join(packageDir, path)),
   ])].filter((path) => existsSyncImpl(path));

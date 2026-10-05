@@ -21,6 +21,7 @@ export function collectHappyCliRuntimePackageDirs({
 export function resolveHappyCliRuntimeInputGroups({
   cliDir,
   existsSyncImpl = existsSync,
+  includeShippedFiles = false,
 } = {}) {
   const lexicalCliDir = resolve(cliDir);
   let resolvedCliDir = lexicalCliDir;
@@ -63,7 +64,7 @@ export function resolveHappyCliRuntimeInputGroups({
       // descriptors are merged; a CLI-only package remains daemon-only.
       id: `shared:${id}`,
       target: 'daemon',
-      paths: resolveWorkspaceBuildInputWatchPaths(dir, { existsSyncImpl }),
+      paths: resolveWorkspaceBuildInputWatchPaths(dir, { existsSyncImpl, includeShippedFiles }),
     })),
   ];
 
@@ -78,12 +79,13 @@ export function resolveHappyCliRuntimeInputPaths(options) {
 
 export async function readHappyCliRuntimeInputFreshness(cliDir, {
   identityRepoDir = process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR,
+  includeShippedFiles = false,
 } = {}) {
   const repoRoot = resolve(cliDir, '..', '..');
   let newestMtimeNs = null;
   const fingerprint = createHash('sha256');
   const visit = async (path) => {
-    if (isDevRuntimeReloadIgnoredPath(path)) return;
+    if (!includeShippedFiles && isDevRuntimeReloadIgnoredPath(path)) return;
     let fileStat;
     try {
       fileStat = await lstat(path, { bigint: true });
@@ -130,7 +132,7 @@ export async function readHappyCliRuntimeInputFreshness(cliDir, {
   // null result as "must be a non-empty fingerprint", so that error has to reach
   // them. Only the traversal below tolerates failure, because a file removed
   // mid-walk genuinely means the inputs are not currently fingerprintable.
-  const inputPaths = resolveHappyCliRuntimeInputPaths({ cliDir });
+  const inputPaths = resolveHappyCliRuntimeInputPaths({ cliDir, includeShippedFiles });
   try {
     for (const path of inputPaths) await visit(path);
   } catch {

@@ -29,13 +29,12 @@ function sourceFilePath(path) {
 async function captureBuildSource({ rootDir, selection, env, directory }) {
   const { collectBuildSourceMetadata } = await import('./collect_build_source_metadata.mjs');
   const { collectRuntimeComponentSourceFingerprints, resolveRuntimeComponentSourcePaths } = await import('./runtime_artifact_identity.mjs');
-  const { isDevRuntimeReloadIgnoredPath } = await import('../utils/dev/watchSignature.mjs');
   const { runCapture } = await import('../utils/proc/proc.mjs');
   const { runRuntimeArchiveCommand } = await import('../utils/dev_targets/runtime_artifact_transfer.mjs');
   const { withSingleTrailingBuildPass, BuildInputDriftError } = await import('../../../../scripts/workspaces/buildInputConvergence.mjs');
   return await withSingleTrailingBuildPass({ run: async () => {
     const sourceMetadata = await collectBuildSourceMetadata({ rootDir, env });
-    const expectedInputs = await collectRuntimeComponentSourceFingerprints({ selection, sourceMetadata });
+    const expectedInputs = await collectRuntimeComponentSourceFingerprints({ selection, sourceMetadata, includeRuntimeSupportInputs: true });
     const listed = await runCapture('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: sourceMetadata.repoDir });
     const sourcePaths = new Set();
     for (const raw of new Set(listed.split('\0').filter(Boolean))) {
@@ -46,21 +45,20 @@ async function captureBuildSource({ rootDir, selection, env, directory }) {
     // Git excludes some generated compiler inputs. Capture the canonical
     // component input closure too, including empty-directory membership.
     const visitInput = async absolute => {
-      if (isDevRuntimeReloadIgnoredPath(absolute)) return;
       const info = await lstat(absolute).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
       if (!info) return;
       sourcePaths.add(sourceFilePath(relative(sourceMetadata.repoDir, absolute)));
       if (info.isDirectory()) for (const name of await readdir(absolute)) await visitInput(join(absolute, name));
     };
     for (const component of ['web', 'server', 'daemon']) if (selection.components[component]) {
-      for (const path of resolveRuntimeComponentSourcePaths({ component, sourceMetadata })) await visitInput(path);
+      for (const path of resolveRuntimeComponentSourcePaths({ component, sourceMetadata, includeRuntimeSupportInputs: true })) await visitInput(path);
     }
     const files = [...sourcePaths].sort();
     const listPath = join(directory, 'source-files');
     await writeFile(listPath, files.join('\0') + '\0');
     const archivePath = join(directory, 'source.tar');
     await runRuntimeArchiveCommand(['-cf', archivePath, '--no-recursion', '--null', '-T', listPath], { cwd: sourceMetadata.repoDir, env });
-    const after = await collectRuntimeComponentSourceFingerprints({ selection, sourceMetadata });
+    const after = await collectRuntimeComponentSourceFingerprints({ selection, sourceMetadata, includeRuntimeSupportInputs: true });
     if (JSON.stringify(after) !== JSON.stringify(expectedInputs)) throw new BuildInputDriftError('[build] consumed inputs changed during source transfer capture.');
     return { sourceMetadata, expectedInputs, files, archivePath };
   } });
@@ -170,7 +168,7 @@ async function executeWorkerRequest(requestPath) {
   // subsequent build process loads and executes the captured checkout graph.
   const { collectRuntimeComponentSourceFingerprints } = await import('./runtime_artifact_identity.mjs');
   const extractedInputs = await collectRuntimeComponentSourceFingerprints({
-    selection: request.selection, sourceMetadata: { ...request.sourceMetadata, repoDir }, identityRepoDir: request.sourceMetadata.repoDir,
+    selection: request.selection, sourceMetadata: { ...request.sourceMetadata, repoDir }, identityRepoDir: request.sourceMetadata.repoDir, includeRuntimeSupportInputs: true,
   });
   if (JSON.stringify(extractedInputs) !== JSON.stringify(request.expectedInputs)) throw new Error('[build] captured worker inputs differ from the admitted producer inputs.');
   // Load the captured owner, rather than the moving mirror's module graph.

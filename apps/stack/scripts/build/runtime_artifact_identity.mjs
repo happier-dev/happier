@@ -48,7 +48,7 @@ function readInternalWorkspaceDependencyNames(packageJsonPath) {
     .sort((left, right) => left.localeCompare(right));
 }
 
-function collectWorkspaceSourcePaths({ repoDir, hostDir, existsSyncImpl = existsSync }) {
+function collectWorkspaceSourcePaths({ repoDir, hostDir, existsSyncImpl = existsSync, includeShippedFiles = false }) {
   const dependencyNames = readInternalWorkspaceDependencyNames(join(hostDir, 'package.json'));
   const closure = resolveInternalWorkspacePackageNameClosure({
     repoRoot: repoDir,
@@ -56,7 +56,7 @@ function collectWorkspaceSourcePaths({ repoDir, hostDir, existsSyncImpl = exists
   });
   return closure.flatMap((packageName) => {
     const packageDir = resolveWorkspaceSourceDir({ repoRoot: repoDir, packageName });
-    return resolveWorkspaceBuildInputWatchPaths(packageDir, { existsSyncImpl });
+    return resolveWorkspaceBuildInputWatchPaths(packageDir, { existsSyncImpl, includeShippedFiles });
   });
 }
 
@@ -64,6 +64,7 @@ export function resolveRuntimeComponentSourcePaths({
   component,
   sourceMetadata,
   existsSyncImpl = existsSync,
+  includeRuntimeSupportInputs = false,
 }) {
   const normalizedComponent = String(component ?? '').trim();
   if (!RUNTIME_COMPONENTS.includes(normalizedComponent)) {
@@ -76,6 +77,7 @@ export function resolveRuntimeComponentSourcePaths({
     return resolveHappyCliRuntimeInputPaths({
       cliDir: join(repoDir, 'apps', 'cli'),
       existsSyncImpl,
+      includeShippedFiles: includeRuntimeSupportInputs,
     });
   }
 
@@ -92,6 +94,7 @@ export function resolveRuntimeComponentSourcePaths({
         join(hostDir, 'patches'),
         join(hostDir, 'scripts', 'generateBundledPluginUiArtifacts.mjs'),
         ...resolveBundledPluginGeneratorInputPaths({ repoDir }),
+        ...(includeRuntimeSupportInputs ? resolveHappyCliRuntimeInputPaths({ cliDir: join(repoDir, 'apps/cli'), existsSyncImpl, includeShippedFiles: true }) : []),
         join(repoDir, 'scripts', 'workspaces'),
         join(repoDir, 'packages', 'cli-common', 'bundledPluginPublicationPolicy.mjs'),
         join(repoDir, 'packages', 'cli-common', 'workspaceBundleLock.mjs'),
@@ -110,12 +113,12 @@ export function resolveRuntimeComponentSourcePaths({
       ];
   return [...new Set([
     ...ownPaths.filter((path) => existsSyncImpl(path)),
-    ...collectWorkspaceSourcePaths({ repoDir, hostDir, existsSyncImpl }),
+    ...collectWorkspaceSourcePaths({ repoDir, hostDir, existsSyncImpl, includeShippedFiles: includeRuntimeSupportInputs }),
   ])].sort((left, right) => left.localeCompare(right));
 }
 
-async function readSourcePathFingerprint({ component, paths, repoDir, identityRepoDir }) {
-  let signature = await readDevReloadWatchChangeSignatureAsync(paths);
+async function readSourcePathFingerprint({ component, paths, repoDir, identityRepoDir, includeRuntimeSupportInputs }) {
+  let signature = await readDevReloadWatchChangeSignatureAsync(paths, includeRuntimeSupportInputs ? { ignorePath: null } : undefined);
   if (signature && identityRepoDir) signature = signature.split(`${repoDir}/`).join(`${identityRepoDir}/`);
   if (!signature) {
     throw new Error(`[build] ${component} runtime artifact identity has no readable source inputs.`);
@@ -135,6 +138,7 @@ export async function readRuntimeComponentSourceFingerprint({
   component,
   sourceMetadata,
   identityRepoDir = process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR,
+  includeRuntimeSupportInputs = false,
   readDaemonRuntimeInputFreshnessImpl = readHappyCliRuntimeInputFreshness,
   readSourcePathFingerprintImpl = readSourcePathFingerprint,
 }) {
@@ -146,20 +150,22 @@ export async function readRuntimeComponentSourceFingerprint({
   if (!repoDir) throw new Error('[build] runtime artifact identity requires a repository directory.');
 
   if (normalizedComponent === 'daemon') {
-    const freshness = await readDaemonRuntimeInputFreshnessImpl(join(repoDir, 'apps', 'cli'), { identityRepoDir });
+    const freshness = await readDaemonRuntimeInputFreshnessImpl(join(repoDir, 'apps', 'cli'), { identityRepoDir, includeShippedFiles: includeRuntimeSupportInputs });
     return normalizeFingerprint(freshness?.fingerprint, 'daemon runtime source identity');
   }
   const paths = resolveRuntimeComponentSourcePaths({
     component: normalizedComponent,
     sourceMetadata,
+    includeRuntimeSupportInputs,
   });
-  return await readSourcePathFingerprintImpl({ component: normalizedComponent, paths, repoDir, identityRepoDir });
+  return await readSourcePathFingerprintImpl({ component: normalizedComponent, paths, repoDir, identityRepoDir, includeRuntimeSupportInputs });
 }
 
 export async function collectRuntimeComponentSourceFingerprints({
   selection,
   sourceMetadata,
   identityRepoDir = process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR,
+  includeRuntimeSupportInputs = false,
   readRuntimeComponentSourceFingerprintImpl = readRuntimeComponentSourceFingerprint,
 }) {
   const fingerprints = {};
@@ -169,6 +175,7 @@ export async function collectRuntimeComponentSourceFingerprints({
       component,
       sourceMetadata,
       identityRepoDir,
+      includeRuntimeSupportInputs,
     });
   }
   return fingerprints;
