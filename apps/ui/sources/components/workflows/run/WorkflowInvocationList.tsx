@@ -137,6 +137,8 @@ export type WorkflowInvocationListProps = Readonly<{
     loadMoreFailed?: boolean;
     loaded: boolean;
     resolveInvocationLabel?: (invocation: WorkflowRunInvocationIndexV1) => string | null;
+    /** The authored block kind for a row, so a held Wait-for-you step reads its own word. */
+    resolveInvocationBlockKind?: (invocation: WorkflowRunInvocationIndexV1) => string | null;
     ListHeaderComponent?: React.ReactElement | null;
     ListFooterComponent?: React.ReactElement | null;
     contentContainerStyle?: StyleProp<ViewStyle>;
@@ -150,7 +152,8 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
     const keyExtractor = React.useCallback((invocation: WorkflowRunInvocationIndexV1) => invocation.id, []);
     const renderInvocation = React.useCallback(({ item: invocation }: { item: WorkflowRunInvocationIndexV1 }) => {
         const selected = props.selectedInvocationId === invocation.id;
-        const stateLabel = describeWorkflowInvocationLifecycle(invocation.lifecycle).label;
+        const blockKind = props.resolveInvocationBlockKind?.(invocation) ?? null;
+        const stateLabel = describeWorkflowInvocationLifecycle(invocation.lifecycle, { blockKind }).label;
         const attempt = describeWorkflowInvocationAttempt(invocation.attempt);
         const displayLabel = props.resolveInvocationLabel?.(invocation) ?? t('workflows.contentUnavailable');
         return (
@@ -183,11 +186,12 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                     <WorkflowLifecycleStatus
                         testID={`${testIDPrefix}-state-${invocation.id}`}
                         lifecycle={invocation.lifecycle}
+                        blockKind={blockKind}
                     />
                 </View>
             </Pressable>
         );
-    }, [props.onSelectInvocation, props.resolveInvocationLabel, props.selectedInvocationId, testIDPrefix]);
+    }, [props.onSelectInvocation, props.resolveInvocationBlockKind, props.resolveInvocationLabel, props.selectedInvocationId, testIDPrefix]);
 
     const pagingFooter = props.onLoadMore === undefined ? null : (
         <View style={styles.footer}>

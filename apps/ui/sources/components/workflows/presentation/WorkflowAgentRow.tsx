@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/Text';
+import { ToolFindText, useToolFindState } from '@/components/tools/renderers/core/ToolFindText';
 import { t } from '@/text';
 import type { SessionWorkflowAgentStatusV1 } from '@happier-dev/protocol';
 import { formatTokenCount } from '@/utils/format/usageNumbers';
@@ -11,6 +11,8 @@ import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript
 import { WorkflowAgentDetail } from './WorkflowAgentDetail';
 import { WorkflowStatusIcon } from './workflowStatusIcon';
 import { Icon } from '@/components/ui/icons/Icon';
+import { normalizeResultPreview } from './resultPreview';
+import { toolTextBlock } from '@/components/tools/renderers/core/toolDisplayTextTypes';
 
 /**
  * One workflow agent row (UIW3/UIW4). Props are PRIMITIVE so this memoized row re-renders only when
@@ -28,6 +30,8 @@ export type WorkflowAgentRowProps = Readonly<{
     resultPreview?: string;
     summary?: string;
     testID?: string;
+    messageId?: string;
+    findBlockPrefix?: string;
 }>;
 
 function formatDuration(seconds: number): string {
@@ -39,17 +43,7 @@ function formatDuration(seconds: number): string {
     return `${Math.round(seconds)}s`;
 }
 
-export const WorkflowAgentRow = React.memo<WorkflowAgentRowProps>((props) => {
-    const { theme } = useUnistyles();
-    const [expanded, setExpanded] = React.useState(false);
-    const rowLayoutMutation = useTranscriptRowLayoutMutation();
-    const toggleExpanded = React.useCallback(() => {
-        rowLayoutMutation({
-            reason: expanded ? 'collapse' : 'expand',
-            sourceId: `workflow-agent:${props.testID ?? props.title}`,
-        });
-        setExpanded(!expanded);
-    }, [expanded, props.testID, props.title, rowLayoutMutation]);
+function formatAgentMetrics(props: WorkflowAgentRowProps): string {
     const metricParts: string[] = [];
     if (props.model) metricParts.push(props.model);
     if (typeof props.tokensUsed === 'number' && props.tokensUsed > 0) {
@@ -61,10 +55,39 @@ export const WorkflowAgentRow = React.memo<WorkflowAgentRowProps>((props) => {
     if (typeof props.timeUsedSeconds === 'number' && props.timeUsedSeconds > 0) {
         metricParts.push(formatDuration(props.timeUsedSeconds));
     }
-    const metrics = metricParts.join(' · ');
+    return metricParts.join(' · ');
+}
+
+export function projectWorkflowAgentDisplayText(props: WorkflowAgentRowProps, prefix: string) {
+    const preview = props.resultPreview ?? props.summary;
+    const detail = normalizeResultPreview(props.summary ?? props.resultPreview ?? '', null).display;
+    return [
+        ...toolTextBlock(`${prefix}-title`, props.title),
+        ...toolTextBlock(`${prefix}-metrics`, formatAgentMetrics(props)),
+        ...toolTextBlock(`${prefix}-preview`, preview !== detail ? preview : null),
+        ...toolTextBlock(`${prefix}-detail`, detail),
+    ];
+}
+
+export const WorkflowAgentRow = React.memo<WorkflowAgentRowProps>((props) => {
+    const find = useToolFindState(props.messageId);
+    const prefix = props.findBlockPrefix ?? 'tool-workflow-agent';
+    const { theme } = useUnistyles();
+    const [expanded, setExpanded] = React.useState(false);
+    const rowLayoutMutation = useTranscriptRowLayoutMutation();
+    const toggleExpanded = React.useCallback(() => {
+        rowLayoutMutation({
+            reason: expanded ? 'collapse' : 'expand',
+            sourceId: `workflow-agent:${props.testID ?? props.title}`,
+        });
+        setExpanded(!expanded);
+    }, [expanded, props.testID, props.title, rowLayoutMutation]);
+    const metrics = formatAgentMetrics(props);
     const hasDetail = Boolean(props.summary || props.resultPreview);
     const collapsedPreview = props.resultPreview ?? props.summary;
     const expandedDetail = props.summary ?? props.resultPreview;
+    const isExpanded = expanded || find.active;
+    const showPreview = collapsedPreview && (!isExpanded || (find.active && collapsedPreview !== normalizeResultPreview(expandedDetail ?? '', null).display));
     const detailTestID = props.testID ? `${props.testID}-detail` : undefined;
     const content = (
         <View style={styles.mainRow}>
@@ -72,23 +95,17 @@ export const WorkflowAgentRow = React.memo<WorkflowAgentRowProps>((props) => {
                 <WorkflowStatusIcon status={props.status} size={14} />
             </View>
             <View style={styles.body}>
-                <Text style={styles.title} numberOfLines={1}>
-                    {props.title}
-                </Text>
+                <ToolFindText messageId={props.messageId} blockId={`${prefix}-title`} text={props.title} style={styles.title} numberOfLines={1} />
                 {metrics ? (
-                    <Text style={styles.metrics} numberOfLines={1}>
-                        {metrics}
-                    </Text>
+                    <ToolFindText messageId={props.messageId} blockId={`${prefix}-metrics`} text={metrics} style={styles.metrics} numberOfLines={1} />
                 ) : null}
-                {collapsedPreview && !expanded ? (
-                    <Text style={styles.preview} numberOfLines={1}>
-                        {collapsedPreview}
-                    </Text>
+                {showPreview ? (
+                    <ToolFindText messageId={props.messageId} blockId={`${prefix}-preview`} text={collapsedPreview} style={styles.preview} numberOfLines={1} />
                 ) : null}
             </View>
             {hasDetail ? (
                 <Icon
-                    name={expanded ? 'caret-up' : 'caret-down'}
+                    name={isExpanded ? 'caret-up' : 'caret-down'}
                     size={14}
                     color={theme.colors.text.secondary}
                 />
@@ -100,15 +117,15 @@ export const WorkflowAgentRow = React.memo<WorkflowAgentRowProps>((props) => {
         return (
             <Pressable
                 accessibilityRole="button"
-                accessibilityState={{ expanded }}
+                accessibilityState={{ expanded: isExpanded }}
                 onPress={toggleExpanded}
-                style={[styles.row, expanded ? styles.rowExpanded : null]}
+                style={[styles.row, isExpanded ? styles.rowExpanded : null]}
                 testID={props.testID}
                 hitSlop={6}
             >
                 {content}
-                {expanded && expandedDetail ? (
-                    <WorkflowAgentDetail text={expandedDetail} detailTestID={detailTestID} />
+                {isExpanded && expandedDetail ? (
+                    <WorkflowAgentDetail text={expandedDetail} detailTestID={detailTestID} messageId={props.messageId} findBlockId={`${prefix}-detail`} />
                 ) : null}
             </Pressable>
         );

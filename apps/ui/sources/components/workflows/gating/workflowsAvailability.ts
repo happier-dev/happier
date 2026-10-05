@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
+import { useFeatureDecision, type FeatureDecisionScopeParams } from '@/hooks/server/useFeatureDecision';
 
 /**
  * The one canonical Workflows availability decision.
@@ -24,8 +24,8 @@ export type WorkflowsAvailability = Readonly<{
     resolving: boolean;
 }>;
 
-export function useWorkflowsAvailability(): WorkflowsAvailability {
-    const decision = useFeatureDecision('workflows', { scopeKind: 'runtime' });
+export function useWorkflowsAvailability(scope?: FeatureDecisionScopeParams): WorkflowsAvailability {
+    const decision = useFeatureDecision('workflows', scope ?? { scopeKind: 'runtime' });
     return React.useMemo(() => ({
         available: decision?.state === 'enabled',
         resolving: decision === null || decision.state === 'unknown',

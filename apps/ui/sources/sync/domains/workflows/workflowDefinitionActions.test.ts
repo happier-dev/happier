@@ -38,6 +38,10 @@ describe('workflow definition Action client', () => {
             definitions: [{
                 kind: 'workflow-definition.v1',
                 definitionId: 'definition-1',
+                stepCount: 1,
+                contentStatus: 'available',
+                nextRunAt: null,
+                triggers: [],
                 revision,
                 metadata,
             }],
@@ -56,18 +60,19 @@ describe('workflow definition Action client', () => {
 
     it('reads one saved definition at its exact Artifact revision', async () => {
         const { getWorkflowDefinition } = await import('./workflowDefinitionActions');
-        succeedWith({ definitionId: 'definition-1', revision, definition, metadata });
+        succeedWith({ definitionId: 'definition-1', revision, definition, metadata, access: 'view' });
 
         const read = await getWorkflowDefinition({ definitionId: 'definition-1' });
 
         expect(executeMock.mock.calls[0]?.[0]).toBe('workflow.definition.get');
         expect(executeMock.mock.calls[0]?.[1]).toEqual({ definitionId: 'definition-1' });
         expect(read.revision).toEqual(revision);
+        expect(read.access).toBe('view');
     });
 
     it('creates a definition through the canonical create Action', async () => {
         const { createWorkflowDefinition } = await import('./workflowDefinitionActions');
-        succeedWith({ definitionId: 'definition-1', revision, definition, metadata });
+        succeedWith({ definitionId: 'definition-1', revision, definition, metadata, access: 'owner' });
 
         const created = await createWorkflowDefinition({
             definitionId: 'definition-1',
@@ -84,6 +89,7 @@ describe('workflow definition Action client', () => {
         succeedWith({
             definitionId: 'definition-1',
             revision: { headerVersion: 4, bodyVersion: 8 },
+            access: 'edit',
             definition,
             metadata,
         });

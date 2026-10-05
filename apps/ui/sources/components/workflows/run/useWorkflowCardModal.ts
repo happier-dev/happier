@@ -24,11 +24,13 @@ export function useWorkflowCardModal<C extends CustomModalComponentType<any>>(pa
     props: Omit<React.ComponentProps<C>, keyof CustomModalInjectedProps> | null;
     identity?: string | null;
     title: string;
+    /** The card's one-line purpose under its title (07 S22's Create with an agent). */
+    subtitle?: string;
     testID: string;
     onRequestClose?: () => void;
     focusReturnRef?: FocusReturnRef;
 }>): void {
-    const { open, component, props, identity, title, testID, onRequestClose, focusReturnRef } = params;
+    const { open, component, props, identity, title, subtitle, testID, onRequestClose, focusReturnRef } = params;
     const modalRef = React.useRef<Readonly<{ id: string; identity: string | null | undefined }> | null>(null);
     // The closing intent belongs to the latest render, but the sheet is shown
     // once: reading it through a ref keeps a stale callback out of the modal
@@ -59,13 +61,14 @@ export function useWorkflowCardModal<C extends CustomModalComponentType<any>>(pa
             chrome: {
                 kind: 'card',
                 title,
+                ...(subtitle === undefined ? {} : { subtitle }),
                 testID,
                 bodyScroll: 'auto',
                 dimensions: { width: 520, maxHeightRatio: 0.92, size: 'md' },
             },
         });
         modalRef.current = { id, identity };
-    }, [component, focusReturnRef, identity, open, props, testID, title]);
+    }, [component, focusReturnRef, identity, open, props, subtitle, testID, title]);
 
     // A route change while the sheet is up must not leave it mounted.
     React.useEffect(() => () => {

@@ -8,6 +8,7 @@ import { t } from '@/text';
 import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 
 import { clampPreviewLines, normalizeResultPreview } from './resultPreview';
+import { ToolFindText, useToolFindState } from '@/components/tools/renderers/core/ToolFindText';
 
 /**
  * Text-labelled controls take the canonical platform target as a real minimum
@@ -20,6 +21,8 @@ const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 export type WorkflowAgentDetailProps = Readonly<{
     text: string;
     detailTestID?: string;
+    messageId?: string;
+    findBlockId?: string;
 }>;
 
 /**
@@ -31,20 +34,19 @@ export type WorkflowAgentDetailProps = Readonly<{
  * a long summary never floods the popover (U-20). No raw markdown/JSON source dumps.
  */
 export const WorkflowAgentDetail = React.memo<WorkflowAgentDetailProps>((props) => {
+    const find = useToolFindState(props.messageId);
     const [expanded, setExpanded] = React.useState(false);
     const rowLayoutMutation = useTranscriptRowLayoutMutation();
-    const normalized = React.useMemo(() => normalizeResultPreview(props.text), [props.text]);
+    const normalized = React.useMemo(() => normalizeResultPreview(props.text, find.active ? null : undefined), [props.text, find.active]);
     const clamped = React.useMemo(() => clampPreviewLines(normalized.display), [normalized.display]);
-    const body = expanded ? normalized.display : clamped.text;
+    const body = expanded || find.active ? normalized.display : clamped.text;
     const bodyTestID = props.detailTestID ? `${props.detailTestID}-body` : undefined;
     const toggleTestID = props.detailTestID ? `${props.detailTestID}-show-more` : undefined;
 
     return (
         <View style={styles.container} testID={props.detailTestID}>
-            <Text style={[styles.text, normalized.kind === 'json' ? styles.mono : null]} testID={bodyTestID}>
-                {body}
-            </Text>
-            {clamped.clamped ? (
+            <ToolFindText messageId={props.messageId} blockId={props.findBlockId ?? 'tool-workflow-detail'} text={body} style={[styles.text, normalized.kind === 'json' ? styles.mono : null]} testID={bodyTestID} />
+            {clamped.clamped && !find.active ? (
                 <Pressable
                     accessibilityRole="button"
                     onPress={() => {

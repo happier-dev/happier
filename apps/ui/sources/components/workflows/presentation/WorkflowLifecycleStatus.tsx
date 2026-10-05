@@ -44,12 +44,14 @@ function WorkflowStatusMarker(props: Readonly<{
 
 export function WorkflowLifecycleStatus(props: Readonly<{
     lifecycle: WorkflowInvocationLifecycleV1;
+    /** The authored block's kind, when known, so a held Wait-for-you step reads its own word. */
+    blockKind?: string | null;
     chrome?: 'pill' | 'plain';
     testID?: string;
     accessibilityLabel?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const presentation = describeWorkflowInvocationLifecycle(props.lifecycle);
+    const presentation = describeWorkflowInvocationLifecycle(props.lifecycle, { blockKind: props.blockKind });
     return (
         <StatusPill
             {...(props.testID === undefined ? {} : { testID: props.testID })}

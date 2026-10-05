@@ -1,14 +1,20 @@
 import {
     type ActionExecutorContext,
+    WorkflowInvocationCompleteReviewRequestV1Schema,
+    WorkflowInvocationCompleteReviewResultV1Schema,
     WorkflowInvocationGetResultV1Schema,
     WorkflowInvocationListRequestV1Schema,
     WorkflowInvocationListResultV1Schema,
+    WorkflowInvocationPublishDraftRequestV1Schema,
+    WorkflowInvocationPublishDraftResultV1Schema,
     WorkflowInvocationRetryResultV1Schema,
     WorkflowRunControlResultV1Schema,
     WorkflowRunDeleteResultV1Schema,
     WorkflowRunGetResultV1Schema,
     type ActionId,
+    type WorkflowInvocationCompleteReviewRequestV1,
     type WorkflowInvocationLifecycleV1,
+    type WorkflowInvocationPublishDraftRequestV1,
     type WorkflowInvocationRetryInputV1,
     type WorkflowResumeInputV1,
 } from '@happier-dev/protocol';
@@ -109,6 +115,20 @@ export function createWorkflowRunDetailActions(dependencies: Readonly<{
             call('workflow.run.cancel', input, (value) => WorkflowRunControlResultV1Schema.parse(value), signal),
         retryInvocation: (input: WorkflowInvocationRetryInputV1, signal?: AbortSignal) =>
             call('workflow.run.invocations.retry', input, (value) => WorkflowInvocationRetryResultV1Schema.parse(value), signal),
+        completeReview: (input: WorkflowInvocationCompleteReviewRequestV1, signal?: AbortSignal) =>
+            call(
+                'workflow.run.invocations.complete_review',
+                WorkflowInvocationCompleteReviewRequestV1Schema.parse(input),
+                (value) => WorkflowInvocationCompleteReviewResultV1Schema.parse(value),
+                signal,
+            ),
+        publishDraft: (input: WorkflowInvocationPublishDraftRequestV1, signal?: AbortSignal) =>
+            call(
+                'workflow.run.invocations.publish_draft',
+                WorkflowInvocationPublishDraftRequestV1Schema.parse(input),
+                (value) => WorkflowInvocationPublishDraftResultV1Schema.parse(value),
+                signal,
+            ),
         deleteRun: (input: Readonly<{ runId: string; expectedRevision: number }>, signal?: AbortSignal) =>
             call('workflow.run.delete', input, (value) => WorkflowRunDeleteResultV1Schema.parse(value), signal),
     } as const;
