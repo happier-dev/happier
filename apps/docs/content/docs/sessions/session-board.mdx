@@ -56,6 +56,44 @@ record envelopes. E2EE Sessions use the Session's existing data key and remain
 locked when that key is unavailable; Happier never interprets failed E2EE data
 as plaintext.
 
+## Configured widgets in development
+
+The 0.3 development Gallery supports independently configured copies. **Set
+up** appears when inputs are missing or ambiguous, with inputs before the
+preview; a fully bound choice can be added directly. **Edit inputs** changes
+that copy. A widget can follow context or pin a different Session, whose own
+access and machine serve the read. An unavailable or revoked pin asks for
+repair rather than switching to the Session you are viewing.
+
+Reusable Account definitions appear under **Your widgets**. Editing a
+definition affects its references; **Duplicate** makes independent content.
+**Save as your widget** copies admitted Session content into that library and
+keeps the original Board item. Adding a private definition to a shared Board
+copies the admitted definition into shared content rather than granting access
+to its private Account document. This publication uses the shared Board's
+approval policy; pending approval does not mean the item has been saved.
+
+Credentialed shared widgets use each viewer's own existing Connected Account
+purpose selection, qualified to the declared Resource consumer. A missing
+connection gives that viewer a Connect state. There is no per-copy viewer
+override; the editor's connection is never a substitute for the viewer's
+selection. Pinned Connected Account references are allowed only in personal
+widgets, not shared Board content. Changing the existing purpose selection can
+affect other viewer bindings using that same purpose; it is not an instance-only
+connection setting.
+
+**Post a snapshot** previews and confirms fixed output with its as-of time and
+provenance. It publishes exactly that approved inert preview as a normal shared
+Board item, with no live Resource, credential binding or executable control and
+no new read after approval. Later source or definition changes do not change
+the snapshot. The normal Session audience, editor rights and approval policy
+still apply.
+
+Refresh, a sleeping machine or a failed read can retain authorized last-known
+content with a freshness notice. Losing the read's identity or access removes
+private prior output. These are development-source behaviors; package and
+loaded-platform validation are still being completed.
+
 ## When the agent puts something on the Board
 
 When an agent creates or updates a Board item through a Board Action, the

@@ -13,6 +13,11 @@ It lets you mix and match:
 
 Open **Settings → Voice → Voice conversations → Local voice** to configure it.
 
+The pipeline and settings layout described here target 0.3 development source.
+Conversation controls require the Voice feature; a dedicated Voice agent also needs
+the Voice agent feature. Dictation has independent settings and remains available
+with the conversation service Off. Opening these pages does not start recording.
+
 ## Where "local" actually runs
 
 Local voice is named for how you assemble it, not for a promise that audio never leaves
@@ -87,25 +92,31 @@ Use this when you want the voice layer to:
 
 This mode is useful when you want voice to feel like a colleague instead of a dictation layer.
 
-## Voice agent backend
+## Voice agent runtime
 
-In local voice agent mode, **voice agent backend** controls which runtime actually runs the agent:
+In the current development pipeline, a Voice agent runs through Happier's daemon on
+the selected Voice computer. Choose an Agent and its model configuration through the
+same Agent/Provider selection used for sessions. A configured model provider is a
+model source for that Agent, not a second Voice-owned chat-completions runtime.
 
-- **Daemon voice agent**: uses Happier’s daemon-backed voice agent runtime
-- **OpenAI-compatible voice agent**: calls your configured chat-completions endpoint directly
-
-Use the daemon backend when you want the tightest Happier integration, including the working-directory and teleport behavior described below.
+Older direct-chat settings are retained inputs to the existing compatibility path;
+they are not an additional backend choice in the current interface.
 
 ## Machine targeting
 
-For daemon-backed local voice agent mode, you can choose where the voice agent should run:
+For machine-backed speech and Voice agent work, you can choose where it runs:
 
-- **Auto**: pick a stable machine automatically
+- **Automatic**: pick a stable machine for this account
 - **Fixed machine**: always use the machine you selected
 
-### What “Auto” means
+### What “Automatic” means
 
 Auto does **not** mean “follow whichever machine became active most recently.”
+
+The selection is stored with your account and reused by your signed-in clients.
+An offline selected machine is reported as unavailable; Happier does not silently
+substitute another machine. Selecting Automatic again clears the sticky selection;
+selecting a particular machine makes it fixed.
 
 The goal is stability:
 
@@ -151,7 +162,7 @@ Teleport lets you move the running voice agent to the current session’s projec
 
 Important rules:
 
-- teleport is only available for the **daemon** backend
+- teleport uses the existing daemon-backed Agent path
 - it is hidden/blocked when **Allow teleport** is off
 - it is hidden/blocked when **Stay in voice home** is on
 - it fails closed when the runtime is not eligible
@@ -196,17 +207,21 @@ Local voice agent mode also separates:
 ### Agent source
 
 - **Follow session**: use the session’s agent/backend context
-- **Fixed agent**: choose a specific voice agent backend/provider
+- **Fixed agent**: choose a specific executable Agent
 
 ### Model source
 
-For chat and commit behavior, model selection can come from:
+For replies and messages the Voice agent sends, model selection can come from:
 
 - the session
 - the chat model
 - a custom model selection
 
 When a backend exposes a dynamic model list, Happier uses that live list in the dropdown instead of forcing manual text entry.
+
+The advanced idle-agent setting accepts 60–21,600 seconds (one minute to six hours).
+Stopping an idle Voice agent does not delete an ordinary working session. A model
+for messages it sends controls instruction generation; it does not create Git commits.
 
 ## Shared Local voice settings
 
@@ -263,12 +278,15 @@ service; some browsers offer an on-device recognizer that Happier will use when 
 available, and will report the difference. Treat device speech-to-text as "someone else
 handles the audio" unless you have confirmed on-device recognition on that browser.
 
-When it is selected, Happier can also expose **hands-free** controls such as:
+When the selected engine supports endpoint-driven capture, Happier exposes
+**hands-free** controls such as:
 
 - **silence timeout**
 - **minimum speech duration**
 
 These settings control when a spoken turn should be considered finished.
+Supported Happier speech-model capture uses the same timing owner. Engines without
+that capture capability explain why the controls are unavailable.
 
 ### Device TTS (experimental)
 
@@ -499,6 +517,6 @@ write every utterance into the target session — it keeps that part of the conv
 in its own run session and sends only explicit actions back. **Direct to session** has
 no separate conversation at all, so anything you say there does reach the session.
 
-## Related pages
+## Related
 
 - [Voice overview](/voice)

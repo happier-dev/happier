@@ -12,14 +12,24 @@ The UI applies transcript-authority filtering before matching committed user
 its canonical Pending snapshot even when the transcript reducer already holds
 the identical message: transcript equality does not establish Pending freshness.
 The existing Pending `recipient` selects either the main snapshot or the exact
-execution-run snapshot. One message batch refreshes each matched target once;
-overlapping GETs retain the transport owner's existing coalescing. Each snapshot
-reconciles only its own recipient and preserves sibling targets.
+execution-run snapshot. One message batch refreshes each matched target once.
+Each snapshot reconciles only its own recipient and preserves sibling targets.
 
 The committed twin alone does not authorize removal: a current server snapshot
 may legitimately retain the row. Canonical snapshot reconciliation, local-outbox
 custody, and repeated-message side effects keep their existing owners. This
 recovery adds no polling or retry policy.
+
+The pending snapshot owner coalesces the complete read and reconciliation for one
+Home and recipient while the session's Pending version, transcript, decryption
+context, and captured transport lifetime remain unchanged. A newer receipt,
+transcript update, or local Pending edit starts a fresh server read, bypassing
+generic HTTP in-flight sharing. Publication rejects reads captured before the
+current Pending version, including first-open sessions with no loaded transcript
+sequence. Socket receipts publish their version before awaiting transcript
+materialization; row retirement still waits for that materialization. Existing
+acceptance and committed-sequence fences continue to protect in-flight sends and
+legitimate durable Pending/transcript coexistence.
 
 To distinguish settlement from display failures, inspect the canonical Pending
 read for the exact Session, target, and `localId`. A retained server row points

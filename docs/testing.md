@@ -39,7 +39,15 @@ Local and hosted profiles share selection policy ownership in `scripts/pipeline/
 
 In 0.3 development, a direct `hstack-exec` invocation from a configured Mac workspace delegates to its active primary execution host through the existing execution-host bridge. The authoritative host's native dispatcher then selects a worker using its own current configuration. Package working directories, launcher flags, explicit environment arguments and exit results survive that handoff. Explicit `--local`, already-placed children, CI and sandbox invocations retain their local paths; candidate profiles do not activate delegation.
 
-Development command placement uses the native `apps/stack/bin/hstack-exec` owner, including POSIX commands launched through `dev-targets exec auto`. CPU load and used/available memory rank reachable targets; busy targets remain eligible and heavyweight work waits in the selected Linux machine's existing admission queue. That queue alone enforces the existing 6 GiB / 10% available-memory floor and CPU/memory pressure checks. The headroom derives from the audit's measured approximately 5.3 GB compiler and 1.1 GB suite footprints, rounded up together. Low-memory samples retain the default 15-second positive probe TTL. Dependency-refresh waiting belongs to the bootstrap's workspace lock beneath the same target admission. A selected sync-flush failure retries another target before any command starts; if reachable targets have synchronization or prerequisite failures, the launcher reports an actionable error. Configured `fallback=local` applies only when no remote target is reachable, with an explicit log. Explicit `includeLocal` participation, local placement and machine-local invocations remain distinct from fallback. Exit 137 remains authoritative and reports possible OOM with the last target memory sample; it is never automatically replayed. Windows command routing remains local. Outbound routing requires a cwd inside the synchronized repository; explicitly local publishers and already-placed children may use temporary repositories.
+Development command placement uses the native `apps/stack/bin/hstack-exec` owner, including POSIX commands launched through `dev-targets exec auto`. CPU load and used/available memory rank reachable targets. Build families and typechecks use the shared `compilation` admission class: selection excludes machines with less than 21 GiB total RAM, and the selected Linux/WSL machine's existing queue waits for at least 21 GiB available alongside the existing 10% available-memory and CPU/memory pressure checks. This envelope conservatively interprets the remote QA placement brief's measured 10–21 GB full UI typecheck footprint as GiB. Capable busy workers remain eligible to wait remotely. Focused validation retains the existing 6 GiB / 10% floor from the measured approximately 5.3 GB compiler and 1.1 GB suite footprints. Darwin selection applies the total-capacity filter and pressure ranking; its existing execution path has no admission queue. Capacity exclusions are invocation-specific: healthy raw samples remain usable by focused work on smaller workers and retain the default 15-second positive probe TTL. Dependency-refresh waiting belongs to the bootstrap's workspace lock beneath the same target admission. A selected sync-flush failure retries another target before any command starts; if reachable targets have synchronization or prerequisite failures, the launcher reports an actionable error. Configured `fallback=local` applies only when no remote target is reachable, with an explicit log. Explicit `includeLocal` participation, local placement and machine-local invocations remain distinct from fallback. Exit 137 remains authoritative and reports possible OOM with the last target memory sample; it is never automatically replayed. Windows command routing remains local. Development fleet workers hosted on Windows use the managed WSL2 backend: `dev-targets add NAME --managed-wsl --outer-ssh=ALIAS --outer-ssh-config-file=PATH --dedicated-cpus=N --dedicated-memory-gib=N` provisions a named Ubuntu 24.04 guest through an authenticated Windows SSH host. The guest remains a POSIX execution target under the existing synchronization, placement and admission owners. Configure automatic placement with the guest name only; the Windows host stays a manual boundary. Capacity is explicit and `.wslconfig` applies to all WSL2 guests for that Windows user. Provisioning requires other WSL workloads stopped; forced capacity changes refuse to stop other running distributions. Guest SSH keys are pinned through the authenticated host, and a Windows startup task keeps the guest running. This backend is development-only. Verify enrollment with `doctor`, `sync`, and a command through `dev-targets exec NAME` before selecting the guest for automatic placement. Outbound routing requires a cwd inside the synchronized repository; explicitly local publishers and already-placed children may use temporary repositories.
+
+Managed guest SSH publication uses the guest alias as its multiplex identity and proxies to the outer host's loopback address. This prevents guests on different hosts with the same SSH port from sharing a connection. Foreground Stack launchers forward interruption and wait for cleanup; explicit `dev-vm exec` and ordinary delegated commands use the same guest scope owner so cancellation cleans up the guest job before closing its host transport.
+
+In 0.3 development, `apps/stack/bin/hstack-dev-target-control` owns the native per-session synchronization barrier for automatic and exact-target commands. Queued requests may share a successful Mutagen flush only when it started after each request captured demand. A request arriving during a flush requires a later cycle, so a just-written source file cannot be admitted against an earlier scan. Each caller checks fresh exact-session health before dispatch; failed or canceled flushes cannot satisfy demand. Platforms without `flock` retain a separate flush and health check for every request.
+
+Development worker enrollment and automatic command placement attempt to disable sleep through `dev-targets power no-sleep NAME|auto`. Managed workers apply the same policy to their outer host and Linux guest. Windows disables AC/battery idle and unattended sleep, idle hibernation and lid-triggered sleep; macOS disables idle system sleep; Linux masks systemd sleep targets. Manual targets are excluded from automatic placement setup. An existing Windows machine policy enforcing zero satisfies that setting; conflicting policy remains an error. Administrator privileges are required, and denied settings are reported without blocking worker enrollment or changing placement. The explicit power command returns failure for incomplete configuration. These defaults belong to worker setup, not ordinary Happier installation on a personal computer.
+
+
 
 In 0.3 development, `apps/stack/scripts/utils/dev_targets/remote_commands.mjs` owns command classification; the native launcher consumes its generated `native_command_policy.sh` projection rather than maintaining another classifier. Native `node --test` commands receive installed-dependency readiness. Only source-proven test commands bypass workspace publication; unknown native commands retain component preparation. Stack dependency-closure publication is reserved for Stack validation, not every remote command. Default CLI/UI Vitest configurations resolve workspace source; default UI tests use the typed empty bundled-app inventory fixture, while `vitest.artifact-cache.config.ts` retains generated inventory and artifact preparation. Workspace build currentness remains owned by the dependency-closure/fingerprint path; there is no separate `prepare:build-inputs` hook.
 
@@ -67,6 +75,21 @@ Choose the evidence boundary before running a canary:
 
 An approved Voice program may require a larger composed journey; use its current execution recipe for that work. Standing evidence rules live here, while program status and past host measurements remain in the program's evidence.
 
+## Test worker budgets
+
+Ordinary Vitest configurations share `scripts/testing/vitestWorkers.ts`: the
+default maximum is `max(1, min(4, floor(availableParallelism() / 2)))`, with a
+minimum of one. Development and CI use the same default. Vitest otherwise sizes
+an invocation from CPU count, not current machine load; several independent
+invocations can still contend, so runner-level concurrency also matters.
+
+Set `HAPPIER_VITEST_MAX_WORKERS` to a positive integer for an explicitly sized
+local or CI job. CLI worker flags remain available for individual invocations.
+The UI-only `VITEST_UI_MAX_FORKS` override remains supported with its existing
+six-worker ceiling; the shared override takes precedence. Explicit single-fork,
+single-thread and non-parallel lanes retain their stronger isolation contract.
+No test selection, assertions or coverage settings change with this budget.
+
 ## TypeScript toolchain
 
 The repository deliberately separates the compiler from the programmatic TypeScript API:
@@ -75,6 +98,28 @@ The repository deliberately separates the compiler from the programmatic TypeScr
 - `typescript` remains the TypeScript 5.9 API consumed by AST tooling and ecosystem integrations. Do not replace it with TypeScript 7 until the native release provides a stable compatible API and every consumer supports it.
 - `scripts/workspaces/resolveTypeScriptCliInvocation.mjs` is the only compiler-selection owner. First-party scripts must use `runTypeScriptCli.mjs`, `buildTypeScriptPackageDist.mjs`, or that resolver directly; do not invoke a bare `tsc` shim or resolve `typescript/bin/tsc`.
 - `yarn tsc ...` is defined at the repository root and in every TypeScript-owning workspace; it delegates to the shared native runner and therefore uses TypeScript 7.
+
+CLI and UI typechecks run `tsconfig.source.json` (source) and `tsconfig.test.json`
+(tests and their imported source) sequentially through that runner, including
+the root source-workspace lane. Both retain the original strictness, aliases
+and ambient declarations, with separate incremental caches. The original
+`tsconfig.json` remains the shared full-coverage base so existing configs that
+extend it retain their coverage. Repeated
+`--project` arguments check every project even after compiler diagnostics and
+return a nonzero result if any project fails; cancellation or launch failure
+stops the sequence. These large app programs explicitly use `--singleThreaded`
+to avoid retaining duplicate native checker state. Use the public package
+`typecheck` entry point to check both programs, not only the source config.
+
+Ordinary CLI builds also use one native checker. Under the existing CLI
+publication lock, `apps/cli/scripts/build.mjs` reuses the source-generation path
+and its compiler metadata across dev-watch builds. Each generation replaces all
+copied authored inputs and removes them after use; only the incremental cache
+survives. Unlocked builds keep private generations. Package dist compilation
+uses one checker by default and the existing package-lock-owned compiler cache
+in `scripts/workspaces/buildTypeScriptPackageDist.mjs`; an explicit
+`--singleThreaded false` compiler argument opts out. Content currentness and
+output promotion remain owned by the existing workspace build pipeline.
 
 ## Lane naming and placement
 

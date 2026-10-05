@@ -354,6 +354,17 @@ The Claude plugin owns the native JSON-stream Agent SDK protocol integration wit
 the Claude Code CLI. It does not depend on the `@anthropic-ai/claude-agent-sdk`
 npm package; the SDK changelog below documents the upstream message contract.
 
+In development source, the existing native effective-model evidence feed also
+projects observed effort onto admitted model controls. SDK initialization
+acknowledges the explicit effort captured for that actual query launch;
+statusline and verified terminal-control results report native effective truth.
+Pending configuration, deferred controls, and unverified delivery do not supply
+an observed effort. Context-only evidence and model catalog enrichment retain
+the last observation without advancing catalog freshness. When no effort has
+been observed, the existing catalog default remains a fallback, not proof of
+native application. Known aliases continue to use the plugin's canonical
+effort-support policy rather than catalog membership.
+
 ##### Internal transcript event classification (development)
 
 `packages/plugins/claude/src/agent/transcripts/internalEventTypes.ts` owns the closed

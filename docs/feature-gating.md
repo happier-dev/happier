@@ -462,6 +462,20 @@ For features intended to be user-opt-in via UI Experimental Features toggles:
 - Prefer `FeatureDecision.state` over raw booleans.
 - UI design/copy for feature-gated surfaces still follows UI token, text-scaling, and translation rules in `apps/ui/AGENTS.md`.
 
+### Voice settings access (0.3 development)
+
+The Voice hub and Dictation page remain independently accessible. Conversations
+consumes the existing `voice` decision from the settings page catalog; rail/search
+discovery and settings Actions use that same page decision. Its Expo Router
+`WorkspaceRouteBody` wraps the screen in `SettingsPageFeatureGate`, which reads
+`readSettingsPageGate` and the shared `resolveSettingsPageGateUnavailableReason`
+before mounting it. Disabled direct links show the existing unavailable surface
+with navigation back to the hub, rather than probing a provider or acquiring a
+microphone. Missing or malformed enabled facts cannot admit the screen.
+
+This aligns consumers of an existing gate. It adds no Voice-experience rollout bit,
+and turning conversations Off does not disable the independent Dictation input.
+
 ## Feature-scoped tests
 
 Feature-scoped tests include `.feat.<featureId>.` in the filename, for example:

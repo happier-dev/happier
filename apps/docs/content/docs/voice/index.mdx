@@ -20,20 +20,27 @@ group names when it tells you where a control lives.
 
 ## Availability
 
-Voice is gated in three places, and all three have to agree before anything appears.
+The availability rules below describe **0.3 development**, not a claim that these
+defaults have shipped in a released build. Use the documentation for the release
+you run; the [generated feature reference](/extras/feature-flags) describes the
+catalog for its documentation version.
 
-- **Your server** must advertise the `voice` feature. Without it, neither the composer
-  microphone nor the conversation modes render at all.
-- **You** must turn on **Settings → Features → Voice**. It is an experimental toggle
-  and it is off by default, so it stays hidden until the experiments switch at the top
-  of that screen is on.
+Voice conversations require the server and client Voice decisions to agree.
+Dictation has its own speech setup and remains available when conversations are off.
+
+- **Your server** must explicitly enable the `voice` feature bit for conversation
+  controls; a missing bit or diagnostic capability is not admission.
+- **Your client** enables **Settings → Features → Voice** by default, without
+  Experiments. An explicit off choice still disables conversations.
 - **Individual modes** add their own gates: **Happier Voice** needs the server-side
   `voice.happierVoice` feature, and the daemon-backed **Local voice** agent needs
-  **Settings → Features → Voice agent**, which is likewise experimental and off by
-  default.
+  **Settings → Features → Voice agent**, which remains experimental and off by
+  default, with Experiments and its Execution runs prerequisite enabled.
 
-No conversation provider is selected until you pick one, so turning Voice on gives you
-Dictation and an empty provider list rather than a live microphone. See
+No conversation provider is selected until you pick one. Opening Voice settings or
+checking setup does not acquire the microphone or start a provider. In 0.3 development,
+the Conversations route, settings search and settings Actions consume the same page
+gate; a direct link cannot bypass it. Dictation remains independent. See
 [Feature flags](/extras/feature-flags) for the full gating model.
 
 ## Conversation modes
@@ -92,25 +99,66 @@ follow whatever Local voice is using.
 
 A few settings apply whichever conversation mode you chose:
 
-### Preferred language
+### Language
 
-**Preferred language** sets the language Happier should prefer for spoken responses and voice-side interactions.
+Recognition language, reply language and the output voice are different choices.
+Dictation has its own language setting. A conversation service may couple recognition
+and replies rather than support an independent reply preference; choose only the
+controls that service actually offers. An attached Codex conversation keeps its
+session-owned language policy.
 
-Use this when:
+In 0.3 development, standalone Voice captures the supported reply preference when the
+attempt starts and retains it through reconnect. Changing settings does not retarget
+or rewrite an already admitted conversation.
 
-- you want the assistant to answer in a specific language
-- your speech provider supports multiple languages
-- you want local voice and ElevenLabs voice to stay aligned with the same preference
+In 0.3 development, **Greeting → Right away** uses a short shared greeting in
+the selected **Reply in** language when a translation is available. ElevenLabs
+waits until you speak when that language has no translated greeting, including
+automatic language; the Greeting row explains this. Local Agents and model-driven
+realtime services can generate their greeting in the requested language.
+**Off** and **After I speak** send no immediate greeting.
 
 ### Voice UI defaults
 
 **Settings → Voice → Advanced** holds the voice surface's own behavior:
 
-- whether voice defaults to **global** or **session** scope
-- whether the voice surface prefers the **sidebar**, the **session screen**, or **auto**
-- whether the activity feed is shown and auto-expands
+- whether a conversation starts with all your sessions or the open session
+- whether the transcript is shown and opens when a conversation starts
 
-These are app-level UX settings. They do not change how a provider itself speaks or reasons.
+In the 0.3 development interface, **Show live Voice as** selects **Top bar**,
+**Island**, or **Orb** on this device. The default is Top bar on desktop and Island
+on phones. The Companion's Voice section stays available in each mode. Changing
+the container changes presentation, not the running conversation or its microphone.
+
+Conversation scope and transcript preferences synchronize with your account;
+presence placement is device-local. These settings do not change how a provider speaks
+or reasons.
+
+### Start, mute and end
+
+Voice and Dictation have separate composer controls. Dictation puts editable text in
+your draft; it does not send the message. Voice starts a conversation at its admitted
+global or session target. During a conversation, Mute suspends microphone input while
+End ends the attempt. Navigating to another session does not retarget End or recovery.
+Permission requests still need a tap, and ending Voice leaves them pending.
+
+In 0.3 development, the rebindable **Start or end Voice** command defaults to
+⌥⌘V on macOS (Ctrl+Alt+V on other desktop hosts). Tooltips show the resolved
+binding after customization. See [Keyboard shortcuts](/apps/keyboard-shortcuts).
+
+In 0.3 development, **Hold to talk** under **Settings → Voice → Advanced** is an
+optional, device-local preference, off by default. Start a conversation normally,
+then hold the composer Voice mark for one turn and release to send it and request
+an answer. Dragging away, cancelling the gesture or ending the conversation sends
+no held turn. Your previous Mute policy returns after release; holding does not
+change your Mute choice.
+
+Hold requires a connected **Manual** conversation with supported microphone
+capture and input controls. The host WebRTC OpenAI conversation supplies that
+boundary; other modes explain the missing prerequisite instead of pretending to
+support it. Tapping still starts or ends Voice, and the shortcut remains a toggle:
+the keyboard owner currently does not admit a held-key release. Dictation and
+your unsent draft stay independent.
 
 ### Voice activity feed
 
@@ -170,7 +218,7 @@ session instead: the Voice History carrier. It is shared rather than per-provide
 moving between realtime providers between conversations keeps adding to the same
 history.
 
-Read it at **Settings → Voice → Privacy & data → Voice History**. Search runs over the
+Read it at **Settings → Voice → Privacy & data → Voice history**. Search runs over the
 messages already decrypted on this device. Loading older pages is a read-only fetch and
 decrypt operation: it does not change the carrier or lock History on another device. You
 can export the loaded history as JSON or clear it.
@@ -244,6 +292,11 @@ Happier Voice is available only when the connected server advertises it through 
 In current development native builds, realtime ElevenLabs uses the same attempt, credential, tools, transcript, cancellation, and retirement lifecycle as the web provider. Happier remains the owner of the native call-style audio session; the ElevenLabs native adapter configures only the provider SDK's WebRTC setup.
 
 Background and lock-screen behavior still depends on the operating system and has not yet received packaged physical-device certification. This call-style behavior applies to the realtime ElevenLabs path, not to Local voice.
+
+Android's ongoing microphone notification opens Happier when tapped. A dedicated
+iOS Voice Live Activity and lock-screen Voice controls are deferred; the existing
+Focus Live Activity is a separate session-attention feature. The floating Island
+does not imply an iOS Live Activity.
 
 ## Use My ElevenLabs
 
@@ -362,15 +415,19 @@ Local voice is a good fit when you want a self-hosted speech stack, device speec
 services, a hybrid such as device STT with cloud TTS, or on-device neural models like
 Kokoro TTS and Sherpa STT on a native build.
 
-Local voice settings also include voice-agent behavior such as backend selection, machine targeting, resumability, and working-directory policy when you use **Agent** mode.
+Local voice settings also include Agent selection, machine targeting, resumability,
+and working-directory policy when you use **Agent** mode. The current 0.3 pipeline
+runs that Agent through the selected machine's daemon; it has no separate Voice
+chat-completions backend.
 
 ### Backend and model lists are machine-aware
 
 When you use **Agent** mode, Happier does not guess a fake model list locally.
 
-- the **Voice agent backend** list follows your enabled backend toggles
-- the **Agent machine** setting decides which machine Happier probes for backend capabilities
-- the **chat model** and **commit model** lists come from that selected machine when the backend supports dynamic model probing
+- the Agent list consumes the admitted Agent catalog, including installed contributions
+- the selected Voice computer supplies the runtime and model capability facts
+- chat and message-generation models use that Agent's supported model configuration;
+  “commit” in older labels means a message sent to the working session, not a Git commit
 
 This means the exact model list can differ between machines.
 
@@ -387,7 +444,7 @@ In practice, this usually means one of these is true on the selected machine/acc
 
 If you expect a richer model list, first check:
 
-- **Settings → Voice → Voice conversations → Agent machine**
+- the Voice computer selected for conversations
 - the selected backend is actually available on that machine
 - that machine is signed in for the backend you selected
 
@@ -408,7 +465,9 @@ Even in **Direct to session**, TTS can still be enabled so Happier can read agen
 
 ### Hands-free mode
 
-When you use **Device STT (experimental)**, Happier can also expose hands-free endpointing controls such as silence timeout and minimum speech duration.
+Hands-free timing is offered when the selected speech engine supports endpoint-driven
+capture, including supported device and Happier speech-model paths. Other engines
+explain their prerequisite instead of presenting timing controls that cannot apply.
 
 ### Test TTS
 
@@ -464,7 +523,7 @@ Use **Local voice** with **Conversation mode** set to **Agent**.
 
 ### I want to reread or delete standalone voice transcripts
 
-Go to **Settings → Voice → Privacy & data → Voice History**. That covers conversations
+Go to **Settings → Voice → Privacy & data → Voice history**. That covers conversations
 that had no target session; anything voice wrote into a real session lives in that
 session.
 

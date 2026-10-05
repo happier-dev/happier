@@ -9,37 +9,39 @@ repository you watch. Automations run that work on your machines without you
 opening the app.
 
 <Callout type="warn">
-  Automations are experimental. The in-app message when they are off says it
-  plainly: enable them from Settings, then turn on **Experiments** and
-  **Automations**. The experiments switch gates the toggle, so you need both.
+  The Workflow instructions below describe current 0.3 development source,
+  not certified stable or preview availability. Use matching development
+  components. In that source, **Automations** has graduated: its preference
+  defaults on and does not require **Experiments**. The server still needs the
+  `automations` and dependent `workflows` feature gates; a missing or disabled
+  server gate keeps execution unavailable.
 </Callout>
 
-Find them at **Settings → Automations**.
-
-<Callout type="warn">
-  Multi-step Workflows are present only in current development source. They are
-  not yet a shipped stable or preview feature, and a registered Action does not
-  by itself prove that a connected daemon can execute it. A development client
-  still needs **Experiments** and **Automations** enabled, while the server must
-  enable both the `automations` and dependent `workflows` feature gates. Workflow
-  surfaces stay unavailable when either server gate is off.
-</Callout>
+Open **Workflows** from the app's navigation. This is the one destination for
+definitions, their triggers, built-ins, and Runs. Choose **New workflow**, write
+its first prompt, select where it runs, and save explicitly. **Run now** opens
+the run composer to review the inputs and target before starting. **Run settings**
+in this destination controls capacity and retention.
 
 Existing schedule automations created by released 0.2 clients remain readable
-and runnable in 0.3. The retained V2 schedule routes are a compatibility seam;
-new 0.3 authoring uses the current automation contract.
+and runnable through the current 0.3 stored-data readers. Current clients use
+the V3 Automation transport; this data compatibility does not require a V2 route.
 
 ## One recipe, several ways to start it
 
-An Automation stores one mutable recipe and its machine assignments. It can
-start a new Session, continue an existing Session, or run detached work,
-depending on the target you chose while authoring it.
+A saved Workflow holds a reusable definition. Attaching triggers makes it
+automated: each trigger set keeps its machine assignments and either references
+that saved Workflow or contains an inline prompt or Action. A referenced
+Workflow is read when the daemon claims the occurrence, so saving a change
+changes what future claims execute. An admitted Run keeps its frozen definition.
+It can start a new Session, continue an existing Session, or run detached work,
+depending on the authored target.
 
 The same Automation can own no automatic triggers, one trigger, or several.
 Every enabled trigger is independent: if any one of them fires, the recipe
 runs. There is no ordering or requirement that several triggers fire together.
-Edits affect occurrences admitted after the edit; an admitted Run keeps the
-recipe and assignments it started with.
+An admitted Run keeps the recipe and assignments resolved for it; later edits
+do not rewrite that Run.
 
 An enabled Automation must keep at least one enabled machine assignment — a
 Run freezes the assignments it was admitted with, so a Run with no machine
@@ -149,11 +151,10 @@ one or more of those events, then choose how long the trigger remains active:
 - **Every matching event** keeps running while the trigger and Automation are
   enabled.
 
-From an active Session, the **When this Session…** shortcut opens the same
-Automation editor with the source and current turn already selected. It can
-create a new Automation or add the lifecycle trigger to an existing compatible
-Automation. If the turn changes before you save a current-turn trigger, the
-editor asks you to use the new current turn instead.
+From a Session, open **Triggers** in its Work tab to attach a scoped trigger.
+The **When this turn finishes…** shortcut preselects the active turn. If that
+turn changes before you save a current-turn trigger, the editor asks you to
+use the new current turn instead.
 
 Happier records each occurrence by its durable Session, turn, and request
 identity. Earlier events are not backfilled, reconnecting does not create a
@@ -176,8 +177,10 @@ offline does not move matching into a client-side watcher.
   Session retires its scoped Automations without removing retained Run history.
 
   Session-start attachment is not yet complete.
-  Keep going attachment is refused when the opened agent already owns native
-  goal continuation; reopening cleanup still needs its runtime integration.
+  Keep going attachment is refused when the opened Agent already owns native
+  goal continuation. The Goal control reports a conflict if an existing Keep
+  going attachment meets native goal ownership; automatic reopening cleanup
+  is not established by the current source.
 </Callout>
 
 In current development source, the Session's Triggers section offers PR comments
@@ -186,6 +189,10 @@ existing link is preselected. Attaching either kind records that Session↔PR li
 Opening or reusing a pull request through Happier also records the link when the
 operation has an origin Session. Removing a trigger retains the link but stops
 that trigger's conversation ingress.
+
+If the Session's pull request links cannot be read, ordinary scoped triggers
+remain available. The Triggers section shows a separate link-read warning with
+a retry action; a failed read is not treated as an empty list of links.
 
 PR comments admit only repository writers. CI observations require the selected
 GitHub integration principal's write access. Unknown permission or a mismatched
@@ -216,9 +223,9 @@ siblings active.
 
 ## Running one now
 
-**Run now** admits an Automation Run immediately without waiting for its next
-scheduled time — useful for checking that a new Automation does what you meant
-before you leave it alone.
+For a Workflow, **Run now** starts the reviewed definition directly, without
+waiting for a trigger. Retained 0.2 Automations also support an explicit manual
+Run through the CLI below.
 
 It does not create a durable Manual trigger and does not require the Automation
 to have any automatic trigger rows.
@@ -249,14 +256,29 @@ run the automation twice.
 
 ## Structured workflows (development source)
 
-A Workflow is a JSON-compatible program that can be started directly or frozen
-inside an Automation. A direct Run has its own Account-scoped identity and does
+A Workflow is a JSON-compatible program that can be started directly, referenced
+by a trigger, or authored inline in a trigger. A direct Run has its own Account-scoped identity and does
 not create a hidden Session or Automation. An Automation Run also keeps its
 immutable trigger cause. Editing or deleting a saved definition does not rewrite
-an admitted Run. A managed Run is executable from its frozen snapshot; observed agent activity is read-only history and cannot be run, edited, or saved without a managed definition. Scheduling freezes the reviewed snapshot: later edits to the saved definition or Automation affect only future Runs.
+an admitted Run. A managed Run is executable from its frozen snapshot; observed
+Agent activity is read-only history and cannot be run, edited, or saved without
+a managed definition. Trigger claims resolve the current saved definition;
+later edits never change an accepted snapshot.
 
-Definitions can contain Session or detached-agent steps, parallel groups,
-conditions, and loops. References select declared inputs and earlier invocation
+Definitions have four leaf kinds:
+
+- **Agent** sends a prompt and receives a declared text, JSON, or decision result.
+  Each step can run in a Session or as a background run.
+- **Action** invokes one declared host or plugin Action with typed input bindings.
+  An Action that declares execution-run completion waits for those Runs and uses
+  its terminal result.
+- **Run a workflow** executes another definition as an inline nested frame in
+  the same Run. Its inputs and child definition are frozen at admission.
+- **Wait for you** waits for a human response without starting an Agent. If it
+  declares a result contract, the response must satisfy it.
+
+Parallel groups, conditions, and loops arrange those leaves. References select
+declared inputs and earlier invocation
 results structurally. Happier does not interpolate `${...}`-style text or parse
 prose as control flow. Pass dynamic values as declared inputs or typed references.
 
@@ -313,6 +335,11 @@ hdev workflow run invocations list --run-id <uuid> --cursor <opaque> --json
 Keep the caller-generated `runId` when admission is uncertain. Repeating it with
 the same normalized request rejoins the Run; changing the definition, inputs,
 saved revision, or target conflicts. A new ID intentionally starts a new Run.
+In development Plan review, reopening after a lost start response rejoins a Run
+only when its proposal matches the plan you are reviewing. If the Agent has
+published a different proposal, Happier explains that an earlier proposal
+already started and offers **Open that run** or **Run the new proposal**. Using
+the new plan does not label the earlier Run as having started it.
 Cursors are opaque and bound to the supplied filters, so return them unchanged.
 Page sizes are preferences: response-byte limits can yield a shorter page and a
 continuation cursor.
@@ -328,10 +355,179 @@ import/export preserves portable authored content only. Local file handles, raw
 credentials, checkpoints, and provider resume state are not portable definition
 data. YAML is not supported.
 
+### Review and manual Pause
+
+Turn on **Review before continuing** to hold a step's output before downstream
+work can consume it. Inspect the displayed value, discuss changes in the step's
+conversation, or edit the result yourself. **Use this result** commits that
+value; **Generate result and continue** asks the existing Agent conversation for
+a new result and continues automatically when it is valid. A failed generation
+keeps the previous reviewable value available. A Wait-for-you step accepts a
+human response and cannot generate one.
+
+Independent work can continue while a step awaits review. When only human holds
+remain, the Run reads **Waiting for your review** and releases its worker slot;
+**Review next** opens a held step. This review is separate from a tool permission
+request and from recovery of an interrupted execution. Typing in a conversation
+does not accept a held result.
+
+**Pause at boundary** closes admission while accepted work settles. A manually
+paused Run stays paused after **Use this result**. You can request generation
+while paused, but it starts only after **Resume** and the worker's current
+authority and continuation checks. **Stop** cancels the Run rather than accepting
+its holds.
+
+### Team visibility
+
+Share a Workflow definition through its access controls. Recipients keep their
+own triggers and run on their own machines. A personal definition share lets
+the recipient use the Workflow but does not expose the owner's Runs.
+
+A Run from a Team-shared Workflow freezes its visible Team when admitted. When
+several Teams have access, choose which Team sees that Run. Visibility requires
+current membership in that Team and a live grant on the source Workflow; removing
+either removes access. There is no separate single-Run share.
+
+People with **Can edit** or higher access can pause, resume, stop, and answer
+review holds; view-only recipients cannot. Human answers record who answered.
+E2EE content still requires the recipient's key envelope: a visible row with
+unavailable keys stays locked.
+
+## Built-in workflows (development source)
+
+Open the **Built-in** section of Workflows. Session-bound recipes offer
+**Choose a session…**; the others offer **Run now**, with workspace and inputs
+reviewed in the run composer. Built-in definitions are read-only; copy one into
+an unsaved draft when you want to change its recipe.
+
+### Keep going until done
+
+Choose a Session and set its goal through the Goal control. Where the opened
+Agent supports native goal continuation, the control uses that; otherwise it
+attaches Keep going. A new Keep going attachment is refused when the Agent
+already owns native goal continuation; an existing conflict is shown rather
+than presenting a second continuation control.
+
+After a matching turn ends, a read-only Judge checks the goal and the latest
+turn. It continues the Session, then checks again, until the goal is done, the
+reported token budget is spent, there is no progress, or the round cap is reached.
+The prefilled cap is **4 rounds** and the strike threshold is **3 consecutive
+no-progress checks**; both are editable. Four rounds mean at most four checks
+and three continuation turns. Without reported usage, the budget stop is
+unavailable; the round and strike stops still apply.
+
+**Ask for a second opinion before finishing** is off by default. When enabled,
+only agreement marks the goal complete and removes its trigger. Disagreement
+or uncertainty sends **Notify me**, leaves the goal and trigger active, and
+completes the Run without a hold. Budget, strikes, and exhaustion also leave the
+goal active. **Stopped after \{n\} rounds** is a successful exhaustion outcome,
+not a failure; the Session transcript folds the continuation turns.
+
+Pending user messages go before a continuation at its final admission check.
+A message arriving after the step has passed that check follows the admitted
+step; an already running turn is not interrupted.
+
+### Review & converge
+
+Choose a Session, open its Triggers section, and attach this recipe to a matching
+turn-end event. Select the review engines. A panel reviews the changes in
+parallel, then a read-only convergence check reads the persisted review comments
+and each engine's outcome. Missing or failed coverage cannot count as convergence.
+
+**Verify and fix** is the default mode. Later rounds first ask the Session to
+verify and fix the previous findings, then run a new panel. The prefilled,
+editable cap is **3 rounds**: at most three panels and two verify turns.
+**Verify only** uses one panel and asks the Session to verify remaining findings
+without fixing them. The default focus is “Review the changes made in this
+session.”
+
+The optional Judge is off by default. When enabled, it rules on disputed findings;
+its verdicts must be written to the canonical review comments before the
+convergence check reads them. Pending user input delays the next Session verify
+turn under the same admission ordering as Keep going.
+
+If the round cap is reached without convergence, **Review didn't converge**
+sends **Notify me** and completes the Run. It does not hold for review or create
+an Inbox item just because it exhausted its rounds. An unchanged-worktree skip
+is allowed only when the final successful panel certified that exact fingerprint;
+without certification it reviews again. A firing during an active Run leaves
+at most one pending occurrence.
+
+### Plan with a panel
+
+Choose **Run now**, enter the planning request, and optionally select planner
+engines. Selected engines plan read-only in parallel as detached background
+runs. With no engines selected, the Planner role plans alone. The synthesis
+contains a plan document and, when valid, a proposed Workflow; it holds for
+your review. There is no additional opinion or Judge stage: synthesis explains
+disagreements and open questions for you to decide.
+
+**Use this plan** accepts the document. **Run it as a workflow** is available
+only for a valid proposal and accepts the held result once the new Run is
+admitted; cancelling the run composer leaves the hold open. **Edit the workflow
+first** accepts the result as an editing handoff and opens a draft. The accepted
+handoff records the started Run or editing intent so the originating Agent can
+follow it. No origin Session is required to run this built-in.
+
+### Open a pull request
+
+Choose **Run now** and supply the base branch and title. The body defaults to an
+empty string. The editable opinion question defaults to “Is this change ready
+for a pull request? Check correctness, tests and risk.”
+
+A read-only Second opinion checks the change first. Agreement proceeds to the
+existing open-or-reuse PR Action in that same workspace. Disagreement or
+uncertainty enters **Wait for you**: **Continue** opens the PR anyway, while
+**Stop** cancels without opening one. Its final result is the PR Action's output.
+When there is an origin Session, a successful open also records the Session↔PR
+link; no origin is required to open the PR.
+
+## JSON import and export (development source)
+
+Choose **Import** in Workflows, or **Import JSON** in an editable definition.
+Use **Export JSON** from the definition's menu. Export confirms that prompts,
+references, and result schemas may contain private information before saving
+the file. These are authored definitions, not Run backups: machine placement,
+local file handles, credentials, checkpoints, and resume state are excluded.
+Choose the execution machine and workspace when you run the imported definition.
+
+The strict JSON wrapper uses `kind: "happier.workflow"` and `version: 1`; the
+nested definition has its own `version: 1`. For example, this portable definition
+contains one Wait-for-you step:
+
+```json
+{
+  "kind": "happier.workflow",
+  "version": 1,
+  "definition": {
+    "version": 1,
+    "defaults": {},
+    "inputs": [],
+    "blocks": [
+      {
+        "kind": "wait",
+        "id": "confirm",
+        "document": {
+          "text": "Review the work, then continue.",
+          "references": [],
+          "attachments": []
+        }
+      }
+    ]
+  }
+}
+```
+
+Import opens an unsaved review draft and never saves, schedules, or runs it.
+Malformed JSON, unknown versions, and invalid wrapper shapes are refused,
+preserving the open draft. A structurally readable definition with semantic
+errors can open as a repair draft with issues pointing to the affected fields.
+Resolve those issues before saving, exporting, or running it. YAML is not supported.
+
 ## Concurrency and run history
 
 Each machine runs up to four automation Runs at once by default. Change that
-Account setting under **Settings → Automations** when the machine should take
+Account setting in Workflows' **Run settings** when the machine should take
 more or less work concurrently.
 
 Completed Run history is retained for 30 days by default. Turn on **Keep run
@@ -340,14 +536,17 @@ the self-hosted server operator has configured a shorter Automation retention
 policy. This setting controls the server-owned history lifecycle; it is not a
 second client-side cache.
 
+Retained Automation detail screens also offer **Clear run history** in their
+header menu. It removes only server-eligible terminal history for that
+Automation, not active work.
+
 Every automatic Run records the stable trigger identity and revision plus an
 immutable bounded cause. Editing or removing the current trigger therefore does
 not rewrite what historical Runs say happened.
 
-To remove one Automation's eligible terminal history immediately, open that
-Automation and choose **Clear run history**. Deleting or disabling an
-Automation stops future admission; a Run admitted before that change keeps its
-frozen recipe and assignments and continues through the normal Run lifecycle.
+Deleting or disabling an Automation stops future admission; a Run admitted
+before that change keeps its frozen recipe and assignments and continues
+through the normal Run lifecycle.
 
 ## Related
 

@@ -94,6 +94,52 @@ internals, or import protocol types from an admitted surface.
 root hooks for host-backed Actions and Resources; `/data` remains the dedicated
 Collection-query entry.
 
+## UI capabilities in a client Action
+
+In the 0.3 development contract, a client-targeted Action receives
+`PluginClientActionContext` from `@happier-dev/plugin-sdk/actions`. Its bounded
+`ui` capability is not a mounted surface: `ui.context({ signal })` returns only
+`{ targetedContributions }`, where that value is the current contributions
+targeted to the Action's plugin or `null`. It does not return a mount, surface,
+page, selection, or layout context.
+
+Use `ui.version()` to inspect the advertised methods and
+`ui.selectActionInput(...)` when the person must choose an input. Selection
+reuses the host's canonical input admission and custody; do not introduce a
+parallel picker or copy private selection state. `ui.executeAction(...)` and
+`ui.openSurface(...)` remain the ways to invoke an Action or open a declared
+destination. This capability subset does not install a Plugin UI provider or
+make a client Action a surface occurrence.
+
+An advertised `ui.openNewSession(...)` uses the host's existing New Session
+draft and navigation owner; it does not create a Session by itself. Automated
+agent, MCP and CLI callers retain their real invocation surface. A client-target
+Action needs an answering signed-in client with the exact current plugin
+occurrence; without it, execution is unavailable. Approval follows the shared
+Action settings, not an invented UI caller identity. These are unreleased 0.3
+contracts: rebuild the Action artifact with the matching host and SDK.
+
+## Approval for a direct UI write (development)
+
+The unreleased 0.3 host API lets a direct Account write respect the same approval
+settings as its contributed Action:
+
+```ts
+const confirmed = await hostApi.confirm('Remove this source?', {
+  action: 'sources/administer-v1',
+  signal,
+});
+if (!confirmed) return;
+// Continue through the existing domain writer.
+```
+
+The host resolves the Action's current declaration and invoking-surface setting.
+A waiver skips the dialog and returns `true`; Ask-first asks even for a safe
+Action. Missing policy rejects before the write, and no daemon connection is
+needed. Without `action`, `confirm` is an ordinary unconditional question.
+This is a development contract change: rebuild Plugin UI artifacts using this
+option with the matching 0.3 host, rather than expecting an older host to apply it.
+
 ## Publish mounted semantic context
 
 The host automatically supplies a privacy-safe, parameter-free navigation
@@ -225,7 +271,8 @@ rules—loaded mobile and tablet validation remains a separate host proof.
 
 > **Development preview:** Session Board placement is still being completed and
 > validated across Happier's supported hosts. A self-hosted development server
-> must explicitly enable `HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED`, and Happier
+> offers the Board by default unless its operator disables
+> `HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED`, and Happier
 > exposes the Board only after the current Session System Records contract is
 > active. Plugin declarations remain installed and recoverable while the Board
 > is unavailable; availability does not grant Session access or Action authority.
@@ -236,31 +283,55 @@ from Details, the compact sidebar, the Companion and the mobile Cockpit — all
 through the same host. It never appears in navigation, collision domains, or
 `openSurface`, and it takes no `instancePolicy`.
 
-In the development-only widget placement contract, optional `placements`
-controls where a new widget can be added directly: Session views admit
-`'board'` and `'companion'`; App views admit only `'home'`. Omission preserves
-Session → Board and App → Home. Companion is explicit opt-in: declare it only
-for a view that works as a compact glance. Existing Companion references to
-Board items still reference that shared Board content; they are not direct
-plugin-widget additions.
+In current development source, a widget's App/Session target describes its
+data context, not where it can be placed. Configured instances can be hosted
+on Home, a personal Work Board, the Session Board, directly in the personal
+Companion, or a declared native/declarative plugin-page area. A Session widget
+declares typed inputs, an input schema and `sessionInputPath`; the host resolves
+that field to an exact Home-qualified Session. Copies can follow the host
+context or pin a different Session independently. Existing Companion references
+to Board items still read shared Board content; a direct instance keeps its
+own personal inputs. A definition is the reusable content/input declaration;
+an instance is one configured copy, with order, width and frame belonging to
+its host layout. Account-library definition edits affect their references;
+Duplicate creates independent content. Setup/edit UI and loaded-platform validation are still
+being completed in the widgets program.
 
 ```ts
 {
   id: 'review-status-widget',
   container: 'widget',
   target: { kind: 'session' },
-  placements: ['board', 'companion'],
+  sessionInputPath: 'session',
+  inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true, optionsSourceId: 'sessions' }] },
+  inputSchema: {
+    type: 'object', additionalProperties: false, required: ['session'],
+    properties: {
+      session: {
+        type: 'object', additionalProperties: false,
+        required: ['serverId', 'sessionId'],
+        properties: { serverId: { type: 'string', minLength: 1 }, sessionId: { type: 'string', minLength: 1 } },
+      },
+    },
+  },
   renderer: 'review-native',
   fallbackRenderers: ['review-web'],
   title: 'Review status',
 }
 ```
 
+For instance Refresh in development source, a widget can declare `resources`
+as qualified `{ pluginId, localId }` references to its own declared Resources.
+These dependencies do not grant access. Refresh waits for their admitted reads
+to settle, and mounts sharing the same Resource context update together;
+unavailable declarations or contexts return a typed refusal.
+
 Because it is embedded content rather than a destination, `widget` sits
 outside the destination-binding matrix above: the registry declares it for every
 supported UI platform, in `content` and `fill` presentations only. Whether a given
-person can actually see it still depends on their Home enabling the Board and on
-their client admitting your renderer.
+person can actually see it still depends on the selected target's access and
+their client admitting your renderer. Session Board hosting additionally needs
+the Board capability on that Session's Home.
 
 What the host guarantees at every mount:
 
@@ -270,16 +341,19 @@ What the host guarantees at every mount:
   compact or inline presentation: measured geometry, platform, theme, scale,
   safe area and active state already arrive through the surface context, so
   adapt to the space rather than to a Happier shell name.
-- `target` is the exact current Session. It is resolved from the Session the
-  person is looking at, never from a stored value or the focused Home.
-- The stored Board item keeps only your `{ pluginId, localId }` identity plus a
-  bounded launch input. A plugin update therefore keeps the widget in place: the
+- `target` is the currently admitted exact Session selected by the configured
+  binding. That Session supplies access, policy and machine routing, even when
+  the widget is hosted on Home or beside a different Session. Losing access
+  suspends execution; it never borrows the visible Session's authority.
+- The stored Board item keeps a distinct instance identity, your qualified
+  contribution identity and closed input-binding intents. A plugin update keeps
+  the widget in place: the
   host retires the old occurrence and remounts the new one against the same
   surface identity. Declared `fallbackRenderers` may switch renderer within that
   same surface; nothing switches surface, plugin, or machine.
 - Each physical placement is its own mount with its own instance identity and
-  lifetime. Only one placement per viewer and window is executable at a time;
-  the others are inert previews.
+  lifetime. Inactive or offscreen hosts suspend execution through their existing
+  activity and demand owners.
 
 When the plugin is disabled, uninstalled, retired, or no longer declares the
 surface, Happier keeps the widget's frame and title and shows a localized state
@@ -297,6 +371,22 @@ stay local to that viewer and device. Reading Board content requires current
 Session transcript access; changing it requires Session-record edit access.
 Actions do not bypass those checks or Happier's normal authentication,
 confirmation, and approval policy.
+
+Shared credentialed widgets bind to each viewer's existing qualified Connected
+Account purpose selection for the declared Resource consumer. Missing
+selection asks that viewer to connect; it never borrows the editor's connection.
+There is no per-instance viewer override. Pinned Connected Account references
+are allowed on personal surfaces only. Changing the existing purpose selection
+can affect other viewer bindings using that same qualified purpose, rather than
+changing only this copy's connection. Explicit **Post a
+snapshot** instead publishes the exact approved fixed output, timestamp and
+provenance through the normal Board writer, without live Resource references
+or credential bindings. See [configured widgets](/sessions/session-board#configured-widgets-in-development)
+for the content and audience distinction, and
+[personal widget areas](/plugins/ui/react-native#personal-widget-areas-in-development)
+for native and declarative plugin-page embedding. Hosted HTML pages use ordinary
+widget Actions without embedding host areas. Project-aside integration separately awaits the
+Project program's portable Source producer; an exact checkout is not that Source.
 
 Do not confuse an installed plugin's `hostedHtml` renderer with HTML authored
 directly into a Board item. Installed first-party and external plugins are trusted
@@ -354,6 +444,13 @@ second copy:
 
 - **Lifecycle, runtime and operational state** come from Happier's Session
   awareness projection. That is the same answer the Session list shows.
+- **`workStatus`** carries the host's shared Work presentation: `bucket`, `tone`
+  and localized `word`. Consume this projection for grouping and status
+  treatment. Healthy work stays neutral; permission, attention and failure
+  facts use the same treatment as Happier's Work surfaces. A lead Session with
+  unfinished reports is not Finished, and an offline Session's prior completion
+  does not make it currently Finished. Your surface can keep its own story copy
+  while using the host's bucket and tone.
 - **`pendingPermissions`** are the requests the Session's own permission prompt
   is showing right now. Each one carries the tool, a readable summary, the exact
   command for shell tools, and when it was asked.
@@ -386,6 +483,109 @@ linked Session, call the `reviews.comments.list` host Action with that
 linked to one entry. Tests can install `readSession`, `watchSession` and
 `respondToSessionPermission` handlers in `@happier-dev/plugin-sdk/testing`, and
 emit a watch signal with `invalidateSession`.
+
+## Source detail panels and fix pull requests
+
+**0.3 development / Developer Preview:** PRs & Issues sources use
+`@happier-dev/triage-protocol/v1`, alongside the public SDK and Plugin UI.
+The feature package owns the descriptor, detail input and fix-link Action
+contracts. It gives an author no direct access to Triage's Collections.
+
+Declare the tabs per entry kind on your source descriptor:
+
+```ts
+import { TriageSourceDescriptorV1Schema } from '@happier-dev/triage-protocol/v1';
+
+export const descriptor = TriageSourceDescriptorV1Schema.parse({
+  v: 1, purpose: 'example-errors', displayName: 'Example errors',
+  kinds: [{
+    id: 'error', workflowSubject: 'errorIssue', displayName: 'Error',
+    detailTabs: [
+      { kind: 'shared', id: 'overview' },
+      { kind: 'shared', id: 'activity' },
+      {
+        kind: 'source', id: 'stack-trace', title: 'Stack trace',
+        titleKey: 'plugins.exampleErrors.ui.tab.stackTrace',
+      },
+    ],
+    detailActions: true,
+  }],
+});
+```
+
+Triage draws the shared Overview, Activity, Files and Checks strip and appends
+your declared source tabs. Declare a source tab's optional `titleKey` in your
+plugin's translation bundles; the host projects the admitted source's strings
+for the active locale, with English fallback, and `title` remains the fallback
+when the key is missing. It mounts your existing detail renderer with the
+requested `panel`; `detailActions: true` requests the separate `actions` panel
+in the detail header. Render only that panel, using your own source terminology
+and Action handlers. Parse the input with `TriageDetailSurfaceInputV1Schema`.
+When using `Tabs` internally, set its `value` to the requested panel and
+`tabList="host"` to avoid drawing a second strip. Without `detailTabs`, the
+source keeps its whole-detail body and receives no panel selector.
+
+Panel changes update the same source detail instance. Keep occurrence selection
+and settled evidence pages in that instance; do not key the renderer by panel or
+put selection in a global cache. Declare retained internal panels through Tabs
+and stop hidden-panel reads with their activity signal. Retiring or changing the
+entry ends the source instance and its outstanding work.
+
+The [Collection composition](/plugins/ui/react-native#a-collection-with-one-detail-body)
+shows public imports for the detail container, `Step`, `Tabs` and
+`HappierDisclosure`. Retained tab work uses `useTabPanelActivity().activeSignal`;
+the source retains parsed panel state while Triage owns the enclosing frame.
+
+An issue or error can link to a fixing PR from another source. Use the exact
+qualified Action references rather than importing a Triage implementation:
+
+```ts
+import {
+  TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_REF_V1,
+  TRIAGE_SET_FIX_PULL_REQUEST_ACTION_REF_V1,
+  TriageReadFixPullRequestsResultV1Schema,
+  TriageSetFixPullRequestResultV1Schema,
+  type TriageEntryRefV1,
+} from '@happier-dev/triage-protocol/v1';
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+
+export async function linkFixPullRequest(
+  host: PluginUiHostApi,
+  entryRef: TriageEntryRefV1,
+  issueDisplay: { title: string; scopeLabel: string },
+  pullRequest: { entryRef: TriageEntryRefV1; display: { title: string; scopeLabel: string } },
+  signal?: AbortSignal,
+) {
+  const written = TriageSetFixPullRequestResultV1Schema.parse(await host.executeAction(
+    TRIAGE_SET_FIX_PULL_REQUEST_ACTION_REF_V1,
+    { v: 1, linked: true, entryRef, displayAtMark: issueDisplay,
+      fixPullRequest: pullRequest.entryRef, displayAtLink: pullRequest.display },
+    { signal },
+  ));
+  if (written.status !== 'linked') return { written };
+  const resolved = TriageReadFixPullRequestsResultV1Schema.parse(await host.executeAction(
+    TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_REF_V1, { v: 1, entryRef }, { signal },
+  ));
+  return { written, resolved };
+}
+```
+
+The read returns owner-ranked `candidates`, a `primary` PR or `null`, and an
+`incomplete` flag when the Session-link page is partial. Candidates carry their
+`user` and/or `session` origins and `open`, `merged`, `closed` or `unknown`
+status. A currently declared non-PR kind cannot be a fix candidate or a new link;
+the write rejects with `PluginError` code `triage_fix_pull_request_kind_invalid`.
+An unavailable descriptor preserves an explicit choice with unknown status; a PR closed without merging
+stays listed but is never primary. The enclosing Triage detail routes Files and
+Checks through the primary PR's own source.
+
+Unlink with the same write reference and `linked: false`, omitting
+`displayAtLink`. The owner remembers that dismissal so a co-linked Session
+does not immediately propose the PR again. Handle `conflict` by re-reading and
+`full` by letting the person remove a choice; transport failure or cancellation
+does not prove a write succeeded. A created PR becomes a Session-derived
+candidate only after it is linked to that Session. Keep the writer, resolver
+and storage private to Triage; callers submit intent and render the resolved read.
 
 ## Accessibility, currentness, and offline behavior
 

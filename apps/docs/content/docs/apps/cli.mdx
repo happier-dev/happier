@@ -914,6 +914,8 @@ Development builds can recover an owned Claude terminal that survives its Happie
 
 After a Herdr server restart, development builds can open a recorded local pane as a restoration candidate once Happier confirms that its old controller has exited. The pane's saved Happier resume command still uses normal sign-in and session admission. A running or unverifiable controller is not bypassed, and opening the candidate does not by itself establish that the session is ready or transfer ownership of an independent native client.
 
+Current development source also includes a strict same-pane path when the shared headless controller survives: explicit `happier attach` inside the recorded restored pane admits the native client only after checking the current conversation, terminal and process custody. Once admitted, it has managed status and Detach. Detach closes that exact native client, not the borrowed shell, and explicit Attach can reuse the same pane. Ordinary independent native clients still do not claim managed status. This source-checked path is not a claim of a shipped release, automatic installed-channel replay, or completed authenticated cold-restart validation on 0.3.
+
 Cold attachment verifies the original saved Herdr namespace and never switches to another server with the same name. If a stopped server uses an unsupported custom persistence location, reopen its original server before retrying attachment; an already-running custom socket remains supported.
 
 ## Continue a session

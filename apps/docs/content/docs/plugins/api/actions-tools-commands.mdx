@@ -306,6 +306,29 @@ Run admission. The separate `execution.run.send` host Action is only for a
 detached Run with `sessionId: null`; it must not be used as a shortcut around
 Session permissions, encryption, or target recovery.
 
+### Widgets and current-Session presentation in development
+
+Use qualified `widgets.*` host Actions to discover, configure and arrange
+widget instances; use public plugin-ui `WidgetSurface` to embed a declared native
+page area, or a declarative `widgetArea` node. Hosted HTML pages manage widgets
+through ordinary widget Actions without embedding host areas. The generated
+[host Action reference](/plugins/api/host-actions) supplies
+the exact schemas, while [personal widget areas](/plugins/ui/react-native#personal-widget-areas-in-development)
+explains the component's host-owned layout and context.
+
+`session.presentation.apply` and the optional daemon `context.ui.present`
+capability expose reversible presentation for the exact current Session. Their
+public types arrange readable built-in, shared Board-item and pane references.
+Direct Companion widget-instance payloads, input/rename intents and conditional
+instance-removal captures are host-internal; author widget operations use the
+qualified widget Actions instead. This author subset shares the host's
+validators and current-viewer admission. It supplies neither another window's
+presentation owner nor additional read or write authority.
+
+These are 0.3 development / Developer Preview contracts. Consult the generated
+[SDK surface](/plugins/api/surface) and [availability matrix](/plugins/manifest/availability)
+for your artifact's public projection and support evidence.
+
 ### Authority comes from the invocation, not from Session content
 
 Your plugin's authority is the principal the host admitted for this invocation.

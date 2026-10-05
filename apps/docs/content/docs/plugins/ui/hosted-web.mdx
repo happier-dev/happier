@@ -75,6 +75,18 @@ Passing source and component tests does not establish packaged desktop,
 iOS, or Android support; those loaded-runtime checks remain required before
 publication.
 
+## Widget operations in development
+
+In 0.3 development / Developer Preview authoring, hosted HTML pages do not
+embed host widget areas: the plugin owns the whole iframe. Manage widgets
+through ordinary `widgets.*` Actions, subject to the same captured scope,
+admission and approval policy as other callers. See the generated
+[host Actions](/plugins/api/host-actions) for their current schemas.
+
+There is no hosted widget-area API or embedding helper. Native and declarative
+page embedding are described
+under [personal widget areas](/plugins/ui/react-native#personal-widget-areas-in-development).
+
 ## Scaffold
 
 Create a hosted-web source package with the ordinary beginner command:
@@ -126,6 +138,33 @@ host binds requests to the admitted mount. Installed-plugin metadata travels
 separately in the context so local Action, Resource, and destination references
 keep their normal meaning. A replacement document receives a new physical
 identity; presentation changes do not create a new plugin lifetime.
+
+## Entity drag bindings (development)
+
+The **0.3 development / Developer Preview** SDK exports
+`bindHostedEntityDragSource` and `bindHostedEntityDropTarget` from
+`@happier-dev/plugin-sdk/ui/client`. After the ordinary bootstrap, bind an
+element to a declared local source or target using the bound `hostApi`, a
+mount id and its reference or target-local input. Await the returned `ready`
+admission result, and call `dispose()` when the element retires. A source can
+receive an intentional Organize `handle` and `onState` feedback; its returned
+mount exposes staged keyboard, chooser, commit and cancel operations.
+
+Declare `readEntityDragItem`, `updateEntityDragDrop` and `watchEntityDragDrop`
+as required host methods when the renderer depends on this behavior. The
+existing method advertisement and renderer admission decide whether it can
+mount. Read refusal or failed readiness as unavailable rather than creating
+a frame-local fallback. The bindings report current frame geometry to the
+host; the host converts coordinates and selects the target through the same
+runtime used by React and declarative sources. They do not decode text into
+identity or consume ordinary OS file/text drags.
+
+Source/target declarations, pure admission and Action allowlists are described
+in the [entity authoring guide](/plugins/ui/react-native#entity-drag-and-drop-development).
+Mount retirement and Account withdrawal prevent unissued effects; an already
+dispatched Action retains its own acknowledged or unknown outcome. These
+source contracts do not certify a loaded iframe, desktop child or native
+WebView journey.
 
 ## Browser-hosted data and withdrawal
 

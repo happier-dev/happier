@@ -38,7 +38,97 @@ MCP), and the public API's relay to a daemon. A server-owned Action declares its
 its spec row and the family clients build their requests from that declaration — see
 `serverTransport` below.
 
+In 0.3 development source, the UI host binds authenticated invocations to the explicitly
+selected Home, or captures the active Home when the caller supplies none. It derives
+authority from that Home's credential provenance and supplies an attempt request ID
+for Account- and terminal-credential UI calls, preserving an existing request ID or creation key. Both
+execution and preparation use this owner. UI domain clients do not generate approval
+origins; the Protocol executor still validates strict provenance and enforces approval
+policy before any effect. Agent, Voice and plugin callers retain their own provenance.
+An attempt ID does not upgrade authority: terminal credentials retain automation
+authority on UI, can request policy-required approval, and cannot decide it. The
+approval UI preserves `present_user_required` and directs the person to an Account
+sign-in on this Home or another device with that sign-in. Content-key custody and
+Home ownership do not supply present-user authority.
+
 ## SDK Action declarations (0.3 development source)
+
+### Entity drop effects (development)
+
+Entity dragging selects a semantic destination and calls its domain Action. There is no generic storage-mutating drag Action. Pointer release, staged keyboard, menus and agent requests consume the same current domain resolvers and writers: relation changes retain `session.reports_to.set`, organization uses `session.organization.move`, and workspace/Session-canvas navigation retains their tab and split owners. Workflow binding edits only the mounted draft's conversation; composer transactions insert typed context without sending it. Pending and todo reorder retain exact recipient/current membership semantics. Widget movement delegates to the configured placement owners rather than a drag-owned store.
+
+The mounted [entity runtime](../apps/ui/sources/components/ui/treeDragDrop/entityDragDropRuntime.ts) revalidates the source, target and admission on completed release. Hover and cancellation do not write. A refused target returns its typed reason; dangerous effects use the existing configurable approval policy. UI input does not confer present-user authority on a plugin or agent. Once dispatch starts, an acknowledged refusal and an unknown outcome remain distinct; drag cancellation cannot rewrite an issued effect or replay it.
+
+Client draft, canvas and picker Actions require their exact answering mounted owner and return typed unavailable when it is absent. Repository upload picking requests acquisition through the existing transfer owner; it does not fabricate OS file handles in JSON or promise upload completion. The generated [host Action reference](../apps/docs/content/docs/plugins/api/host-actions.mdx) owns the complete ids, inputs, outputs and execution placements. [Plugin source/target authoring](plugin-platform.md#entity-drag-sources-and-drop-targets-03-development) describes the declaration and Action allowlist seam. This is 0.3 development behavior, pending the composed loaded-platform journey.
+
+### Accepted Session association (development)
+
+`todos.session.link` associates an already accepted, Home/Account-qualified Session with an exact Zen task. UI accepted creation and the Account Action executor use the same `todo.<id>` semantic KV/CAS owner; CLI (`todos session link`) and MCP (`todos_session_link`) project the catalog operation. It never creates another Session or changes human-owned Done. A missing task or mismatched task Account is refused. An ambiguous write reports `unknown`; retrying the same qualified association is idempotent. Released bare Session-key links remain readable and are recognized on same-Account retry.
+
+### In-surface Find (development)
+
+`ui.find` uses the mounted app's focused Find surface, shared with its keyboard
+commands and Find bar. It reads status or sets a query/options (optionally naming
+a mounted surface), steps, stops searching, or closes Find. Results contain
+status, counts and coverage, never transcript or file text. `noMountedSurface`
+is distinct from a mounted surface with zero matches. This client-placed Action
+does not create a headless search engine in the CLI, daemon or Home.
+
+Monaco remains focus-addressable while its native widget owns physical Find
+shortcuts. Set, step and close use public editor actions. Its read projection
+returns the last host-known query/options with `status: 'unavailable'` and
+`unavailable: 'engineOwned'` for counts; native widget edits and counters are not
+available through Monaco's public API.
+
+### Next pending request (development)
+
+`session.pending.next` takes an empty input and navigates through the mounted
+client's existing pending-request selection and exact-Home detail readers. UI,
+Agent and MCP invocations share that client placement; this is navigation, not
+Session resume or an unattended daemon read. Its closed result is
+`{ status: 'opened' | 'none' | 'unavailable' }`: `none` means the checked candidate
+Sessions have no answerable request, while missing client custody or unavailable
+details remain `unavailable`. The app-shell host derives Account bindings from
+the existing credential owner and cancels uncommitted navigation on retirement.
+The keyboard reference is generated from the same command registry.
+
+### Detached Run responses (development)
+
+`execution.run.permission.respond` answers an exact detached Run request with
+either a permission decision or structured question answers. The Run screen and
+Action share the existing daemon request writer; the Action does not replace its
+request-identity validation or result observation. It requires present-user
+authority. Agents and MCP can discover it, but automation-authority invocations
+receive `present_user_required` without dispatching a response.
+
+### Notification webhooks and this app’s updates (development)
+
+`notifications.webhooks.*` discovers configured channels without returning signing secrets and
+adds, edits, removes or changes their signing secret through the captured Account settings writer.
+The UI and Actions share the channel reducers and attention-policy mirror. Signing-secret input
+uses the Action secret field, is removed from observations, and has live-only approval custody.
+Webhook mutations retain ordinary dangerous-Action confirmation and do not send a notification.
+
+`app.updates.*` observes and invokes the answering app’s existing platform update owner through
+`useAppUpdateStatus`. The mounted shell summary keeps these operations available when the Updates
+page closes; retiring the last consumer makes them unavailable. Update, Retry and Restart require
+the operation currently offered by that owner, and Skip targets the exact offered desktop version.
+Operation results report `requested`; progress and failure remain observable through Get rather
+than being represented as an installation-success acknowledgement. These are client operations,
+not daemon or server update engines.
+
+### Connected Account configuration (development)
+
+The `connectedServices` configuration family lets Agents perform the same account-default,
+pool creation/removal, name, policy and member changes as the UI. Its executor uses the
+existing purpose-default writer and qualified V4 pool schemas. App HTTP adapters and Actions
+share `buildQualifiedConnectedAccountGroupMutationRequestV4`, including the revision-bound
+DELETE query contract; no separate pool writer or persistence format is introduced. Creation,
+patch and member edits return the acknowledged qualified group for subsequent revision-fenced edits.
+Removal clears defaults through `removeAgentConnectedAccountDefaultsForDeletedTarget` after
+the server acknowledges the exact incarnation and an authoritative reread confirms absence;
+a recreated same-ref pool retains its default. Action discovery, surfaces and approval
+remain owned by the ordinary registry.
 
 ### Ordinary Account Artifacts (development)
 
@@ -96,6 +186,18 @@ the existing header envelope, allowing header-only list cards to preview
 without another read or a server plaintext index. Stored raw metadata is kept
 separate from the UI's normalized display projection; display defaults are
 never repersisted into strict kind headers.
+
+### Session terminals (development)
+
+The session terminal Action family delegates membership and docking to the mounted
+AppPane workspace, and process work to its existing terminal controller and daemon
+PTY owner. UI tab menus and terminal toolbars use the same Action front door for
+Restart; a borrowed terminal is read-only, and an unmounted terminal cannot accept
+that request. Success admits the restart request, not completion of the new process.
+Open in Details pins the existing member's view without creating another terminal.
+Removing membership also removes its retained Details views, including hidden groups.
+The generated [host Action reference](../apps/docs/content/docs/plugins/api/host-actions.mdx)
+owns the family IDs and schemas.
 
 ### Work observation (development)
 
@@ -226,7 +328,76 @@ ordinary internal `build:prepared` dependency compilation does not regenerate or
 reject a stale Action map. This is an internal development representation change,
 not a new SDK API or a released availability claim.
 
+## Shared typed inputs (0.3 development source)
+
+[`inputs/**`](../packages/protocol/src/inputs/index.ts) owns the neutral field
+vocabulary, predicates, structured option identity and normalization used by
+Action hints, Workflow input adapters and widget descriptors. Value/schema
+admission remains distinct from form presentation. Workflow defaults,
+required-without-default rules and accepted-run input freezing stay with the
+Workflow owner.
+
+`action.options.resolve` delegates source reads to the single
+[`inputOptions`](../packages/protocol/src/inputs/inputOptions.ts) resolver.
+Action, Workflow and widget forms use that front door with their admitted
+consuming field; source-id possession alone does not grant discovery. Dynamic
+source refusal remains a typed error rather than a successful empty list or a
+fallback to static choices. UI options reads are demanded by an open form and
+retire with the last consumer.
+
+Plugin `inputTypes` declare a qualified semantic identity and self-contained
+value schema, with optional options Resource and picker renderer references.
+The existing Resource/renderer registration and grant owners admit those
+leaves; a picker result passes the same schema/options admission, while cancel
+causes no mutation. See [plugin input types](plugin-platform.md#typed-input-extensions-03-development)
+and the generated [host Action reference](../apps/docs/content/docs/plugins/api/host-actions.mdx)
+for current operation schemas.
+
+## Widget operations (0.3 development source)
+
+Widget catalog, definition, instance, input, area-layout, Refresh and snapshot
+Actions delegate to the owners described in
+[configured widgets](plugin-platform.md#configured-widgets-03-development).
+Instances select bindings; host layouts retain order, width and frame. Account
+Artifacts, shared Session Board records and device-local Companion preferences
+retain their separate lifetimes and authority. A headless caller cannot mutate
+an absent mounted client owner by pretending a durable Account write answered it.
+
+The public author surface is qualified `widgets.*` Actions for widget
+operations and plugin-ui `WidgetSurface` for a declared native page area;
+declarative pages use `widgetArea` nodes. Hosted HTML pages do not embed host
+widget areas and use ordinary `widgets.*` Actions only. Public
+`session.presentation.apply` and SDK `context.ui.present` accept the Protocol's
+author presentation subset: reversible current-Session navigation and
+arrangement of readable built-in, Board-item or pane references. Raw direct
+Companion instance payloads, instance input/rename intents and conditional
+instance-removal captures remain host-internal. The author subset reuses the
+host's canonical validators; it is not a second presentation owner or a way
+around widget admission.
+
+Viewer bindings resolve the viewing Account's qualified, existing Connected
+Account purpose selection. There is no per-instance viewer override or widget
+selection setting: a missing selection asks that viewer to Connect. Pinned
+Connected Account references are allowed only on personal surfaces. Changing
+the existing purpose selection retains its normal lifetime and can affect other
+viewer bindings using that same purpose; it is not an edit of one copy. Snapshot
+posting publishes the exact inert preview supplied to approval through the
+existing shared Board writer, without another read after approval. Definition
+update/delete and shared publication use the existing consequential approval
+defaults and configurable waivers. These are development contracts; public
+projection, package and loaded-platform validation remain separate evidence.
+
 ## Workflow inputs and complete review reads (0.3 development source)
+
+`workflow.definition.list` opens saved definitions through the existing batched
+Artifact read. A readable Workflow header with a missing, malformed or unreadable
+body remains a typed `contentStatus: 'unavailable'` row with `stepCount: null`;
+valid neighbors still load. Transport, authentication and Account-mode failures
+remain request-wide, and an unopened header is never inferred to be a Workflow.
+The lean row's `nextRunAt` is the earliest persisted occurrence among enabled
+scheduled triggers in enabled Account-level sets, or null when none is scheduled.
+The shared trigger summary owner reads this scheduler fact without opening private
+trigger context or calculating schedules in clients or Boards.
 
 Frozen Action input and output schemas use the same Protocol-owned draft-07
 JSON Schema dialect and Ajv compiler. Self-contained `definitions` and `$defs`
@@ -259,8 +430,14 @@ available in the reviewer result.
 
 Client-placed Actions operate on the answering client's current owners, not an
 arbitrary remote window. A headless host without the required client owner
-returns a typed unavailable/unsupported result. Declaring Agent, MCP or CLI
-exposure does not supply a transport to a different client.
+returns a typed unavailable/unsupported result. Declaring Agent or MCP
+exposure does not supply a transport to a different client. The registry's
+surface normalizer excludes client-placed Actions from CLI availability and
+friendly command generation. Agent and MCP declarations remain available to
+hosts with the required client owner; headless invocation still cannot execute
+them. Opening another UI device does not make these Actions routable from CLI.
+The catalog's `placements` field lists UI locations such as command palettes
+and menus; it does not report connected clients.
 
 `ui.command_palette.list` and `ui.command_palette.invoke` use the mounted
 `CommandPaletteProvider`'s current command builder. Removed commands and retired
@@ -275,22 +452,99 @@ the client must have that tab in its current workspace. No-tab opening retains
 its existing Session navigation behavior. These controls do not create another
 workspace store or infer layout measurements on headless hosts.
 
+In the current development UI, the mounted phone workspace also registers tab
+Actions, including while All tabs is open. Open, activate, close and reopen use
+the same guarded navigation owner before changing membership, focus or the
+phone stack. The phone transport pushes from a main screen and replaces an
+existing tab screen; closing the final tab returns to the list. Canvas, group
+and cross-group move operations remain unavailable on phones.
+
+Mobile-web Settings and Personalize are the presentation exceptions: their focused destination stays
+mounted in the workspace and uses browser navigation at both phone and desktop
+widths, retaining the route's layouts, parameters and unsaved editor state during
+resize. Admission requires a registered body; the workspace route registry derives its
+Settings inventory from `listSettingsRouteNames` and declares Personalize's module,
+catalog admission and responsive retention together. The hidden Expo URL mirror
+mounts only navigator registrations, while the hosted layout owns the collection
+controllers. Locations with repeated query values remain Expo-owned so their
+domain readers receive the original multiplicity. Native phones and other phone
+screens keep the stack transport above.
+
 `session.list.view.get/set/reset` use the rendered Session-list filter controller;
 My work is a scope in that controller. `shell.column.get/set` use the existing
 shell visibility control. Neither family creates a second filter store or
 changes Session access.
 
-`settings.list/get/set` discover U4 setting declarations by anchor. Explicit
-declaration bindings name the canonical Account or device preference key;
+`settings.list/get/set/invoke` discover U4 setting declarations by anchor. Explicit
+declaration bindings name the canonical Account or device preference key or an
+owner-backed nested field and its exact mutation schema;
 Account writes use the captured Account-settings writer and device writes use
 the local-settings owner. Values are validated by that preference's mutation
-schema. Navigation, derived values, sensitive preferences and compound editors
+schema. The Workflows capacity and Run-history retention anchors bind to the
+server-owned Automation settings record, not Account preferences. The Workflows
+Run settings controls use this same Action writer; field updates read the current
+record and preserve its other fields. Navigation, derived values, sensitive preferences and compound editors
 are not arbitrary scalar writes: discovery reports their access status and
 unsupported writes return a typed refusal.
 
-Settings discovery and mutation also respect the declaration's page feature
+Settings discovery, mutation and operations also respect the declaration's page feature
 gate and host availability. Optional unset values are explicit, rather than
-invented defaults. Compound editors keep their existing domain operations.
+invented defaults. Compound choices keep their domain owner and update atomically.
+
+The Conversations language anchor projects its title and write admission from the selected
+consumer's declared language behavior. It is Reply in for independent reply preferences and
+I speak for a service with one supported language for listening and replies. Unsupported or
+unreadable consumers have no scalar writer; a retained unsupported language is unavailable,
+not the service default. UI edits and Actions use the same preference owner and reject a
+prepared language change after the selected consumer or its activation retires.
+
+`settings.invoke` accepts a declared anchor and, for an executable Voice operation,
+a closed operation input (a model-pack or voice id, diagnostic artifact/session,
+revocation obligation, or diagnostic enable choice). Discovery advertises the
+operation, its default approval requirement and whether it needs human interaction; callers cannot submit a
+provider id, JSON path, gesture claim or confirmation token. Contributed Voice
+settings operations share the UI's occurrence/currentness, real confirmation,
+snapshot and Account-settings CAS owner. Provider-side success alone does not
+mean its patch was saved: the result reports completion only after that owner
+acknowledges the patch. Decline, unavailable prerequisites and uncertain write
+outcomes remain explicit.
+
+Credential selection and recipient review open the incumbent anchored control and report
+`interaction_opened`, rather than completion. Credential values stay undisclosed
+and scalar Get/Set remains refused. Curated moving-model aliases and privacy
+opt-ins use the same real human confirmation for UI and exact settings mutations;
+the mutation rechecks its admitted owner and Account scope before each CAS apply.
+Declared speech endpoints share the rendered endpoint normalization and consent owner:
+HTTPS clears insecure-origin consent, while HTTP consent is bound to the exact origin
+and reachable execution computer and rechecked before each prepared mutation applies.
+
+### Client-local Voice controls (development)
+
+The `ui.voice_global.*` conversation and Brief Actions execute on the answering
+client through its incumbent lifecycle, held-input, recovery and Inbox delivery
+owners. Read the current attempt with `ui.voice_global.get`; mutations carry the
+returned attempt identity, so later navigation cannot redirect a stop, mute or
+hold operation. Starting a microphone, recovery that may reopen it, and Brief
+request/retry require approval by default through the ordinary Action policy.
+End, mute, dismissal and reads are direct by default. The current attempt read
+reports captured destinations and actual availability, rather than promising
+that an unsupported host can start Voice. Brief delivery remains demand-mounted
+on the ready Home/Inbox surface; missing owners return typed unavailability.
+Approvals inside a brief remain tap-only and cannot be answered by speech.
+
+Executable Voice settings operations use `settings.invoke` and return typed
+completion, cancellation or unavailability from the same operation owners used
+by their controls. Destructive and secret-bearing operations default to approval;
+platform audio gestures, consent and save prompts still apply. These are
+development-source contracts, not a claim of availability in a released client.
+
+These V1 Action input/result and nested operation envelopes are closed: unknown
+fields are rejected and receive no routing, credential or mutation meaning.
+The optional discovery projection preserves older descriptors without an
+operation. The new operation is explicitly advertised through the Action catalog
+and each applicable setting; its absence supplies no invocation authority.
+This extends the 0.3 development contract without a persisted format change or
+an older-host obligation to execute the new Action.
 
 `inbox.mark_all_read` and `session.read_state.set` allow Agent and MCP callers to
 mark an exact Inbox snapshot or individual Session read without default confirmation.
@@ -331,7 +585,8 @@ the acknowledged Boards visible and offers Retry. Board entries in the Artifact
 inventory open Boards; direct generic Artifact detail/edit URLs also route to
 that owner instead of exposing the generic note writer for Board JSON.
 Missing Boards return `board_not_found`; editing an unreadable Board returns
-`invalid_board_record`. The stored document owner preserves unreadable Board bytes,
+`invalid_board_record`. JSON syntax or Board-schema failures are isolated to that
+unreadable document, so readable neighboring Boards still load. The stored document owner preserves unreadable Board bytes,
 unknown Artifact kinds and unknown source values
 without exposing them as writable Action input.
 
@@ -341,8 +596,10 @@ without exposing them as writable Action input.
 An optional outer `boardId` must match the intent target. Results include that id and
 the acknowledged Board, or `null` after deletion.
 Sources contain live sections, an inline Sessions filter and hand-picked refs
-with `{kind, qualifiedId: {serverId, id}}`. Updating `source` replaces its
-sections and filter; omitting `picked` preserves hand-picked items. Removing
+with `{kind, qualifiedId: {serverId, id}}`. A `source` update changes only supplied
+fields: omitted sections and filter stay unchanged, supplied values replace that
+setting, and `null` explicitly clears it. Omitted `picked` preserves hand-picked
+items, and unknown source data remains retained. Removing
 hand-picked refs delegates to the same Board intent owner as the UI.
 Agent `set_positions` moves do not prune: agents have no authoritative live
 membership, even when they supply a stale membership projection. UI moves still
@@ -354,6 +611,14 @@ so callers receive the mutation outcome. A host without the Board Artifact
 transport reports `unsupported_action`.
 
 ## Session-spawn model choices (0.3 development source)
+
+Host Voice Session creation uses the ordinary `session.spawn_new` executor and
+approval policy. Its admitted Home and Account supply the opaque creation
+namespace, so a retry with the same creation key rejoins the same logical
+creation without colliding with another Home or Account. Missing admitted scope
+refuses creation. This namespace grants no permission: Voice retains
+`account_automation`, including when it creates its hidden conversation before
+a parent Session exists.
 
 `action.options.resolve` for `session.spawn_new`'s `modelSelection` field returns
 an optional strict `modelCatalog`: native choices from the existing Agent
@@ -370,6 +635,13 @@ descriptors are public, nonsecret binding facts, not credential values. Catalog
 metadata grants neither execution permission nor trusted prompt authority;
 choice narrowing stays with the existing model hide-key owner, and launch
 revalidates the selected binding through ordinary Action and Provider admission.
+
+Host Voice may create its conversation before it has a parent Session. Its
+canonical spawn retry identity is scoped to the admitted Home and Account,
+using the existing opaque creation namespace and durable Action request id.
+Missing scope fails closed. This identity is only deduplication: Voice retains
+Account-automation authority and the Action's existing approval requirement;
+it does not become a present-user invocation.
 
 ## Notify me (0.3 development source)
 
@@ -764,14 +1036,27 @@ Plugin-contributed Actions follow the same split between present and non-present
 one owner per side. For a `ui` or `voice` invocation the UI dispatcher
 (`apps/ui/sources/components/plugins/surfaces/pluginSurfaceActionDispatch.ts`) is the only place
 that asks: it applies the shared requirement rule (`pluginActionRequiresPresentUserIntent`, which
-covers a non-safe danger level, declared confirmation, and the Account's Ask-first setting), shows
+covers the manifest default and the Account's invoking-surface approval setting), shows
 the app-shell confirmation, and only then executes. A client-target Action runs through the shared
 present-user gate in the UI. A daemon-target Action is sent with `presentUserIntent: 'confirmed'`
 on `daemon.plugins.structuredMessages.actions.execute`. The daemon's gate admits that carried
 intent and creates no `plugin_target_action` approval artifact. A request without it fails closed
 with `plugin_action_current_intent_unavailable`, so a settings skew between UI and daemon refuses
-rather than executes. Durable `plugin_target_action` artifacts remain only for requesters that are
+rather than executes when approval is required. An explicit waiver is carried as `false`, not
+absence: it overrides the non-safe/declared-confirmation default without changing the Action's
+danger metadata. Explicit Ask-first remains required even for safe Actions; missing settings use
+the manifest default and a failed settings read cannot waive approval. Catalog policy delegates
+to that same requirement rule, with no trusted invocation surface inferred from a catalog read.
+Durable `plugin_target_action` artifacts remain only for requesters that are
 not present in the app: agent, MCP, CLI, the public API and automation ingresses.
+
+In the unreleased 0.3 Plugin UI contract, `hostApi.confirm(message, { action })` binds a direct
+UI mutation to a contributed Action reference and applies this same policy before its existing
+domain writer. A waiver returns `true` without opening a dialog; a required decision uses the
+existing cancellable app-shell interaction. Missing declaration/policy refuses the operation.
+This requires no daemon handler or daemon connectivity. Without `action`, `confirm` remains an
+ordinary unconditional plugin-local question. Triage source removal and direct fix-PR link/unlink
+use this Action-bound form; their Account writers and encryption/collection ownership do not move.
 
 A settled artifact keeps only the declared input projection. The admitted `actionArgs` stay
 immutable while the request is `open`, `approved` and `executing`, because deferred replay reads
@@ -819,6 +1104,13 @@ the canonical execution-run V2 seam with `sessionId:null`; a contextual default
 Session is only provenance, not the execution target. Without this arm, the
 existing Session selection rule still applies. Contradictory detached/explicit
 Session input is rejected before any launch.
+
+For immediate UI Actions in 0.3 development, caller cancellation does not erase
+a returned effect disposition. Confirmed completion and explicit unknown
+outcomes remain available while the captured Home/Account is still current;
+true Account retirement still prevents disclosure. Reads and work not yet
+dispatched remain cancellable. Voice applies the same result custody instead
+of rewriting an acknowledged mutation as a cancellation or retrying it.
 
 ## The CLI demotes a success that did not take effect
 
@@ -911,6 +1203,12 @@ than a separate CLI process grant. Opening a provider compose page is
 `needs_input` with `result: opened_compose`, not evidence that a request was
 created. An unreadable response after a provider write is uncertain and carries
 the head/base query needed to reconcile it.
+
+## Current mounted UI context (0.3 development)
+
+`ui.current_context.read` and `ui.current_context.command.invoke` are client-local host Actions available to UI, Voice, Agent and MCP callers. The read returns the existing bounded navigation snapshot and opaque command descriptors; invocation accepts only a currently published command id. The answering AppShell uses the same current-context reader and semantic dispatcher as Voice, retaining mount retirement, current Action availability, declared caller surfaces and approval policy. Headless CLI/RPC hosts do not have this mounted owner and are not advertised as executors.
+
+Plugin pages publish finite `executeAction` or route-owned `openSurface` commands rather than raw UI state. PRs & Issues uses this seam for its [mounted-page operations](triage-sources.md#mounted-page-actions-03-development); the current context carries that page's ephemeral Action address for typed operations requiring entry references or a lens.
 
 ## Related
 

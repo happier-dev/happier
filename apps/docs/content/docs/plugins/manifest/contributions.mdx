@@ -46,6 +46,61 @@ for each family's source availability, optional maintained consumer evidence,
 unblock condition, loaded-platform evidence, and release availability. This keeps
 mutable support status in one generated owner rather than duplicating it here.
 
+## Entity drag sources and drop targets
+
+In **0.3 development / Developer Preview authoring**, `definePlugin` accepts
+`dragSources` and `dropTargets` records keyed by plugin-local id. A source
+declares a `title`, a JSON `referenceSchema`, and its client artifact/export
+reference and platforms. A target declares a `title`, `acceptedKinds`, an
+`actions` allowlist and the same client execution fields. Packing projects
+these into the manifest's existing contribution families; activation registers
+their handlers with `api.dragSources.register` and `api.dropTargets.register`.
+
+Custom kinds use `plugin:<pluginId>/<sourceId>`. Targets can also accept declared
+built-in kinds such as `session` and `repository-file`; Happier supplies their
+qualified identity. Kind acceptance and an Action allowlist do not grant
+access or bypass approval. The client occurrence owns registration lifetime,
+so an undeclared id or retired occurrence cannot register a usable target.
+
+The development `work-board-widget` kind also uses host-built Board/instance
+identity. Putting those fields in a custom source's JSON reference does not
+turn it into a built-in item: it remains the declared plugin kind.
+
+See [Entity drag and drop](/plugins/ui/react-native#entity-drag-and-drop-development)
+for mounting and resolver behavior, and the generated
+[SDK availability](/plugins/manifest/availability) for the installed artifact's
+support facts. These source contracts are not a published-runtime guarantee.
+
+## Typed inputs in development
+
+In **0.3 development / Developer Preview authoring**, `inputTypes` declares
+reusable primitive or semantic inputs for Action forms, Workflow inputs and
+widgets. Each plugin-local descriptor has a `title`, `semantic` identity and
+self-contained `valueSchema`; it can reference a declared options Resource and
+an existing picker in `ui.renderers`. Fields refer to the type through its
+qualified `{ pluginId, localId }` identity. The type owns its choices, so do not
+also declare field-level static options or a competing options source.
+
+`definePlugin` projects these descriptors. Register executable Resource and
+renderer leaves through their ordinary activation owners; `inputTypes` adds no
+new callback registration right. The host admits the consuming field, grants,
+current plugin occurrence and referenced Resource before discovery. An input
+schema or picker declaration grants neither token access nor execution routing.
+
+Headless callers receive the same schema and admitted options through
+`action.options.resolve`. Picker results are checked against the schema and
+available choices; cancellation changes nothing, and a replaced occurrence
+cannot settle an old picker. A type without an options Resource has no choice
+read. Removed types preserve saved values for repair.
+
+In current development source, Action fields, Workflow inputs, widget setup
+and native plugin Forms connect admitted picker mounts through the same host
+provider and ephemeral-input presenter. Loaded all-consumer validation has not
+been completed; source wiring is not a released-runtime support claim. Check
+the generated [SDK surface](/plugins/api/surface),
+[host Action reference](/plugins/api/host-actions) and
+[availability matrix](/plugins/manifest/availability) for your exact SDK artifact.
+
 ## Cross-plugin contribution points
 
 A target declares `contributionPoints` with a feature-owned protocol's
@@ -87,6 +142,12 @@ same input and step grammar as the Workflow library. In `definePlugin`, use a
 optional `description`, and a `definition`. The host projects these values into
 the cold manifest's `contributes.workflows` array with the local `id` included.
 Check your SDK artifact's generated capability matrix before using this family.
+
+Within a contributed definition, a local Action reference such as `post` resolves
+to that plugin's qualified Action id. Explicit host and qualified Action ids stay
+unchanged. Happier rejects invalid Workflow graphs before catalog publication;
+an unavailable referenced Action remains in the definition and prevents run
+admission rather than being silently removed.
 
 Happier projects these descriptors into **From plugins** in the Workflow library
 and start pickers. People can run a plugin workflow or duplicate it into their

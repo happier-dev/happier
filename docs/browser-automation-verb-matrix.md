@@ -77,6 +77,10 @@ Session browser presence uses that same daemon control route for `takeControl` a
 The owner-scoped machine RPC stamps present-user authority; commands cannot supply their own
 authority. Hand-back preserves input drain and requires a fresh successful snapshot before the
 agent resumes mutations. In-app presence delegates to its existing UI control service.
+Agent `browser.control.takeControl` and `browser.control.handBack` Actions use the same view-addressed
+reverse route for mounted UI panes, with the existing Session binding and approval floor. The UI
+command owner delegates to that pane's control service, not a fallback controller. Handback during
+input settlement returns a retryable `permission_denied` command result rather than claiming success.
 
 Browser Action admission derives input requester authority from the trusted host context:
 `present_user` is human input and every other authority is agent input. A caller-supplied
@@ -107,6 +111,11 @@ parser shared by daemon automation and transcript labels; CSS/test ids are not r
 human-readable target names. These remain development-source contracts.
 
 ## Browser context and model images (development)
+
+The launch suggestion owner supplies detected-listener identity in
+`sourceClass.inventoryEntryId`. Services Open, lifecycle controls, row/listener association and
+daemon preview registration consume that projection; a launcher display id is not inventory
+authority. Missing identity cannot register a detected preview or execute its lifecycle Action.
 
 Isolated, host-origin local previews cooperate with the web pane through the authorized server
 preview proxy. The pane supplies its collector identity; HTML navigation responses receive a
@@ -293,6 +302,10 @@ Only actions declared by `INJECTED_PAGE_AUTOMATION_ACTIONS` enter the installed 
 - **Agent results and timeline summaries are different projections.** Agent results preserve
   useful valid data under the shared privacy floor; timeline summaries remain compact. Selectors
   are never shortened into different selectors, and omitted data is reported as incomplete.
+  The UI controller projects the settled injected result through the same Protocol full-result
+  redactor as the daemon; agent output is not reconstructed from timeline entries. Collector queries
+  return all matches rather than silently slicing to 25. Forbidden keys remain rejected at the
+  injected wire boundary, and unsafe URL values remain redacted from returned Action data.
 - **`upload` is content-supplied, not path-supplied.** The injected page runtime builds a `File`
   from the payload (`files: [{ name, mimeType, text, base64? }]`) and assigns it to the input's
   `files`. A page cannot read a host filesystem path, so there is no "upload this local file" verb.

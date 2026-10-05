@@ -11,8 +11,9 @@ Workflows, Roles and launch profiles you reuse.
 
 This guide describes the **0.3 development version**, not a shipped release.
 The browser and history described here require a Home running the current 0.3
-Artifacts implementation and schema. Binary attachments, public sharing links
-and interactive HTML artifacts are outside this text-document guide.
+Artifacts implementation and schema. The HTML viewer additionally requires the
+Home's isolated HTTPS preview host. This is development-only behavior, not
+released availability.
 
 ## Browse and open
 
@@ -24,6 +25,20 @@ remembers that choice on the device.
 On a wide screen, a document opens beside the collection. On a phone, it opens
 as its own page. Prompts, Boards, Workflows, Roles and launch profiles open in
 their own surfaces, where their editing and use controls belong.
+
+HTML documents show a static card in the grid. Opening one loads its interactive
+preview on the isolated host, not inside the app's document origin. If the host
+or content is unavailable, the preview offers **Retry**. It does not make the
+document public.
+
+Agents can create or publish an HTML document through the existing Artifact
+Actions and receive a private preview link after approval. They can also publish
+a bundle containing the document and its local images, styles and classic
+JavaScript. External assets and JavaScript module/import-map declarations are
+not supported by this viewer; publish a self-contained classic-script bundle.
+References in HTML and CSS resolve from that bundle. Scripts cannot fetch bundle
+files or load dynamically named assets; embed that data in the document or script.
+The sandbox cannot use the app's cookies, storage or authenticated API.
 
 ## Save a document
 
