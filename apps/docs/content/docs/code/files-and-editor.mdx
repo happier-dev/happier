@@ -133,6 +133,10 @@ Typical use cases:
 - find a config file by name, then jump straight into the editor
 - browse only modified files while still keeping folder context
 
+For text inside files, use [Search → Text in files](/organize/search#search-inside-workspace-files).
+The Files field searches names and paths. Text in files searches the workspace
+on the selected machine and opens a hit at its line with Find on the query.
+
 ### Create files and folders
 
 The Files toolbar includes actions to create:
@@ -254,6 +258,52 @@ This matters when you:
 - compare two files while editing one of them
 - jump between Review and an editor tab
 - switch sessions and come back later
+
+### Find in files, diffs and review
+
+<Callout type="info">
+  Find and the travelling Search query described here are part of the
+  **Happier 0.3 development channel**, not a released stable version.
+</Callout>
+
+In a text preview or diff, use its **Find** control or
+<kbd>⌘</kbd>+<kbd>F</kbd> (<kbd>Ctrl</kbd>+<kbd>F</kbd> elsewhere).
+Find highlights matching text and the current match. Use the previous/next
+controls, <kbd>⌘</kbd>+<kbd>G</kbd> and
+<kbd>⌘</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> (Ctrl on other platforms),
+or Enter/Shift+Enter while the Find input has focus. Esc closes Find and
+returns focus. Case matching and regular expressions are optional.
+
+Review Find searches the change set's diff text, including folded context
+and files whose diffs have not loaded yet. Per-file counts help you move
+through the review. A current match opens its file and folded region;
+**Fold again** restores that temporary expansion without changing your folding
+preferences. Binary files and failed diff loads leave coverage partial.
+It searches the review's available diff corpus, not every line of every file
+in the repository.
+
+On web, a review using Pierre temporarily uses Happier's diff renderer while
+Find is open so it can reveal offscreen matches. Closing Find restores the
+selected renderer. **Monaco keeps its own Find widget**, including when a
+Search hit supplies the query; there is no second Happier Find bar above it.
+The native CodeMirror editor uses the live document's search with Happier's
+Find controls. Images and binary previews have no text Find control.
+
+### Find in terminal output
+
+In the same 0.3 development channel, the terminal's **Find** menu item and
+shortcut search retained, rendered output when the mounted terminal uses
+**xterm**. This includes web xterm and the xterm WebView fallback on native
+clients. On phone, Find replaces the terminal key rail while open; Done
+returns to the keys and terminal focus.
+
+Native **Ghostty** and **Termux** terminals do not support Find yet, so their
+Find menu item is hidden. Support follows the actual mounted terminal, rather
+than the operating system alone. Output that has left scrollback is no longer
+searchable, and a reached scrollback or match-decoration bound is reported as
+limited coverage. A handled Find shortcut does not also send input to the
+shell; on Windows/Linux, Ctrl+F in a supported focused terminal opens Find.
+You can rebind it under [Keyboard shortcuts](/apps/keyboard-shortcuts).
 
 ### File details action bar
 

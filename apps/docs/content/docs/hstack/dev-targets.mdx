@@ -221,6 +221,9 @@ node ./apps/stack/scripts/repo_local.mjs dev-targets placement set commands auto
 node ./apps/stack/scripts/repo_local.mjs dev-targets placement set daemon mac
 node ./apps/stack/scripts/repo_local.mjs dev-targets placement set server mac
 
+# Development-only: build named-stack artifacts in a separate worker workspace.
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set build linux
+
 node ./apps/stack/scripts/repo_local.mjs dev-targets placement show
 ```
 
@@ -234,6 +237,21 @@ Runtime surfaces accept `local` or one configured target name. `commands` additi
 | `expo` | Metro/Expo watch, bundle, and restart work | TUI, Mutagen, stable Expo port/tunnel |
 | `daemon` | CLI build/watch and daemon process | TUI, Mutagen, server tunnel |
 | `server` | Server watch/build/restart and its selected database | TUI, Mutagen, stable server port/tunnel |
+| `build` | Named-stack runtime preparation and component compilation | Producer admission, artifact store, snapshot publication and selection |
+
+In current development source, `build` placement uses a dedicated workspace beneath the target's
+CLI home, separate from its continuously synchronized source mirror and live service outputs.
+Each admitted producer flight captures its current source; later edits do not change that worker
+build. Dependencies and generated outputs remain target-local. Finished component and support
+artifacts return to the producer through the existing manifest and snapshot owners.
+
+The worker must report the same operating system and architecture as the producer. For example,
+a Linux ARM64 producer needs a Linux ARM64 worker; a Linux x64 WSL worker cannot produce its
+host-native daemon support. Compilation uses the existing memory-aware worker admission policy.
+An unavailable or mismatched worker falls back locally with an explicit log message before build
+dispatch. Once compilation starts, a failure propagates without replaying the build locally.
+Native Windows worker placement is not supported by this build transport; matching WSL targets
+use the POSIX path. Build placement does not move running services or their databases.
 
 A synchronized target does not have to participate in automatic command
 execution. For example, a `mac-host` target can remain configured as the
@@ -263,9 +281,10 @@ node ./apps/stack/scripts/repo_local.mjs dev-targets placement clear --downgrade
 Removing a target that still owns an exclusive runtime or fixed command placement is rejected. An
 automatic all-target command pool follows target additions and removals.
 
-Placement is best-effort. Before starting an exclusively placed service, Stack checks Mutagen and
-the target host/toolchain. If that preflight cannot reach the host, the service starts locally for
-that Stack generation. A service process exiting is not treated as host unreachability: in
+Before starting an exclusively placed service, Stack checks Mutagen and
+the target host/toolchain. Expo and daemon placement can fall back locally when this preflight
+cannot reach the host. Persisted remote server placement is authoritative: an unavailable server
+target fails startup rather than opening a different local database. A service process exiting is not treated as host unreachability: in
 particular, Expo/Metro is restarted on its configured target while the independent SSH tunnel keeps
 the local port stable. This prevents a normal Expo crash from creating a competing local Metro
 process.
@@ -312,10 +331,27 @@ This borrowed endpoint is the default UI mode for controlled QA stacks. Their se
 still load shared runtime snapshots; static snapshot UI is reserved for explicitly strict or
 reproducible UI QA.
 
-The default light server uses a SQLite file owned by the machine running the server. Stack does not
-mount or proxy a local SQLite file over SSH. Keep `server` local until the development database is
-deliberately moved to the target, or use a network database such as PostgreSQL before placing the
-server remotely.
+Remote server placement currently supports the light server with SQLite. Its database file belongs
+to the machine running the server; Stack does not mount or proxy a local SQLite file over SSH.
+Keep `server` local until the retained server data has a supported handoff to the target. Setting
+placement changes configuration only; it does not transfer that data. A network database does not
+remove the current light-server/SQLite placement restriction.
+
+### Controlled runtime stacks (0.3 development)
+
+Service placement currently applies to the source development lifecycle. A
+[controlled QA stack](/hstack/stacks#controlled-stacks-for-agent-qa) started with
+`stack start --runtime` still loads its selected snapshot locally. Setting server or daemon
+placement does not move that controlled runtime or transfer its retained database.
+
+Managed snapshots include native executables and support files for the producer's platform and
+architecture. The target must match both; a Linux WSL worker does not automatically match an ARM64
+Linux producer. Copying the snapshot or changing its manifest cannot make those bytes portable.
+Keep the existing controlled stack until its runtime and placement owners support the complete
+snapshot and retained-data handoff. The handoff must preserve the server's signing secret and
+public/private files alongside SQLite, so existing browser authentication and retained data remain
+usable through the forwarded origin. Session workspaces must also be writable directories outside
+the one-way source replica.
 
 ## Run heavy commands on a target
 
@@ -355,6 +391,13 @@ reserved for commands that genuinely require that machine. Capacity presets
 do not impose a fixed job-count limit: normal load and health observations
 continue to choose among local and remote executors.
 
+In 0.3 development, concurrent commands for the same target can share a successful
+Mutagen flush only when it started after their synchronization requests. A command
+requested during a flush waits for a later cycle, preserving source files written
+just before that request. Every command still checks the session's current health
+before remote dispatch. Failed or canceled flushes cannot satisfy a queued request.
+On platforms without `flock`, each command performs its own flush.
+
 The repository root and every internal workspace route their ordinary `test`, `test:unit`,
 `typecheck`, and `vitest` entry points when present. Their `*:local` counterparts are the canonical
 local implementations.
@@ -391,12 +434,19 @@ If the flush fails, it releases the dispatch reservation and applies `fallback=l
 of running the remote command against an older checkout.
 
 On Linux, recognized typecheck, Vitest, build-like, and direct dependency-install commands share a
-per-target-account admission pool. Its capacity is derived locally as the smaller of one slot per
-four CPUs and one per 12 GiB of RAM (three on a 14-core/72 GiB primary, two on an 8-core/24 GiB
-worker). The launcher reports waiting provenance, pauses new starts for a saturated current run
-queue, less than 10% available memory, or memory PSI `avg10` of 10 or higher, and releases an
-interrupted command's slot for the next waiter. Searches and ordinary control commands keep their
-normal dispatch path.
+per-target-account admission queue without a fixed job-count ceiling. The launcher reports waiting
+provenance and pauses new starts below the class's available-memory floor, below 10% available
+memory, or at memory PSI `avg10` of 10 or higher. It also pauses when the runnable count is at least
+twice the online CPU count and CPU PSI `avg10` is at least 50. An interrupted command releases its
+admission record. Searches and ordinary control commands keep their normal dispatch path.
+
+In 0.3 development, full typechecks and all `build:*` families use the compilation admission
+class. Automatic routing excludes workers with less than 21 GiB of total RAM for this class,
+including cached samples and local candidates. This conservative envelope covers the observed
+10–21 GB full UI typecheck peak; it is not a limit on the command's memory use. Linux and WSL
+admission also wait for at least 21 GiB available memory, alongside the existing pressure guards.
+Focused validation keeps its existing class. macOS selection applies the total-capacity filter,
+but does not have the Linux admission queue or available-memory floor.
 
 In the current development checkout, automatic routing and named POSIX-target execution from a
 macOS or Linux computer use the same dispatcher. Recognized searches and validation commands run at
@@ -497,6 +547,10 @@ node ./apps/stack/scripts/repo_local.mjs dev-targets sync-service stop
 Detached mode does not leave a Stack or Node wrapper running. Mutagen's daemon owns the live
 sessions. `start` resumes and checks each configured synchronization session; it does not install
 dependencies or build outputs. Command and service preflight own executable/dependency readiness.
+In 0.3 development, targets selected for commands alone use a slower source polling interval.
+Targets selected for any runtime service keep the normal interval, even if they also run commands.
+Every command still forces synchronization before it starts. Service status uses current session
+health; the separately reported startup preparation history can retain an earlier, recovered error.
 A one-way replica can occasionally retain ignored generated files after their local source root is
 deleted. On startup, the sync service repairs that narrow conflict only when the local root is still
 absent and the remote residue is limited to target-local generated artifacts. Source conflicts,

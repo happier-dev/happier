@@ -89,3 +89,17 @@ If Pi is not detected:
 1. Verify `pi --version` works.
 2. Restart Happier.
 3. Set `HAPPIER_PI_PATH` if your binary is not in `PATH`.
+
+[Pi's vendor installer](https://pi.dev/install.sh) can put its launcher at
+`~/.pi/agent/bin/pi`, or under `PI_CODING_AGENT_DIR/bin/pi` when that directory is
+configured. An already running daemon may retain a `PATH` from before installation.
+Point `HAPPIER_PI_PATH` at the launcher and restart the daemon if terminal launches
+work but daemon launches fail.
+
+The current 0.3 development source adds discovery of these locations when `PATH`
+has no Pi executable. An invalid `HAPPIER_PI_PATH` must be corrected or unset; it does not
+fall back to another installation.
+
+In current 0.3 development builds, an unavailable Pi CLI is reported as a startup
+prerequisite failure. Install Pi or correct its configured path, then restart the
+daemon before starting another session.

@@ -126,6 +126,11 @@ projection of automatic source publication. Its `phase`, `currentSnapshotId`, an
 show whether a server/daemon refresh is stale, publishing, current, or failed. A failed publication keeps the
 current snapshot and source services in place; it does not restart consumers. The TUI renders the same summary.
 
+In current development checkouts, explicit named-stack artifact builds also record their requested components'
+terminal outcomes in this producer projection, including failures during dependency preparation. Read the
+producer's `stack info --json` for the component error. Build progress and lock waits go to stderr, so they remain
+visible with `--json`. A successful artifact build still requires runtime activation before a consumer can load it.
+
 Common fixes:
 
 For a controlled stack, run these commands from the checkout under test through

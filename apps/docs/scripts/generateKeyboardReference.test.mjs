@@ -4,7 +4,23 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
-import { renderKeyboardReferenceMarkdown } from './generateKeyboardReference.mjs';
+import { parseKeyboardCommands, renderKeyboardReferenceMarkdown } from './generateKeyboardReference.mjs';
+
+test('preserves browser and desktop-host availability in shortcut projections', () => {
+  const commands = parseKeyboardCommands(`export const commands = [
+    {
+      id: 'session.pending.next',
+      defaultBindings: [
+        { binding: 'Alt+Shift+J', platforms: ['web'], webHost: 'browser' },
+        { binding: 'Mod+Shift+J', webHost: 'desktop' },
+      ],
+    },
+];`);
+  assert.deepEqual(commands.get('session.pending.next'), [
+    { key: 'Alt+Shift+J', scope: 'browser' },
+    { key: 'Mod+Shift+J', scope: 'desktop and native' },
+  ]);
+});
 
 test('documents Search independent gating and account-synced shortcut preferences', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-keyboard-reference-'));
