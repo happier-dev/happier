@@ -265,7 +265,38 @@ jobs:
       - name: Prepare the canonical Iroh native runtime before compiler workspace publication
         run: yarn workspace @happier-dev/iroh-native build:native
       - name: Check compiler diagnostics without governance or test phases
-        run: yarn -s typecheck:compiler
+        id: gate-compiler
+        run: |
+          echo "GATE_COMPILER_STARTED_AT=$(date --utc --iso-8601=seconds)" >> "$GITHUB_ENV"
+          echo "Compiler host memory before execution:"
+          free -h
+          echo "Compiler host cgroup memory events before execution:"
+          if [ -r /sys/fs/cgroup/memory.events ]; then
+            cat /sys/fs/cgroup/memory.events
+          else
+            echo "Root cgroup memory.events unavailable; kernel evidence remains necessary."
+          fi
+          yarn -s typecheck:compiler
+      - name: Report host evidence after compiler termination
+        if: ${{ failure() && steps.gate-compiler.outcome == 'failure' }}
+        run: |
+          echo "Compiler host memory after failure:"
+          free -h
+          echo "Compiler host cgroup identity:"
+          cat /proc/self/cgroup
+          for observation in memory.events memory.max memory.peak memory.current; do
+            compiler_observation_path="/sys/fs/cgroup/$observation"
+            echo "$compiler_observation_path:"
+            if [ -r "$compiler_observation_path" ]; then
+              cat "$compiler_observation_path"
+            else
+              echo "Unavailable at root cgroup; no conclusion from the missing observation."
+            fi
+          done
+          echo "Kernel journal since compiler execution began:"
+          if ! sudo -n journalctl --kernel --since "$GATE_COMPILER_STARTED_AT" --no-pager; then
+            echo "Kernel journal unavailable; compiler termination sender remains unknown."
+          fi
 
   gate-unit:
     name: Gate — ${{ matrix.package }} unit (${{ matrix.part }}/${{ matrix.parts }})

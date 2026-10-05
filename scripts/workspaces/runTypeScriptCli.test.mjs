@@ -8,6 +8,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
+import { resolveYarnCommandInvocation } from './execYarnCommand.mjs';
 
 const runner = fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url));
 const serverRunner = fileURLToPath(new URL('../../apps/server/scripts/runTypeScriptCli.mjs', import.meta.url));
@@ -16,6 +17,7 @@ const buildRunner = fileURLToPath(new URL('./buildTypeScriptPackageDist.mjs', im
 const cliBuildRunner = fileURLToPath(new URL('../../apps/cli/scripts/build.mjs', import.meta.url));
 const heartbeatRunner = fileURLToPath(new URL('../runWithHeartbeat.mjs', import.meta.url));
 const procModule = new URL('../../apps/stack/scripts/utils/proc/proc.mjs', import.meta.url).href;
+const rootTypecheckModule = new URL('../testing/runTypecheck.ts', import.meta.url).href;
 
 async function waitUntil(predicate, message) {
   const deadline = Date.now() + 5_000;
@@ -196,6 +198,67 @@ test('compiler cancellation reaches its native worker process group', { skip: pr
   await waitUntil(() => !alive(pid) && !alive(workerPid), 'compiler or native worker survived cancellation');
   assert.deepEqual(await exited, [null, 'SIGTERM']);
 });
+
+for (const target of ['compiler leaf', 'outer heartbeat']) {
+  test(`root Yarn suite distinguishes SIGTERM of ${target} from an aggregate failure`, { skip: process.platform === 'win32' }, async (t) => {
+    const setup = await fixture(t, { tree: target === 'outer heartbeat' });
+    const sentinelFile = join(setup.root, 'sentinel');
+    const suiteStartedFile = join(setup.root, 'suite-started.json');
+    const suiteScript = join(setup.root, 'suite.mjs');
+    await writeFile(suiteScript, `
+      import { writeFile } from 'node:fs/promises';
+      import { runRootTypecheck } from ${JSON.stringify(rootTypecheckModule)};
+      await writeFile(${JSON.stringify(suiteStartedFile)}, JSON.stringify({ yarn: process.env.npm_config_user_agent }));
+      try {
+        await runRootTypecheck({ commands: [
+          { id: 'compiler-leaf', args: ['-s', 'compiler'] },
+          { id: 'subsequent-sentinel', args: ['-s', 'sentinel'] },
+        ] });
+      } catch (error) {
+        process.stderr.write(error.message + '\\n');
+        process.exitCode = 1;
+      }
+    `);
+    const nodeScript = (path) => `${JSON.stringify(process.execPath)} ${JSON.stringify(path)}`;
+    const sentinelScript = `require('node:fs').writeFileSync(${JSON.stringify(sentinelFile)}, 'attempted');`;
+    await writeFile(join(setup.root, 'package.json'), JSON.stringify({
+      name: 'cancellation-fixture',
+      type: 'module',
+      packageManager: 'yarn@1.22.22',
+      scripts: {
+        'root-suite': `${JSON.stringify(process.execPath)} --experimental-strip-types ${JSON.stringify(suiteScript)}`,
+        compiler: nodeScript(runner),
+        sentinel: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(sentinelScript)}`,
+      },
+    }));
+    const yarn = resolveYarnCommandInvocation(['-s', 'root-suite']);
+    const { child, stderr } = setup.start([heartbeatRunner, '--', yarn.command, ...yarn.args]);
+    // The marker belongs only to the substituted compiler, before any signal is sent.
+    await waitUntil(() => readFile(setup.pidFile).then(() => true, () => false), () => `fake compiler did not start: ${stderr()}`);
+    assert.match(JSON.parse(await readFile(suiteStartedFile, 'utf8')).yarn, /^yarn\/1\.22\.22\b/);
+    const compilerPid = Number(await readFile(setup.pidFile, 'utf8'));
+    const exited = once(child, 'exit');
+    if (target === 'compiler leaf') {
+      process.kill(compilerPid, 'SIGTERM');
+      assert.deepEqual(await exited, [1, null], stderr());
+      await waitUntil(() => !alive(compilerPid), 'compiler leaf survived SIGTERM');
+      assert.equal(await readFile(sentinelFile, 'utf8'), 'attempted');
+      assert.match(stderr(), /^Root typecheck suite failures:\n- compiler-leaf: exited with status 143$/m);
+    } else {
+      await waitUntil(() => readFile(setup.workerPidFile).then(() => true, () => false), 'native worker did not start');
+      const workerPid = Number(await readFile(setup.workerPidFile, 'utf8'));
+      child.kill('SIGTERM');
+      await waitUntil(() => !alive(compilerPid) && !alive(workerPid), 'compiler or native worker survived outer cancellation');
+      assert.deepEqual(await exited, [1, null], stderr());
+      assert.equal(await readFile(sentinelFile, 'utf8').catch((error) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      }), null);
+      assert.doesNotMatch(stderr(), /Root typecheck suite failures:/);
+    }
+    t.diagnostic(stderr());
+  });
+}
 
 test('supervisor group SIGKILL stops the compiler runner and its native worker', { skip: process.platform === 'win32' }, async (t) => {
   const setup = await fixture(t, { tree: true });
