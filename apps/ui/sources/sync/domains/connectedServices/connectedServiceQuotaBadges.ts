@@ -2,6 +2,8 @@ import type {
   ConnectedServiceQuotaMeterV1,
 } from '@happier-dev/protocol';
 
+import { isConnectedServiceQuotaMeterVisible } from './connectedServiceQuotaMeterVisibility';
+
 import { clampQuotaPct, deriveQuotaUtilizationPct } from './deriveQuotaUtilizationPct';
 import { selectComparableConnectedServiceQuotaMeters } from './connectedServiceQuotaGauge';
 
@@ -99,11 +101,12 @@ export function computeConnectedServiceQuotaSummaryBadges(params: Readonly<{
   }));
 }
 
-/** Usage details retain all reported meters; pins and strategy only order them. */
+/** Usage details retain useful and pinned windows; strategy orders the comparable meters. */
 export function buildSummaryMeters(
   meters: ReadonlyArray<ConnectedServiceQuotaMeterV1>,
   pinnedMeterIds: ReadonlyArray<string>,
   strategy: ConnectedServiceQuotaSummaryStrategy,
+  nowMs: number = Date.now(),
 ): ReadonlyArray<ConnectedServiceQuotaSummaryMeter> {
   const meterIds = [...new Set([...pinnedMeterIds, ...meters.map((meter) => meter.meterId)])];
   const selected = selectConnectedServiceQuotaSummaryMeters({
@@ -116,12 +119,13 @@ export function buildSummaryMeters(
     meters,
     meterIds: meterIds.filter((meterId) => !selectedIds.has(meterId)),
   });
-  return [...selected, ...remaining].flatMap((selected) => selected.meter ? [{
+  return [...selected, ...remaining].flatMap((selected) => selected.meter
+    && isConnectedServiceQuotaMeterVisible(selected.meter, nowMs, pinnedMeterIds) ? [{
     meterId: selected.meterId,
     label: selected.label,
     utilizationPct: selected.utilizationPct,
     remainingPct: selected.remainingPct,
     status: selected.meter.status,
-    resetsAt: selected.meter.resetsAt ?? null,
+    resetsAt: selected.meter.resetAtMs ?? selected.meter.resetsAt ?? null,
   } satisfies ConnectedServiceQuotaSummaryMeter] : []);
 }

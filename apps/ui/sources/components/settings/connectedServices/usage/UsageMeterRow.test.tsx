@@ -56,11 +56,20 @@ describe('UsageMeterRow (lab csvc MT, the one meter)', () => {
         expect(texts(monthly)).toContain('monthly');
     });
 
+    it('preserves a useful reset when the percentage is unavailable', async () => {
+        const row = await renderScreen(
+            <UsageMeterRow testID="reset-only" label="Weekly" remainingPct={null} resetsAt={NOW + MIN} tone="neutral" now={NOW} />,
+        );
+        expect(texts(row)).toContain('Unavailable');
+        expect(texts(row)).toContain('in 1m');
+        expect(row.findHostByTestId('reset-only')?.props.accessibilityLabel).toContain('in 1m');
+    });
+
     it('keeps the row for a window the provider did not report, and marks an estimate', async () => {
         const unknown = await renderScreen(
             <UsageMeterRow label="Weekly · Sonnet" remainingPct={null} resetsAt={null} tone="neutral" now={NOW} />,
         );
-        expect(texts(unknown)).toContain('Not reported');
+        expect(texts(unknown)).toContain('Unavailable');
 
         const estimated = await renderScreen(
             <UsageMeterRow label="5-hour" remainingPct={58} resetsAt={NOW + 70 * MIN} tone="neutral" now={NOW} estimated />,

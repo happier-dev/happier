@@ -349,6 +349,13 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
             const pinnedMeterIds = settings.connectedServicesQuotaPinnedMeterIdsByKey[entry.key] ?? [];
             const strategy = resolveQuotaSummaryStrategy(settings.connectedServicesQuotaSummaryStrategyByKey[entry.key]);
             const meters = buildSummaryMeters(snapshot.meters, pinnedMeterIds, strategy);
+            if (meters.length === 0) {
+                withoutUsage.push({
+                    key: entry.key, serviceLabel: summaryService.serviceLabel,
+                    legacyServiceId: summaryService.legacyServiceId, state: 'unavailable', ...identity,
+                });
+                continue;
+            }
 
             next.push({
                 key: entry.key,

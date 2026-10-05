@@ -17,6 +17,7 @@ import {
     resolveQuotaTone,
 } from './resolveQuotaTone';
 import { formatResetCountdown } from './formatResetCountdown';
+import { isConnectedServiceQuotaMeterVisible } from './connectedServiceQuotaMeterVisibility';
 
 export type ConnectedServiceQuotaGaugeWindowMode =
     | 'most_constrained'
@@ -388,14 +389,14 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         return row && row.usedPct !== null && row.remainingPct !== null
             ? [{ ...row, usedPct: row.usedPct, remainingPct: row.remainingPct }] : [];
     });
-    // Details retain every reported usage/rate window, including unknown percentages.
+    // Details retain useful usage/rate windows and explicitly pinned placeholders.
     // The comparable numeric family alone selects the main composer ring.
     for (const meter of snapshotMeters) {
         const category = readPublicLimitCategory(meter);
         if ((category && !['usage_limit', 'rate_limit'].includes(category))
             || allMeterRows.some((existing) => existing.meterId === meter.meterId)) continue;
         const row = buildMeterRow(meter, params.nowMs, params.formatter);
-        if (row) allMeterRows.push(row);
+        if (row && isConnectedServiceQuotaMeterVisible(meter, params.nowMs, params.additionalMeterIds)) allMeterRows.push(row);
     }
 
     const selectedWindowPrefix = params.windowMode === 'most_constrained'

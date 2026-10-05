@@ -80,6 +80,24 @@ describe('gauge tone boundaries derive from the canonical resolveQuotaTone owner
 });
 
 describe('computeConnectedServiceQuotaGaugeViewModel', () => {
+    it('hides empty quota placeholders while keeping valid zeroes, resets, and pins', () => {
+        const vm = computeConnectedServiceQuotaGaugeViewModel({
+            snapshot: snapshot([
+                meter({ meterId: 'full', label: 'Full', utilizationPct: 0 }),
+                meter({ meterId: 'empty', label: 'Empty', utilizationPct: 100 }),
+                meter({ meterId: 'placeholder', label: 'Placeholder', status: 'unavailable' }),
+                meter({ meterId: 'reset', label: 'Reset', status: 'unavailable', resetAtMs: 62_000 }),
+                meter({ meterId: 'expired', label: 'Expired', status: 'unavailable', resetsAt: 1_000 }),
+                meter({ meterId: 'pinned', label: 'Pinned', status: 'unavailable' }),
+            ]),
+            windowMode: 'most_constrained', nowMs: 2_000, formatter,
+            additionalMeterIds: ['pinned'],
+        });
+        expect(vm?.allMeterRows.map((row) => row.meterId)).toEqual(['full', 'empty', 'reset', 'pinned']);
+        expect(vm?.remainingPct).toBe(0);
+        expect(vm?.usageRings.map((ring) => ring.meterId)).toEqual(['empty']);
+    });
+
     it('keeps the aggregate available count authoritative when detail rows are capped', () => {
         expect(summarizeConnectedServiceQuotaRecoveryCredits({
             availableCount: 3,

@@ -595,8 +595,9 @@ describe('useConnectedServiceQuotaSummaries', () => {
 
         // A rate-limit meter in another comparable family must not become the
         // headline number just because it has less remaining.
+        expect(seen.at(-1)?.summaries[0]?.primaryMeter?.meterId).toBe('weekly');
         expect(seen.at(-1)?.summaries[0]?.meters.map((meter) => meter.meterId))
-            .toEqual(['weekly']);
+            .toEqual(['weekly', 'burst']);
     });
 
     it('requests summaries for retryable refresh-failure profiles because they remain usable', async () => {

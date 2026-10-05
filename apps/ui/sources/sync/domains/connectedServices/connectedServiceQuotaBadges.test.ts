@@ -5,6 +5,26 @@ import type { ConnectedServiceQuotaMeterV1, ConnectedServiceQuotaSnapshotV1 } fr
 import { buildSummaryMeters, computeConnectedServiceQuotaSummaryBadges } from './connectedServiceQuotaBadges';
 
 describe('buildSummaryMeters', () => {
+  it('hides empty placeholders in summaries and removes them when unpinned', () => {
+    const base = { used: null, limit: null, unit: 'unknown', utilizationPct: null, resetsAt: null, status: 'unavailable', details: {} } as const;
+    const reported: ConnectedServiceQuotaMeterV1[] = [
+      { ...base, meterId: 'full', label: 'Full', utilizationPct: 0, status: 'ok' },
+      { ...base, meterId: 'empty', label: 'Empty', utilizationPct: 100, status: 'ok' },
+      { ...base, meterId: 'placeholder', label: 'Placeholder' },
+      { ...base, meterId: 'reset', label: 'Reset', resetAtMs: 62_000 },
+      { ...base, meterId: 'expired', label: 'Expired', resetsAt: 1_000 },
+      { ...base, meterId: 'pinned', label: 'Pinned' },
+    ];
+    for (const strategy of ['primary', 'min_remaining'] as const) {
+      const projected = buildSummaryMeters(reported, ['pinned'], strategy, 2_000);
+      expect(projected.map((row) => row.meterId).sort()).toEqual(['empty', 'full', 'pinned', 'reset']);
+      expect(projected.find((row) => row.meterId === 'full')?.remainingPct).toBe(100);
+      expect(projected.find((row) => row.meterId === 'empty')?.remainingPct).toBe(0);
+      expect(projected.find((row) => row.meterId === 'reset')?.resetsAt).toBe(62_000);
+    }
+    expect(buildSummaryMeters(reported, [], 'primary', 2_000).map((row) => row.meterId)).toEqual(['full', 'empty', 'reset']);
+  });
+
   const meters = ['session', 'weekly', 'weekly-sonnet', 'weekly-opus', 'extra-usage'].map((meterId, index) => ({
     meterId, label: meterId, used: null, limit: null, unit: 'unknown',
     utilizationPct: index * 10, remainingPct: 95 - index * 10,
@@ -18,10 +38,10 @@ describe('buildSummaryMeters', () => {
     })));
   });
 
-  it('keeps unpinned and unmeasured windows in details for either summary strategy', () => {
-    const reached = { ...meters[0]!, meterId: 'reached', label: 'Reached', utilizationPct: null, remainingPct: null };
+  it('keeps unmeasured windows with useful reset information for either summary strategy', () => {
+    const reached = { ...meters[0]!, meterId: 'reached', label: 'Reached', utilizationPct: null, remainingPct: null, resetsAt: 62_000 };
     for (const strategy of ['primary', 'min_remaining'] as const) {
-      const summary = buildSummaryMeters([...meters, reached], ['weekly'], strategy);
+      const summary = buildSummaryMeters([...meters, reached], ['weekly'], strategy, 2_000);
       expect(summary.map((meter) => meter.meterId).sort()).toEqual([...meters.map((meter) => meter.meterId), 'reached'].sort());
       expect(summary.find((meter) => meter.meterId === 'reached')).toMatchObject({ remainingPct: null, utilizationPct: null });
     }

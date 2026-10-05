@@ -1,4 +1,8 @@
 import * as React from 'react';
+import { readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol';
+import { useSetting } from '@/sync/domains/state/storage';
+import { connectedServiceProfileKey, resolveQualifiedConnectedAccountProfilePreference } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import { isConnectedServiceQuotaMeterVisible } from '@/sync/domains/connectedServices/connectedServiceQuotaMeterVisibility';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
@@ -96,10 +100,15 @@ const EMPTY_FACTS: ConnectedAccountIndexFacts = {
     refresh: null,
 };
 
-/** Every window the snapshot has, in the provider's order; an unreported window keeps its row. */
-export function projectIndexMeters(meters: readonly ConnectedServiceQuotaMeterV1[]): readonly ConnectedAccountIndexMeter[] {
+/** Useful and pinned windows, in the provider's order. */
+export function projectIndexMeters(
+    meters: readonly ConnectedServiceQuotaMeterV1[],
+    nowMs: number = Date.now(),
+    pinnedMeterIds: readonly string[] = [],
+): readonly ConnectedAccountIndexMeter[] {
     return selectConnectedServiceQuotaSummaryMeters({ meters, meterIds: meters.map((meter) => meter.meterId), strategy: 'primary' })
-        .flatMap((selected) => selected.meter ? [{
+        .flatMap((selected) => selected.meter
+            && isConnectedServiceQuotaMeterVisible(selected.meter, nowMs, pinnedMeterIds) ? [{
             meterId: selected.meterId,
             label: selected.label,
             remainingPct: selected.meter.status === 'unavailable' ? null : selected.remainingPct,
@@ -343,16 +352,22 @@ export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccount
 /** Reads a V4 account's usage record: quota (meters, plan, resets) and its subscription. */
 function useQualifiedFacts(account: QualifiedConnectedAccountRef, billedPerUse: boolean): ConnectedAccountIndexFacts {
     const quota = useQualifiedConnectedAccountQuota(account);
+    const pinnedByKey = useSetting('connectedServicesQuotaPinnedMeterIdsByKey');
+    const pinnedMeterIds = resolveQualifiedConnectedAccountProfilePreference({
+        valuesByKey: pinnedByKey, service: account.service, accountId: account.accountId,
+        legacyServiceId: readBuiltInLegacyConnectedServiceIdForQualifiedService(account.service),
+    }) ?? [];
     const subscription = useConnectedAccountSubscription(quota.usageRecordId);
     const snapshot = quota.snapshot;
     const refresh = quota.refresh;
     const retry = React.useCallback(() => { void refresh(); }, [refresh]);
-    const usage: ConnectedAccountIndexUsage = snapshot && snapshot.meters.length > 0
-        ? { kind: 'meters', meters: projectIndexMeters(snapshot.meters) }
+    const now = Date.now();
+    const meters = snapshot ? projectIndexMeters(snapshot.meters, now, pinnedMeterIds) : [];
+    const usage: ConnectedAccountIndexUsage = meters.length > 0
+        ? { kind: 'meters', meters }
         : quota.loading ? { kind: 'loading' }
             : quota.error ? { kind: 'error', retry }
-                : billedPerUse ? { kind: 'noLimits' } : { kind: 'none' };
-    const now = Date.now();
+                : billedPerUse && snapshot?.meters.length === 0 ? { kind: 'noLimits' } : { kind: 'none' };
     return {
         usage,
         planLabel: snapshot?.planLabel ?? null,
@@ -368,14 +383,17 @@ function useQualifiedFacts(account: QualifiedConnectedAccountRef, billedPerUse: 
 /** Reads a released V2 account's usage (no subscription record on that transport). */
 function useLegacyFacts(serviceId: ConnectedServiceId, profileId: string, status: unknown, billedPerUse: boolean): ConnectedAccountIndexFacts {
     const quota = useConnectedServiceQuotaSnapshot({ serviceId, profileId, credentialHealthStatus: status });
+    const pinnedByKey = useSetting('connectedServicesQuotaPinnedMeterIdsByKey');
+    const pinnedMeterIds = pinnedByKey[connectedServiceProfileKey({ serviceId, profileId })] ?? [];
     const snapshot = quota.snapshot;
     const refresh = quota.refresh;
     const retry = React.useCallback(() => { void refresh(); }, [refresh]);
-    const usage: ConnectedAccountIndexUsage = snapshot && snapshot.meters.length > 0
-        ? { kind: 'meters', meters: projectIndexMeters(snapshot.meters) }
+    const meters = snapshot ? projectIndexMeters(snapshot.meters, quota.nowMs, pinnedMeterIds) : [];
+    const usage: ConnectedAccountIndexUsage = meters.length > 0
+        ? { kind: 'meters', meters }
         : quota.loading ? { kind: 'loading' }
             : quota.error ? { kind: 'error', retry }
-                : billedPerUse ? { kind: 'noLimits' } : { kind: 'none' };
+                : billedPerUse && snapshot?.meters.length === 0 ? { kind: 'noLimits' } : { kind: 'none' };
     return {
         usage,
         planLabel: snapshot?.planLabel ?? null,
