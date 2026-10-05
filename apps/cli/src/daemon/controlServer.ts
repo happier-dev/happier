@@ -1204,7 +1204,8 @@ export function createDaemonControlApp({
       const progress: { phase: 'terminal_policy' | 'execution' } = { phase: 'terminal_policy' };
       try {
         return await lifetime.run(async () => {
-          const terminalPolicy = request.headers[AUTHORITY_CEILING_HEADER_V1] === 'account_automation'
+          const surface = parsed.data.surface ?? 'cli';
+          const terminalPolicy = surface === 'mcp' || request.headers[AUTHORITY_CEILING_HEADER_V1] === 'account_automation'
             ? 'disallowed'
             : await waitForTerminalPresentUserPolicyRefresh(externalActionApi.terminalPolicyScope);
           progress.phase = 'execution';
@@ -1218,11 +1219,11 @@ export function createDaemonControlApp({
             },
             principal: {
               authority: resolveInvocationAuthority({
-                credential: 'terminal', surface: 'cli',
+                credential: surface === 'mcp' ? 'account' : 'terminal', surface,
                 terminalPolicy,
               }),
             },
-            surface: 'cli',
+            surface,
             currentMachineId: machineId,
             currentServerId: externalActionApi.currentServerId,
             resolveTarget: externalActionApi.resolveTarget,

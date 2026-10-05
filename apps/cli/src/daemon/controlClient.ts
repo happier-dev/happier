@@ -607,12 +607,13 @@ export async function requestDaemonSignedRootActionExecution(
   options: DaemonControlRequestOptions = {},
 ): Promise<ActionExecuteResult> {
   if (options.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-  const { sideEffectClass } = getActionSpec(request.actionId);
+  const { sideEffectClass, executionPlacement } = getActionSpec(request.actionId);
   const result = await daemonPost(SIGNED_ROOT_ACTION_EXECUTE_PATH, request, {
     ...options,
-    // The observation owner covers lookup and idle waiting with timeoutSeconds.
-    // Let it settle before expiring its HTTP acknowledgement.
-    timeoutMs: options.timeoutMs !== undefined ? options.timeoutMs : request.actionId === 'session.wait.idle' ? null : 300_000,
+    // Idle observation owns its deadline; client Actions may wait for approval
+    // and completion under the caller lifetime. Neither gets a shorter ACK cutoff.
+    timeoutMs: options.timeoutMs !== undefined ? options.timeoutMs
+      : request.actionId === 'session.wait.idle' || executionPlacement === 'client' ? null : 300_000,
     mutation: sideEffectClass !== 'none' && sideEffectClass !== 'read',
   });
   if (result && typeof result === 'object' && typeof result.error === 'string') {

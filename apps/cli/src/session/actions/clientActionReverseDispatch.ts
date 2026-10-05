@@ -1,5 +1,5 @@
 import {
-  RPC_METHODS, UiActionDispatchRequestV1Schema,
+  RPC_METHODS, RPC_ERROR_CODES, UiActionDispatchRequestV1Schema,
   clientActionUnavailable, parseClientActionDispatchResult,
   type ActionExecutorDeps,
 } from '@happier-dev/protocol';
@@ -24,16 +24,19 @@ export function createClientActionReverseDispatcher(
       surface: context.surface ?? 'agent', authority: context.authority ?? 'account_automation',
       ...(context.defaultSessionId ? { defaultSessionId: context.defaultSessionId } : {}),
       ...(context.defaultSessionMachineId ? { defaultSessionMachineId: context.defaultSessionMachineId } : {}),
-      ...(context.workspaceWrites ? { workspaceWrites: context.workspaceWrites } : {}),
+      ...(context.agentStartWorkspaceWrites ? { agentStartWorkspaceWrites: context.agentStartWorkspaceWrites } : {}),
     } });
     if (!request.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     let issued = false;
     const unknownOutcome = () => ({ ok: false as const, errorCode: 'outcome_uncertain', error: 'outcome_uncertain' });
     try {
       const response = await client.callConnectedClientRpc(RPC_METHODS.UI_ACTION_EXECUTE, request.data, {
-        timeoutMs: null, ...(context.signal ? { signal: context.signal } : {}), onIssued: () => { issued = true; },
+        timeoutMs: null, ...(context.signal ? { signal: context.signal } : {}), onIssued: () => {
+          issued = true;
+          context.onTransportIssued?.();
+        },
       });
-      if (!response.ok) return !issued || response.errorCode === 'RPC_METHOD_NOT_AVAILABLE' ? unavailable() : unknownOutcome();
+      if (!response.ok) return !issued || response.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE ? unavailable() : unknownOutcome();
       return parseClientActionDispatchResult(actionId, response.result) ?? unknownOutcome();
     } catch {
       return issued ? unknownOutcome() : unavailable();

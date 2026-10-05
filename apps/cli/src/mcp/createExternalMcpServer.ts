@@ -2,9 +2,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import {
   getActionSpec,
+  ActionIdSchema,
   isActionSpecSurfacedOn,
   normalizeServerIdentityIdCapability,
   PublicActionIdSchema,
+  SignedRootActionIdSchema,
+  clientActionUnavailable,
   accountSettingsParse,
   type ActionId,
 } from '@happier-dev/protocol';
@@ -29,6 +32,7 @@ import { resolveSessionEncryptionContextFromCredentials } from '@/session/transp
 import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
 import {
   requestDaemonPluginActionExecution,
+  requestDaemonSignedRootActionExecution,
   type DaemonControlRequestOptions,
 } from '@/daemon/controlClient';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
@@ -207,7 +211,35 @@ export function createExternalMcpServer(params: Readonly<{
           base: pinnedBaseExecutor,
           ...(requestPluginActionExecution ? { requestPluginActionExecution } : {}),
         });
-        return pluginExecutor;
+        return {
+          execute: async (...args: Parameters<typeof baseExecutor.execute>) => {
+            const [actionId, input, context] = args;
+            const builtInActionId = ActionIdSchema.safeParse(actionId);
+            if (!builtInActionId.success || getActionSpec(builtInActionId.data).executionPlacement !== 'client') {
+              return await pluginExecutor.execute(...args);
+            }
+            // Delegate before local admission: this exact Home's daemon owns
+            // the one approval decision and its connected-client delivery.
+            if (daemonControlTarget === null) return clientActionUnavailable(actionId);
+            const admittedActionId = SignedRootActionIdSchema.safeParse(actionId);
+            if (!admittedActionId.success) return { ok: false as const, errorCode: 'unsupported_action', error: 'unsupported_action' };
+            const sessionId = context?.defaultSessionId && context.defaultSessionId !== 'cli-global'
+              ? context.defaultSessionId : null;
+            const result = await requestDaemonSignedRootActionExecution({
+              actionId: admittedActionId.data,
+              input,
+              surface: 'mcp',
+              ...(sessionId ? { target: { kind: 'session' as const, sessionId } }
+                : params.machineId ? { target: { kind: 'machine' as const, machineId: params.machineId } } : {}),
+              ...(context?.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
+            }, {
+              ...(daemonControlTarget ? { target: daemonControlTarget } : {}),
+              ...(context?.signal ? { signal: context.signal } : {}),
+            });
+            return !result.ok && result.errorCode === 'daemon_unavailable'
+              ? clientActionUnavailable(actionId) : result;
+          },
+        };
       })();
 
   const mcp = new McpServer({
