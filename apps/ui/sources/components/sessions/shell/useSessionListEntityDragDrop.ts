@@ -29,10 +29,11 @@ import {
     type SessionReportsToEligibilitySnapshot,
 } from '@/sync/ops/relations/sessionReportsToEligibility';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { requireSessionOrganizationMutationScope, type SessionOrganizationMutationScope } from '@/sync/ops/sessionOrganization';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 
-import type { CommitSessionListDragIntentContext, SessionListDragAdmission } from './drag/commitSessionListDragIntent';
+import { resolveSessionListDragTree, type CommitSessionListDragIntentContext, type SessionListDragAdmission } from './drag/commitSessionListDragIntent';
 import type { SessionListDragIntent, SessionListDragSnapshot } from './drag/_types';
 import { listSessionListEntityDropDestinations, resolveSessionListEntityDrop } from './drag/resolveSessionListEntityDrop';
 import {
@@ -64,11 +65,12 @@ export type SessionListBaseCommitContext = Omit<CommitSessionListDragIntentConte
 export type UseSessionListEntityDragDropInput = Readonly<{
     /** The list's pointer geometry strategy (tree thirds, container zones) for the current snapshot. */
     resolvePointerGeometry: (pointer: WindowPointer | null) => UseSessionInlineDragResolvedDrop;
-    getCommitContext: () => SessionListBaseCommitContext;
+    getCommitContext: (mutationScope?: SessionOrganizationMutationScope) => SessionListBaseCommitContext;
     getListBounds: () => WindowBounds | null;
 }>;
 
 export type SessionListCarry = Readonly<{
+    sourceId: string;
     move: (pointer: WindowPointer | null) => TreeDropVisualGeometry;
     /** Keyboard/chooser: stage a semantic destination (the same intent pointer geometry produces). */
     choose: (destination: SessionListDragIntent) => void;
@@ -182,6 +184,7 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
     scope: EntityDragScopeV1 | null;
     targetId: string | null;
     beginCarry: (snapshot: SessionListDragSnapshot, mode: 'pointer' | 'keyboard') => SessionListCarry | null;
+    prepareSource: (snapshot: SessionListDragSnapshot) => Readonly<{ sourceId: string; dispose: () => void }> | null;
 }> {
     const runtime = useEntityDragDropRuntime();
     const activeScope = useActiveServerAccountScope();
@@ -197,13 +200,14 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
     const pointerVisualRef = React.useRef<TreeDropVisualGeometry>(NO_GEOMETRY);
     /** The topology the current carry started from (pointer or keyboard). */
     const carriedSnapshotRef = React.useRef<SessionListDragSnapshot | null>(null);
+    const sourceRef = React.useRef<Readonly<{ sourceId: string; dispose: () => void }> | null>(null);
     const executor = React.useMemo(() => createDefaultActionExecutor(), []);
 
-    const buildContext = React.useCallback((): CommitSessionListDragIntentContext | null => {
+    const buildContext = React.useCallback((mutationScope?: SessionOrganizationMutationScope): CommitSessionListDragIntentContext | null => {
         const current = scopeRef.current;
         if (!current) return null;
         return {
-            ...inputRef.current.getCommitContext(),
+            ...inputRef.current.getCommitContext(mutationScope),
             scope: current,
             resolvePutSessionUnder: ({ serverId, sessionId, leadSessionId }) => {
                 const verdict = resolvePutUnderEligibility(sessionsRecord(), sessionId, leadSessionId, factsRef.current, {
@@ -216,7 +220,14 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
     }, []);
 
     // The mounted list answers `session.organization.move` for menus, keyboard and agents alike.
-    React.useEffect(() => registerMountedSessionListOrganizationAction(createSessionListOrganizationActionAdapter(buildContext)), [buildContext]);
+    const buildActionContext = React.useCallback(async () => {
+        const captured = scopeRef.current;
+        if (!captured) return null;
+        const mutationScope = await requireSessionOrganizationMutationScope(captured.serverId, { expectedAccountId: captured.accountId });
+        if (scopeRef.current?.serverId !== captured.serverId || scopeRef.current?.accountId !== captured.accountId) return null;
+        return buildContext(mutationScope);
+    }, [buildContext]);
+    React.useEffect(() => registerMountedSessionListOrganizationAction(createSessionListOrganizationActionAdapter(buildActionContext)), [buildActionContext]);
 
     const resolve = React.useCallback((context: EntityDropResolveContext): EntityDropAdmissionV1 => {
         const current = scopeRef.current;
@@ -295,12 +306,13 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
         });
     }, [buildContext, execute, resolve, runtime, scope, targetId]);
 
-    const beginCarry = React.useCallback((snapshot: SessionListDragSnapshot, mode: 'pointer' | 'keyboard'): SessionListCarry | null => {
+    const prepareSource = React.useCallback((snapshot: SessionListDragSnapshot) => {
+        sourceRef.current?.dispose();
         const current = scopeRef.current;
         if (!current) return null;
         const item = itemForSnapshot(snapshot, current);
         if (!item) return null;
-        const sourceId = `session-list-source:${snapshot.source.sourceRowId}`;
+        const sourceId = `session-list-source:${current.serverId}:${current.accountId}:${snapshot.source.sourceRowId}`;
         let live = true;
         carriedSnapshotRef.current = snapshot;
         const sourceMetadata = snapshot.source.treeSource.metadata as SessionListTreeRowMetadata;
@@ -308,41 +320,37 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
             id: sourceId,
             scope: current,
             getItem: () => item,
-            isCurrent: () => live,
+            isCurrent: () => {
+                if (!live || scopeRef.current?.serverId !== current.serverId || scopeRef.current?.accountId !== current.accountId) return false;
+                const context = buildContext();
+                if (!context) return false;
+                const row = resolveSessionListDragTree(context).rowMetadataById.get(sourceMetadata.rowId);
+                return row?.kind === sourceMetadata.kind && row.serverId === sourceMetadata.serverId;
+            },
             describe: () => {
                 const title = rowName(sourceMetadata);
                 return title ? { title } : null;
             },
         });
-        const carry = runtime.begin(sourceId, mode);
-        if (!carry) {
-            live = false;
-            carriedSnapshotRef.current = null;
-            retireSource();
-            return null;
-        }
-        const adapter = createEntityDragGestureAdapter(carry);
         const abort = new AbortController();
         factsRef.current?.dispose();
         factsRef.current = null;
         if (item.kind === 'session') {
-            // One demand-driven eligibility batch per carry; never per pointer frame.
             const candidateSessionIds = Object.values(sessionsRecord())
                 .filter((session) => (session.serverId ?? null) === item.address.serverId && session.id !== item.address.sessionId)
                 .map((session) => session.id);
-            void loadSessionReportsToEligibility({
-                serverId: item.address.serverId,
-                sessionId: item.address.sessionId,
-                candidateSessionIds,
-                signal: abort.signal,
-            }).then((facts) => {
+            void loadSessionReportsToEligibility({ serverId: item.address.serverId, sessionId: item.address.sessionId,
+                candidateSessionIds, signal: abort.signal }).then((facts) => {
                 if (abort.signal.aborted || carriedSnapshotRef.current !== snapshot) { facts?.dispose(); return; }
                 factsRef.current = facts;
                 runtime.refresh();
             });
         }
-        const retire = () => {
+        let unsubscribe = () => {};
+        const source = { sourceId, dispose: () => {
+            if (!live) return;
             live = false;
+            unsubscribe();
             abort.abort();
             if (carriedSnapshotRef.current === snapshot) {
                 carriedSnapshotRef.current = null;
@@ -350,38 +358,52 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
                 factsRef.current = null;
                 pointerVisualRef.current = NO_GEOMETRY;
             }
+            if (sourceRef.current === source) sourceRef.current = null;
             retireSource();
-        };
+        } };
+        sourceRef.current = source;
+        let engaged = false;
+        unsubscribe = runtime.subscribe(() => {
+            const state = runtime.getSnapshot();
+            if (state.sourceId === sourceId && (state.phase === 'carrying' || state.phase === 'pending')) engaged = true;
+            else if (engaged) source.dispose();
+        });
+        return source;
+    }, [buildContext, runtime]);
+
+    React.useEffect(() => () => sourceRef.current?.dispose(), [runtime, scope?.serverId, scope?.accountId]);
+    // Current list membership is read through the source descriptor, including while the pointer is still.
+    React.useEffect(() => { runtime.refresh(); });
+
+    const beginCarry = React.useCallback((snapshot: SessionListDragSnapshot, mode: 'pointer' | 'keyboard'): SessionListCarry | null => {
+        const source = prepareSource(snapshot);
+        if (!source) return null;
+        const carry = runtime.begin(source.sourceId, mode);
+        if (!carry) { source.dispose(); return null; }
+        const adapter = createEntityDragGestureAdapter(carry);
         if (mode === 'keyboard' && targetId) carry.choose(targetId);
         return {
+            sourceId: source.sourceId,
             move: (pointer) => {
                 adapter.update(pointer);
-                return pointerVisualRef.current;
+                return runtime.getSnapshot().targetId === targetId ? pointerVisualRef.current : NO_GEOMETRY;
             },
             choose: (destination) => {
                 if (!targetId) return;
                 const { scope: _scope, ...semantic } = destination;
                 carry.choose(targetId, semantic as unknown as PluginUiJsonValueV1);
             },
-            end: (success, pointer) => {
+            end: async (success, pointer) => {
                 const admittedAtRelease = runtime.getSnapshot().admission?.status === 'allowed';
-                return adapter.end(success, pointer).then((outcome) => {
-                    retire();
-                    // A refusal the person already saw needs no second word; a late one or an unknown
-                    // dispatched result is said by its owner, and the row stays where it was.
-                    if (!admittedAtRelease || !outcome || outcome.status === 'applied') return;
-                    Modal.alert(
-                        outcome.status === 'unknown' ? t('entityDragDrop.preview.unknownTitle') : t('entityDragDrop.preview.cantMoveHere'),
-                        outcome.reason.message,
-                    );
-                }, retire);
+                const outcome = await adapter.end(success, pointer);
+                source.dispose();
+                if (admittedAtRelease && outcome?.status === 'unknown') {
+                    Modal.alert(t('entityDragDrop.preview.unknownTitle'), outcome.reason.message);
+                }
             },
-            cancel: () => {
-                adapter.cancel();
-                retire();
-            },
+            cancel: () => { adapter.cancel(); source.dispose(); },
         };
-    }, [runtime, targetId]);
+    }, [prepareSource, runtime, targetId]);
 
-    return { runtime, scope, targetId, beginCarry };
+    return { runtime, scope, targetId, beginCarry, prepareSource };
 }

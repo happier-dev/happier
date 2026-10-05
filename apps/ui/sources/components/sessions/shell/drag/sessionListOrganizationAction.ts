@@ -5,13 +5,15 @@ export type SessionListOrganizationAction = (request: Readonly<{ input: unknown;
 
 /** The mounted list supplies current state and the existing organization writers at execution time. */
 export function createSessionListOrganizationActionAdapter(
-    getContext: () => CommitSessionListDragIntentContext | null,
+    getContext: () => CommitSessionListDragIntentContext | null | Promise<CommitSessionListDragIntentContext | null>,
 ): SessionListOrganizationAction {
     return async ({ input, signal }) => {
         const parsed = SessionOrganizationMoveInputSchema.safeParse(input);
         if (!parsed.success) return { status: 'refused', reason: 'invalid_parameters' };
         if (signal?.aborted) return { status: 'refused', reason: 'cancelled' };
-        const context = getContext();
+        let context: CommitSessionListDragIntentContext | null;
+        try { context = await getContext(); }
+        catch { return { status: 'unavailable', reason: 'scope-mismatch' }; }
         if (!context) return { status: 'unavailable' };
         const intent = { ...parsed.data, sourceSnapshotSignature: '' };
         const admission = resolveSessionListDragIntent({ intent, context });
