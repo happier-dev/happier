@@ -137,8 +137,7 @@ export function installVoiceSettingsRouteModuleMocks(
         const { settingsParse } = await import('@/sync/domains/settings/settings');
         const defaults = settingsParse({});
         return createStorageModuleStub({
-            // The hub's Voice setup block reads the Home layout's dismissed steps; every other setting stays unset.
-            useSetting: (key: string) => (key === 'homeHubLayoutV1' ? defaults.homeHubLayoutV1 : null),
+            useSetting: () => null,
             useSettings: () => defaults,
         });
     });

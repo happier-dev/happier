@@ -29,11 +29,11 @@ describe('native DocumentTabStrip geometry', () => {
                 resolve: ({ beforeTabId }) => ({ status: 'allowed', effect: { actionId: 'workspace.tabs.open',
                     input: { href: '/inbox', beforeTabId }, preview: { verb: 'Open', target: 'Anchor' } } }),
                 execute: async effect => { writes.push(effect.input); return { status: 'applied' }; } }}
-        />, { createNodeMock: element => element.type === 'View'
+        />, { createNodeMock: element => typeof element.type === 'string' && String(element.type) === 'View'
             ? { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(x, 0, 100, 40) }
             : null });
         await act(async () => {
-            for (const node of screen.root.findAll(node => node.type === 'View' && typeof node.props.onLayout === 'function')) node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 100, height: 40 } } });
+            for (const node of screen.root.findAll(node => typeof node.type === 'string' && String(node.type) === 'View' && typeof node.props.onLayout === 'function')) node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 100, height: 40 } } });
         });
         let carry!: NonNullable<ReturnType<typeof runtime.begin>>;
         await act(async () => { carry = runtime.begin('row')!; });
@@ -41,7 +41,7 @@ describe('native DocumentTabStrip geometry', () => {
         expect(runtime.getSnapshot().targetId).not.toBeNull();
         x = 200;
         await act(async () => {
-            if (variant === 'bar') screen.root.find(node => node.type === 'View' && node.props.accessibilityRole === 'tablist')
+            if (variant === 'bar') screen.root.find(node => typeof node.type === 'string' && String(node.type) === 'View' && node.props.accessibilityRole === 'tablist')
                 .props.onLayout({ nativeEvent: { layout: { x: 200, y: 0, width: 100, height: 40 } } });
             else screen.root.findByType('ScrollView').props.onScroll({ nativeEvent: { contentOffset: { x: 200, y: 0 } } });
         });
