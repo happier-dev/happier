@@ -1,8 +1,13 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { installRepositoryTreeCommonModuleMocks } from './repositoryTreeTestHelpers';
+import { createExternalFileDropBinding } from '@/components/ui/treeDragDrop/externalFileDropAdapter';
+
+let disposeBinding: (() => void) | undefined;
+afterEach(async () => { await act(async () => { disposeBinding?.(); disposeBinding = undefined; }); });
 
 installRepositoryTreeCommonModuleMocks({
     typography: () => vi.importActual('@/constants/Typography'),
@@ -20,6 +25,9 @@ installRepositoryTreeCommonModuleMocks({
 describe('RepositoryTreeDropOverlay', () => {
     it('shows the exact upload destination while a file target is active', async () => {
         const { RepositoryTreeDropOverlay } = await import('./RepositoryTreeDropOverlay');
+        const binding = createExternalFileDropBinding(() => ({ enabled: true, onFilesDropped: () => {} }));
+        disposeBinding = binding.mount();
+        binding.handlers.onDragEnter({ dataTransfer: { types: ['Files'] }, clientX: 96, clientY: 128 });
         const screen = await renderScreen(<RepositoryTreeDropOverlay visible destinationLabel="src" />);
 
         expect(screen.findAll(node => node.children.includes('src')).length).toBeGreaterThan(0);
