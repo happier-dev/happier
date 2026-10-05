@@ -381,10 +381,14 @@ export const SessionBoardActionRecoveryEvidenceV1Schema = SessionBoardMutationAc
 );
 export type SessionBoardActionRecoveryEvidenceV1 = Readonly<z.infer<typeof SessionBoardActionRecoveryEvidenceV1Schema>>;
 
-export const SessionBoardOutcomeUnknownDetailsV1Schema = z.object({
+export type SessionBoardOutcomeUnknownDetailsV1 = Readonly<{
+  recovery: SessionBoardActionRecoveryEvidenceV1;
+}>;
+// Keep the published failure envelope on the named recovery contract. Re-expanding
+// this nested schema exceeds declaration serialization and erases input option shapes.
+export const SessionBoardOutcomeUnknownDetailsV1Schema: z.ZodType<SessionBoardOutcomeUnknownDetailsV1> = z.object({
   recovery: SessionBoardActionRecoveryEvidenceV1Schema,
 }).strict();
-export type SessionBoardOutcomeUnknownDetailsV1 = Readonly<z.infer<typeof SessionBoardOutcomeUnknownDetailsV1Schema>>;
 
 const boardFailure = <TCode extends string>(code: TCode) => z.object({
   ok: z.literal(false), errorCode: z.literal(code), error: z.literal(code),

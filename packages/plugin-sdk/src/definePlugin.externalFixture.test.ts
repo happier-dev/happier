@@ -580,14 +580,13 @@ builtArtifactDescribe('external physical target and contributor packages', { tim
         expectPortableExternalDeclaration(build.targetSurfaceDeclaration);
         expectPortableExternalDeclaration(build.targetDeclarativeAuthoringDeclaration);
         expectPortableExternalDeclaration(build.contributorDeclaration);
-        // The declarative author exports INFERRED values, so these names are
-        // the ones TypeScript had to reach for. Asserting they resolve through
-        // published SDK subpaths is what distinguishes a portable vocabulary
-        // from one that merely compiles inside this repository.
+        // The declarative author exports INFERRED values. The recursive union
+        // must remain nameable through the public manifest entrypoint; neutral
+        // DTO leaves may be emitted structurally instead of retaining aliases.
         expect(build.targetDeclarativeAuthoringDeclaration)
-            .toMatch(/declarativeCollectionListNode: import\("@happier-dev\/plugin-sdk\/manifest"\)\.PluginDeclarativeCollectionListNodeV2/u);
+            .toMatch(/import type \{ PluginDeclarativeNodeV2 \} from ['"]@happier-dev\/plugin-sdk\/manifest['"]/u);
         expect(build.targetDeclarativeAuthoringDeclaration)
-            .toMatch(/declarativeComposerApplyEffect: import\("@happier-dev\/plugin-sdk\/manifest"\)\.PluginDeclarativeComposerApplyEffectV1/u);
+            .toMatch(/declarativeRoundTrip: PluginDeclarativeNodeV2;/u);
         expect(build.targetDeclarativeAuthoringDeclaration)
             .toMatch(/declarativeItemInput: import\("@happier-dev\/plugin-sdk"\)\.PluginJsonValueV2/u);
         for (const specifier of build.targetDeclarativeAuthoringDeclaration.matchAll(

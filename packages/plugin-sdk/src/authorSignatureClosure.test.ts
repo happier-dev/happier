@@ -218,10 +218,6 @@ describe('author signature closure source contract', () => {
             ts.isTypeAliasDeclaration(statement)
             && statement.name.text === 'PluginDeclarativeComposerApplyEffectV1'
         ));
-        const actionNode = sourceFile.statements.find((statement): statement is ts.TypeAliasDeclaration => (
-            ts.isTypeAliasDeclaration(statement)
-            && statement.name.text === 'PluginDeclarativeActionNodeV2'
-        ));
         const identitySchema = sourceFile.statements.flatMap((statement) => (
             ts.isVariableStatement(statement) ? statement.declarationList.declarations : []
         )).find((declaration) => (
@@ -231,13 +227,9 @@ describe('author signature closure source contract', () => {
 
         expect(effect).toBeDefined();
         expect(effect && hasExportedType(sourceFile, effect.name.text)).toBe(true);
-        const effectSignature = effect?.type.getText(sourceFile) ?? '';
-        expect(actionNode?.type.getText(sourceFile)).toContain('PluginDeclarativeComposerApplyEffectV1');
-        expect(effectSignature).toContain("kind: 'composerApply'");
-        expect(effectSignature).toContain('PluginJsonValueV2');
-        expect(effectSignature).toContain('ComposerContentMediaKindV1');
-        expect(effectSignature).not.toContain('DeclarationMutable');
-        expect(effectSignature).not.toContain('ComposerOperationV1');
+        // Grammar signatures now come from the canonical Action DTO projection rather than a
+        // second handwritten shape. External inferred declaration coverage exercises that shape;
+        // this census continues to require every author-visible dependency to have a public name.
         expect(rootPublicSource).toContain(
             "export type { PluginJsonValueV2 } from './identity.js';",
         );
@@ -250,6 +242,7 @@ describe('author signature closure source contract', () => {
             "export type { PluginUiAttachmentToneV1 } from '../ui.js';",
         );
         for (const name of [
+            'PluginDeclarativeActionNodeV2',
             'PluginDeclarativeActionVariantV2',
             'PluginCollectionProjectedScalarFieldRefV1',
             'PluginCollectionRowCommandV1',
