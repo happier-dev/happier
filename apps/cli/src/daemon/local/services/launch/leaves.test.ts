@@ -112,7 +112,7 @@ describe('createLocalServiceLauncherLeafRoutes', () => {
         });
     });
 
-    it('registerPreview delegates an inventory target to the private-preview owner', async () => {
+    it.each(['opaque-launch-target', 'preview:display-only'])('registerPreview delegates projected inventory authority despite display id %s', async targetId => {
         const openOrCreate = vi.fn(async () => ({
             ok: true as const,
             response: { protocolVersion: 1 as const, status: 'created' as const, preview: previewRow(), snapshot: {
@@ -122,14 +122,14 @@ describe('createLocalServiceLauncherLeafRoutes', () => {
         }));
         const routes = createLocalServiceLauncherLeafRoutes({
             machineId: MACHINE_ID,
-            feed: { getSnapshot: vi.fn(async () => snapshotWith([inventoryTarget()])) },
+            feed: { getSnapshot: vi.fn(async () => snapshotWith([inventoryTarget({ id: targetId, sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'entry-vite' } })])) },
             previewRoutes: { openOrCreate },
             history: createLocalServiceLauncherHistoryStore(),
         });
 
         const result = await routes.registerPreview({
             machineId: MACHINE_ID,
-            targetId: 'inventory:entry-vite',
+            targetId,
             sessionId: 'session-1',
         });
 

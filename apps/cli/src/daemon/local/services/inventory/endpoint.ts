@@ -143,6 +143,8 @@ export function createLocalServiceEndpointEnricher(
 
     const classify = async (entry: NormalizedLocalServiceInventoryEntry): Promise<LocalServiceEndpointFact | null> => {
         if (entry.state !== 'listening') return entry.endpoint ?? null;
+        // Known host endpoints are control planes, not candidate application pages.
+        if (entry.classification?.kind === 'happier') return null;
         const host = endpointHostForEntry(entry);
         if (!host) return null;
         const cacheKey = `${host}:${entry.port}`;

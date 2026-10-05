@@ -17,7 +17,6 @@ import type { LocalServicePreviewRoutes } from '../preview/routes';
  * now resolves through a real daemon owner rather than `local_services_runtime_action_unbacked`.
  */
 
-const INVENTORY_TARGET_PREFIX = 'inventory:';
 const PREVIEW_TARGET_PREFIX = 'preview:';
 
 /**
@@ -146,7 +145,7 @@ export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
             }
             const { target } = resolved;
             // Already a registered preview target → idempotent existing.
-            if (target.id.startsWith(PREVIEW_TARGET_PREFIX)) {
+            if (target.source === 'registered_preview' && target.id.startsWith(PREVIEW_TARGET_PREFIX)) {
                 return {
                     protocolVersion: 1,
                     status: 'existing',
@@ -156,8 +155,8 @@ export function createLocalServiceLauncherLeafRoutes(input: Readonly<{
                 };
             }
             // A detected loopback inventory entry → register through the canonical preview owner.
-            if (target.id.startsWith(INVENTORY_TARGET_PREFIX)) {
-                const inventoryEntryId = target.id.slice(INVENTORY_TARGET_PREFIX.length);
+            if (target.sourceClass?.kind === 'inventory_entry') {
+                const inventoryEntryId = target.sourceClass.inventoryEntryId;
                 const result = await input.previewRoutes.openOrCreate({
                     machineId: input.machineId,
                     ...(request.sessionId ? { sessionId: request.sessionId } : {}),

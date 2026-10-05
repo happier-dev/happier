@@ -240,6 +240,7 @@ function localTitleHostForEntry(entry: NormalizedLocalServiceInventoryEntry): st
 
 export function buildLocalPageTitleUrl(entry: NormalizedLocalServiceInventoryEntry): string | null {
     if (entry.state !== 'listening') return null;
+    if (entry.classification?.kind === 'happier') return null;
     const endpointUrl = entry.endpoint ? buildLocalServiceEndpointUrl(entry.endpoint) : null;
     if (endpointUrl) return endpointUrl;
     const host = localTitleHostForEntry(entry);

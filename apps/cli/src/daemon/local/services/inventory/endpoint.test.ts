@@ -28,6 +28,24 @@ function entry(overrides: Partial<NormalizedLocalServiceInventoryEntry> = {}): N
 }
 
 describe('local service endpoint facts', () => {
+    it('preserves internal listener inventory without probing a Happier control endpoint', async () => {
+        const probes: number[] = [];
+        const enricher = createLocalServiceEndpointEnricher({
+            now: () => 2_000, timeoutMs: 50, concurrency: 1,
+            successTtlMs: 1_000, failureTtlMs: 1_000,
+            probe: async ({ port }) => { probes.push(port); return true; },
+        });
+        const internal = entry({ classification: { kind: 'happier', confidence: 'high', signals: ['owner:happier'] } });
+        const application = entry({ id: 'app', port: 5173 });
+        const snapshot = await enricher.enrich({
+            v: 1, machineId: 'machine-a', generatedAt: 2_000, refreshState: 'idle',
+            entries: [internal, application], diagnostics: [],
+        });
+        expect(snapshot.entries[0]).toEqual(internal);
+        expect(snapshot.entries[1]?.endpoint?.probeState).toBe('ready');
+        expect(probes).toEqual([5173]);
+    });
+
     it('builds URLs from the canonical endpoint fact', () => {
         expect(buildLocalServiceEndpointUrl({
             scheme: 'https',
