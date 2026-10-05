@@ -55,6 +55,35 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 describe('SelectionTiles', () => {
+    it('keeps a four-option visual fill picker to two readable columns', async () => {
+        const { SelectionTiles } = await import('./SelectionTiles');
+        const screen = await renderScreen(<SelectionTiles
+            variant="visual" tileSizing="fill" maximumColumns={2}
+            options={['keep', 'activity', 'conversation', 'detail'].map(id => ({ id, title: id }))}
+            value="keep" onChange={vi.fn()} testIdPrefix="style-grid"
+        />);
+        const tile = screen.root.findAll(node => node.props.testID === 'style-grid:conversation' && typeof node.props.style === 'function')[0]!;
+        const basis = Object.assign({}, ...tile.props.style({ pressed: false }).filter(Boolean)).flexBasis;
+        // Three bases plus the shared positive gaps cannot fit, so four options occupy two rows.
+        expect(typeof basis).toBe('string');
+        expect(basis.endsWith('%')).toBe(true);
+        expect(Number.parseFloat(basis) * 3).toBeGreaterThanOrEqual(100);
+    });
+    it('announces the selected radio even when every option has an identity mark', async () => {
+        const { SelectionTiles } = await import('./SelectionTiles');
+        const screen = await renderScreen(<SelectionTiles
+            options={[
+                { id: 'a', title: 'A', mark: <span>brand A</span> },
+                { id: 'b', title: 'B', mark: <span>brand B</span> },
+            ]}
+            value="a"
+            onChange={vi.fn()}
+            testIdPrefix="identity"
+        />);
+        expect(screen.findByTestId('identity:a')!.props.accessibilityState.checked).toBe(true);
+        expect(screen.findByTestId('identity:b')!.props.accessibilityState.checked).toBe(false);
+        expect(screen.findByTestId('identity:a')!.props['aria-checked']).toBe(true);
+    });
     it('supports single selection mode', async () => {
         const onChange = vi.fn();
         const { SelectionTiles } = await import('./SelectionTiles');
@@ -78,7 +107,7 @@ describe('SelectionTiles', () => {
         });
 
         expect(sessionMenu!.props.accessibilityRole).toBe('radio');
-        expect(sessionMenu!.props.accessibilityState).toEqual({ selected: false, disabled: false });
+        expect(sessionMenu!.props.accessibilityState).toEqual({ checked: false, selected: false, disabled: false });
         expect(commandPalette!.props.accessibilityRole).toBe('radio');
         expect(onChange).toHaveBeenCalledWith('command_palette');
     });
@@ -107,6 +136,51 @@ describe('SelectionTiles', () => {
         expect(() => screen.tree.findByProps({ testID: 'footer:a' })).not.toThrow();
         expect(() => screen.tree.findByProps({ testID: 'footer:b' })).toThrow();
         expect(renderOptionFooter).toHaveBeenCalled();
+    });
+
+    it('keeps a long description to the asked lines while the tile is announced with all of it', async () => {
+        const { SelectionTiles } = await import('./SelectionTiles');
+        const subtitle = 'Through Happier with Happier Pro, or your own ElevenLabs account';
+        const screen = await renderScreen(<SelectionTiles
+            options={[{ id: 'eleven', title: 'ElevenLabs', subtitle }]}
+            value={null}
+            onChange={vi.fn()}
+            subtitleLines={1}
+            testIdPrefix="concise"
+        />);
+        const tile = screen.findByTestId('concise:eleven')!;
+        expect(tile.props.accessibilityLabel).toBe(`ElevenLabs, ${subtitle}`);
+        const shown = tile.findAll((node) => node.props.children === subtitle && typeof node.type === 'string');
+        expect(shown.length).toBeGreaterThan(0);
+        expect(shown.every((node) => node.props.numberOfLines === 1)).toBe(true);
+    });
+
+    it('drops to one column when two tiles would be narrower than the asked minimum', async () => {
+        const { SelectionTiles } = await import('./SelectionTiles');
+        const options = [
+            { id: 'a', title: 'A', subtitle: 'first' },
+            { id: 'b', title: 'B', subtitle: 'second' },
+        ];
+        const tileWidth = async (minimumTileWidth?: number) => {
+            const screen = await renderScreen(<SelectionTiles
+                options={options}
+                value={null}
+                onChange={vi.fn()}
+                minimumTileWidth={minimumTileWidth}
+                testIdPrefix="narrow"
+            />);
+            const grid = screen.tree.findByType('View' as never);
+            await act(async () => {
+                grid.props.onLayout?.({ nativeEvent: { layout: { width: 400, height: 200, x: 0, y: 0 } } });
+            });
+            const pressable = screen.tree.findAll((node) => node.props?.testID === 'narrow:a' && typeof node.props?.style === 'function')[0]!;
+            const resolved = pressable.props.style({ pressed: false });
+            const width = Object.assign({}, ...(Array.isArray(resolved) ? resolved.filter(Boolean) : [resolved])).width;
+            await screen.unmount();
+            return width;
+        };
+        expect(await tileWidth()).toBeLessThan(220);
+        expect(await tileWidth(220)).toBe(400);
     });
 
     it('lets footer switches trigger their own change handlers', async () => {
@@ -344,8 +418,8 @@ describe('SelectionTiles', () => {
         const narrow = screen.findByTestId('density:narrow')!;
         const detailed = screen.findByTestId('density:detailed')!;
         expect(narrow.props.accessibilityRole).toBe('radio');
-        expect(narrow.props.accessibilityState).toEqual({ selected: true, disabled: false });
-        expect(detailed.props.accessibilityState).toEqual({ selected: false, disabled: false });
+        expect(narrow.props.accessibilityState).toEqual({ checked: true, selected: true, disabled: false });
+        expect(detailed.props.accessibilityState).toEqual({ checked: false, selected: false, disabled: false });
         await act(async () => {
             await pressTestInstanceAsync(detailed, 'density:detailed');
         });

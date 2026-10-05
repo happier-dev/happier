@@ -16,9 +16,35 @@ import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff
 import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { FileIcon } from '@/components/ui/media/FileIcon';
+import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
+import { DiffFileActionsMenu } from './DiffFileActionsMenu';
+import { Typography } from '@/constants/Typography';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
+import type { DiffViewerBaseProps } from './diffViewerTypes';
+import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
+import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
 
-const LINE_ADDED_PREFIX = '+';
-const LINE_REMOVED_PREFIX = '-';
+export function diffFileDisplayPath(file: DiffFileEntry) {
+    const { dir, name } = normalizeRepoPathParts({ fullPath: file.filePath ?? t('status.unknown') });
+    return dir ? `${dir}/${name}` : name;
+}
+
+export function diffFileDisplayStats(file: DiffFileEntry) {
+    return file.isComplete === false ? t('common.unavailable') : `+${file.added} -${file.removed}`;
+}
+
+export function diffFileDisplayKind(file: DiffFileEntry) {
+    return file.kind === 'new' ? t('common.create') : file.kind === 'deleted' ? t('common.delete') : file.kind === 'renamed' ? t('common.rename') : null;
+}
+
+export type DiffFileFindState = Pick<DiffViewerBaseProps, 'findActive' | 'findRangesByLineId' | 'scrollToLineId'> & Readonly<{
+    pathRanges?: readonly FindTextRange[];
+    statsRanges?: readonly FindTextRange[];
+    kindRanges?: readonly FindTextRange[];
+    contextLines?: number;
+}>;
+
 const DIFF_FILE_ROW_ESTIMATED_ITEM_SIZE = 72;
 
 type DiffFilesListViewRenderContext = Readonly<{
@@ -32,6 +58,7 @@ type DiffFilesListViewRenderContext = Readonly<{
     renderBeforeFileRow?: DiffFilesListViewProps['renderBeforeFileRow'];
     renderFileRow?: DiffFilesListViewProps['renderFileRow'];
     renderInlineUnifiedDiff?: DiffFilesListViewProps['renderInlineUnifiedDiff'];
+    getFindStateForFile?: DiffFilesListViewProps['getFindStateForFile'];
     showLineNumbers: boolean;
     showPrefix: boolean;
     virtualizationByteThreshold: number;
@@ -48,7 +75,7 @@ type DiffFilesListViewItem = Readonly<{
 
 export type DiffFilesListViewHandle = Readonly<{
     clearMeasurementCache: () => void;
-    scrollToIndex: (params: Readonly<{ index: number; animated?: boolean; viewPosition?: number }>) => void;
+    scrollToIndex: (params: Readonly<{ index: number; animated?: boolean; viewPosition?: number; viewOffset?: number }>) => void;
     scrollToOffset: (params: Readonly<{ offset: number; animated?: boolean }>) => void;
 }>;
 
@@ -76,6 +103,7 @@ export type DiffFilesListViewProps = Readonly<{
     onOpenFile?: (filePath: string) => void;
     onOpenFilePinned?: (filePath: string) => void;
     drawDistanceMultiplier?: number;
+    getFindStateForFile?: (file: DiffFileEntry) => DiffFileFindState | undefined;
     renderBeforeFileRow?: (params: Readonly<{ file: DiffFileEntry; index: number }>) => React.ReactNode;
     renderFileRow?: (params: Readonly<{
         file: DiffFileEntry;
@@ -91,6 +119,7 @@ export type DiffFilesListViewProps = Readonly<{
         wrapLines: boolean;
         showLineNumbers: boolean;
         showPrefix: boolean;
+        findState?: DiffFileFindState;
     }>) => React.ReactNode;
 }>;
 
@@ -122,6 +151,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         renderBeforeFileRow,
         renderFileRow,
         renderInlineUnifiedDiff,
+        getFindStateForFile,
     } = props;
     const virtualizedListLayout = props.virtualizedListLayout ?? 'bounded';
     const shouldUseVirtualizedList = virtualizeFileList === true
@@ -188,7 +218,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         }
     }, [virtualizeFileList]);
 
-    const scrollToIndex = React.useCallback((params: Readonly<{ index: number; animated?: boolean; viewPosition?: number }>) => {
+    const scrollToIndex = React.useCallback((params: Readonly<{ index: number; animated?: boolean; viewPosition?: number; viewOffset?: number }>) => {
         try {
             listRef.current?.scrollToIndex?.(params);
         } catch {
@@ -227,6 +257,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         renderFileRow,
         renderInlineUnifiedDiff,
         showLineNumbers,
+        getFindStateForFile,
         showPrefix,
         virtualizationByteThreshold,
         virtualizationLineThreshold,
@@ -234,6 +265,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
     };
 
     const listExtraData = React.useMemo(() => ({
+        getFindStateForFile,
         canRenderInlineDiffs,
         inlineDiffContainerVariant,
         maxVirtualizedHeight,
@@ -249,6 +281,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         virtualizationLineThreshold,
         wrapLines,
     }), [
+        getFindStateForFile,
         canRenderInlineDiffs,
         inlineDiffContainerVariant,
         maxVirtualizedHeight,
@@ -269,6 +302,10 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         const ctx = renderContextRef.current;
         if (!ctx) return null;
         const { file, expanded, focused } = item;
+        const findState = ctx.getFindStateForFile?.(file);
+        const statsText = diffFileDisplayStats(file);
+        const addedTextLength = String(file.added).length + 1;
+        const kindText = diffFileDisplayKind(file);
         const handleToggleExpanded = () => {
             // Expanded inline diffs have highly variable height. Invalidate the
             // canonical backend's size cache before the state change so the
@@ -295,6 +332,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
             : false;
 
         const inlineDiffRendererProps = {
+            findState,
             file,
             virtualized: inlineVirtualized,
             maxVirtualizedHeight: ctx.maxVirtualizedHeight,
@@ -313,6 +351,9 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
             file.unifiedDiff ? (
                 <View style={[styles.inlineDiffContainer, inlineVirtualizedContainerStyle]}>
                     <DiffViewer
+                        findActive={findState?.findActive}
+                        findRangesByLineId={findState?.findRangesByLineId}
+                        scrollToLineId={findState?.scrollToLineId}
                         mode="unified"
                         filePath={file.filePath ?? null}
                         unifiedDiff={file.unifiedDiff}
@@ -326,11 +367,14 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
             ) : file.oldText != null && file.newText != null ? (
                 <View style={[styles.inlineDiffContainer, inlineVirtualizedContainerStyle]}>
                     <DiffViewer
+                        findActive={findState?.findActive}
+                        findRangesByLineId={findState?.findRangesByLineId}
+                        scrollToLineId={findState?.scrollToLineId}
                         mode="text"
                         filePath={file.filePath ?? null}
                         oldText={file.oldText}
                         newText={file.newText}
-                        contextLines={3}
+                        contextLines={findState?.contextLines ?? 3}
                         wrapLines={ctx.wrapLines}
                         virtualized={inlineVirtualized}
                         presentationStyleOverride={presentationStyleOverride}
@@ -370,9 +414,9 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
                             accessibilityRole="button"
                         >
                             <View style={styles.fileRowMain}>
-                                <Text style={styles.filePath} numberOfLines={1}>
-                                    {file.filePath ?? t('status.unknown')}
-                                </Text>
+                                <Icon name={expanded ? 'caret-down' : 'caret-right'} size={12} color={styles.filePath.color} />
+                                <FileIcon fileName={file.filePath ?? ''} size={16} appearance="line" />
+                                <InlineRepoPathLabel fullPath={diffFileDisplayPath(file)} preferNameOverPath pathTextStyle={styles.path} nameTextStyle={styles.filePath} findRanges={findState?.pathRanges} />
                                 {file.kind ? (
                                     <View
                                         style={[
@@ -394,19 +438,21 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
                                                         : styles.kindTextRenamed,
                                             ]}
                                         >
-                                            {file.kind === 'new'
-                                                ? t('common.create')
-                                                : file.kind === 'deleted'
-                                                    ? t('common.delete')
-                                                    : t('common.rename')}
+                                            {findState?.kindRanges?.length ? <FindHighlightedText text={kindText ?? ''} ranges={findState.kindRanges} /> : kindText}
                                         </Text>
                                     </View>
                                 ) : null}
                             </View>
                             <Text style={styles.statsText}>
-                                {file.isComplete === false ? t('common.unavailable') : `${LINE_ADDED_PREFIX}${file.added} ${LINE_REMOVED_PREFIX}${file.removed}`}
+                                {findState?.statsRanges?.length
+                                    ? file.isComplete === false
+                                        ? <FindHighlightedText text={statsText} ranges={findState.statsRanges} />
+                                        : <><Text style={styles.added}><FindHighlightedText text={statsText.slice(0, addedTextLength)} ranges={sliceFindRanges(findState.statsRanges, 0, addedTextLength)} /></Text><FindHighlightedText text=" " ranges={sliceFindRanges(findState.statsRanges, addedTextLength, 1)} /><Text style={styles.removed}><FindHighlightedText text={statsText.slice(addedTextLength + 1)} ranges={sliceFindRanges(findState.statsRanges, addedTextLength + 1, String(file.removed).length + 1)} /></Text></>
+                                    : file.isComplete === false ? statsText : <><Text style={styles.added}>{statsText.slice(0, addedTextLength)}</Text> <Text style={styles.removed}>{statsText.slice(addedTextLength + 1)}</Text></>}
                             </Text>
                         </Pressable>
+
+                        {typeof file.filePath === 'string' ? <DiffFileActionsMenu filePath={file.filePath} /> : null}
 
                         {typeof file.filePath === 'string' && (ctx.onOpenFile || ctx.onOpenFilePinned) ? (
                             <Pressable
@@ -549,10 +595,13 @@ const styles = StyleSheet.create((theme) => ({
     filePath: {
         fontSize: 13,
         color: theme.colors.text.primary,
-        fontFamily: 'monospace',
+        ...Typography.default('semiBold'),
         flexShrink: 1,
         minWidth: 0,
     },
+    path: { fontSize: 12, color: theme.colors.text.tertiary, ...Typography.default() },
+    added: { color: theme.colors.diff.success },
+    removed: { color: theme.colors.diff.error },
     statsText: {
         fontSize: 12,
         color: theme.colors.text.secondary,

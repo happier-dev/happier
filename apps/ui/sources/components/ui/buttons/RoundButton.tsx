@@ -12,7 +12,8 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
 
 
-export type RoundButtonSize = 'large' | 'normal' | 'small';
+/** `mini` is the inline action inside a compact capsule (a live call's Retry), not a call to action. */
+export type RoundButtonSize = 'large' | 'normal' | 'small' | 'mini';
 const RoundButtonDefaultSizeContext = React.createContext<RoundButtonSize>('large');
 
 export function RoundButtonSizeScope(props: Readonly<{ size: RoundButtonSize; children: React.ReactNode }>) {
@@ -21,7 +22,8 @@ export function RoundButtonSizeScope(props: Readonly<{ size: RoundButtonSize; ch
 const sizes: { [key in RoundButtonSize]: { fontSize: number, hitSlop: number, pad: number } } = {
     large: { fontSize: 21, hitSlop: 0, pad: Platform.OS == 'ios' ? 0 : -1 },
     normal: { fontSize: 16, hitSlop: 8, pad: Platform.OS == 'ios' ? 1 : -2 },
-    small: { fontSize: 14, hitSlop: 12, pad: Platform.OS == 'ios' ? -1 : -1 }
+    small: { fontSize: 13, hitSlop: 12, pad: Platform.OS == 'ios' ? -1 : -1 },
+    mini: { fontSize: 12, hitSlop: 8, pad: 0 },
 }
 
 /**
@@ -60,6 +62,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 5,
     },
+    contentContainerSmall: {
+        paddingHorizontal: 10,
+        paddingVertical: 3,
+    },
+    textSmall: {
+        lineHeight: 18,
+    },
+    // A capsule's inline action: it shares the capsule's height band instead of setting its own.
+    contentContainerMini: {
+        paddingHorizontal: 12,
+        paddingVertical: 0,
+    },
     // Applied only when a mark is present, so a title-only button keeps the exact
     // single-child layout it has always had.
     contentContainerWithMark: {
@@ -76,6 +90,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     // mark — mirroring it double-counts a nudge the text has already spent.
     markSlot: {
         alignItems: 'center',
+        justifyContent: 'center',
+    },
+    // Centres a fixed-height capsule inside whatever touch floor the pressable imposes.
+    capsuleBox: {
         justifyContent: 'center',
     },
     text: {
@@ -130,6 +148,12 @@ export const RoundButton = React.memo((props: {
      * words put it, rather than the button imposing an order on every language.
      */
     trailing?: React.ReactNode,
+    /**
+     * Draws the visible pill at exactly this height with fully round ends — a capsule's inline
+     * action standing level with the round wells beside it. The touch floor around it stays the
+     * pressable's, so a 34pt pill keeps its 44pt target without growing to fill it.
+     */
+    capsuleHeight?: number,
     style?: RoundButtonStyle,
     textStyle?: StyleProp<TextStyle>,
     disabled?: boolean,
@@ -200,7 +224,8 @@ export const RoundButton = React.memo((props: {
     // A caller fill (for example a destructive tone) belongs to the pill that moves,
     // not to the static layout box behind it.
     const callerBackgroundColor = readBackgroundColor(props.style);
-    const size = sizes[props.size ?? scopedDefaultSize];
+    const resolvedSize = props.size ?? scopedDefaultSize;
+    const size = sizes[resolvedSize];
     const display = displays[props.display || 'default'];
     const titleLines = props.titleNumberOfLines ?? 1;
     // `undefined` is React Native's "as many lines as it takes"; `0` is not portable
@@ -223,7 +248,12 @@ export const RoundButton = React.memo((props: {
             // the moment it is pressed reads as unavailable rather than working.
             // The touch-target floor is `HappierPressable`'s (native only); web and
             // desktop keep their pointer density, so the button adds none of its own.
-            style={[{ opacity: props.disabled ? 0.35 : 1 }, props.style, TRANSPARENT_LAYOUT_BOX]}
+            style={[
+                { opacity: props.disabled ? 0.35 : 1 },
+                props.capsuleHeight !== undefined ? styles.capsuleBox : null,
+                props.style,
+                TRANSPARENT_LAYOUT_BOX,
+            ]}
             onPressIn={pressFeedback.onPressIn}
             onPressOut={pressFeedback.onPressOut}
             onPress={doAction}
@@ -236,6 +266,9 @@ export const RoundButton = React.memo((props: {
                             backgroundColor: callerBackgroundColor ?? display.backgroundColor,
                             borderColor: display.borderColor,
                         },
+                        props.capsuleHeight !== undefined
+                            ? { flexGrow: 0, height: props.capsuleHeight, borderRadius: props.capsuleHeight / 2 }
+                            : null,
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                         pressFeedback.animatedStyle,
                     ]}
@@ -245,6 +278,8 @@ export const RoundButton = React.memo((props: {
                             styles.contentContainer,
                             props.leading || props.trailing ? styles.contentContainerWithMark : null,
                             props.display === 'secondary' || props.display === 'destructive' ? styles.contentContainerSecondary : null,
+                            resolvedSize === 'small' ? styles.contentContainerSmall : null,
+                            props.size === 'mini' ? styles.contentContainerMini : null,
                         ]}
                     >
                         {display.gradient ? (
@@ -275,6 +310,7 @@ export const RoundButton = React.memo((props: {
                                     color: display.textColor,
                                     fontSize: props.display === 'secondary' || props.display === 'destructive' ? Math.min(size.fontSize, 13) : size.fontSize,
                                 },
+                                resolvedSize === 'small' ? styles.textSmall : null,
                                 // A wrapped label is a paragraph inside a centred pill, so
                                 // its second line centres under the first rather than
                                 // hanging off the leading edge. Single-line buttons are

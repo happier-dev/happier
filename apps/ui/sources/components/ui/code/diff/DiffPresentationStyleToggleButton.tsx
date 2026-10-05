@@ -6,10 +6,12 @@ import { normalizeDiffPresentationPreference, useDiffSplitFits } from './diffPre
 import { t } from '@/text';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 
 export type DiffPresentationStyleToggleButtonProps = Readonly<{
     disabled?: boolean;
     size?: number;
+    presentation?: 'icon' | 'segmented';
 }>;
 
 export const DiffPresentationStyleToggleButton = React.memo<DiffPresentationStyleToggleButtonProps>((props) => {
@@ -34,6 +36,25 @@ export const DiffPresentationStyleToggleButton = React.memo<DiffPresentationStyl
         setStyleSetting(effectiveStyle === 'unified' ? 'split' : 'unified');
     }, [disabled, effectiveStyle, setStyleSetting]);
 
+    if (props.presentation === 'segmented') {
+        return (
+            <SegmentedTabBar
+                testIDPrefix="diff-presentation"
+                accessibilityLabel={accessibilityLabel}
+                tabs={(['unified', 'split'] as const).map((id) => ({
+                    id,
+                    label: t(`settingsSourceControl.filesDisplay.diffPresentation.options.${id}.title`),
+                    disabled: props.disabled === true || (id === 'split' && splitTooNarrow),
+                    unavailableReason: id === 'split' && splitTooNarrow ? t('detailsSurface.chrome.splitNeedsWiderPane') : undefined,
+                }))}
+                activeTabId={effectiveStyle}
+                onSelectTab={setStyleSetting}
+                segmentSizing="content"
+                compact
+            />
+        );
+    }
+
     return (
         <IconButton
             onPress={toggle}
@@ -42,7 +63,7 @@ export const DiffPresentationStyleToggleButton = React.memo<DiffPresentationStyl
             accessibilityRole="button"
             accessibilityLabel={accessibilityLabel}
             tooltip={accessibilityLabel}
-            iconName={effectiveStyle === 'unified' ? 'arrows-down-up' : 'grid-four'}
+            iconName="square-split-horizontal"
             iconSize={iconSize}
             size={28}
             variant="plain"

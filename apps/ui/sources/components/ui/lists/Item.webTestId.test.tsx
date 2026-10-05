@@ -46,6 +46,17 @@ vi.mock('@/components/ui/lists/itemGroupRowCorners', () => ({
 }));
 
 describe('Item web testID forwarding', () => {
+    it.each(['interactive', 'passive', 'split'] as const)('keeps row metadata on the primary host only (%s)', async (kind) => {
+        const { Item } = await import('./Item');
+        const metadata = { dataSet: { entityDragBody: 'true' } };
+        const screen = await renderScreen(<Item {...metadata} testID="row-metadata" title="Member"
+            onPress={kind === 'passive' ? undefined : () => {}}
+            rightElement={kind === 'split' ? <Pressable testID="secondary-control" onPress={() => {}} /> : undefined}
+            rightElementOutsidePressable={kind === 'split'} />);
+        expect(screen.findHostByTestId('row-metadata')?.props.dataSet).toEqual(metadata.dataSet);
+        expect(screen.findHostByTestId('secondary-control')?.props.dataSet).toBeUndefined();
+    });
+
     function findClosestPressableAncestor(node: renderer.ReactTestInstance): renderer.ReactTestInstance | null {
         let current = node.parent;
         while (current) {

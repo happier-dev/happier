@@ -91,6 +91,11 @@ export function WorkspaceSpecimen(props: Readonly<{ frame: string | null }>) {
         dispatch, openHref: () => false,
         activateTab: (groupId, tabId) => dispatch({ type: 'activateTab', groupId, tabId }),
         closeTab: (groupId, tabId) => dispatch({ type: 'closeTab', groupId, tabId, newTab: createWorkspaceEmptyTab('empty') }),
+        closeTabs: (groupId, tabIds) => {
+            for (const tabId of tabIds) if (!state.tabs[tabId]?.pinned) {
+                dispatch({ type: 'closeTab', groupId, tabId, newTab: createWorkspaceEmptyTab('empty') });
+            }
+        },
         navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
         registerBackStep: () => () => {}, back: () => {}, forward: () => {},
     }), [dispatch, state]);

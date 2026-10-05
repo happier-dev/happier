@@ -4,7 +4,7 @@ import {
     type LegendListProps,
     type LegendListRef,
 } from '@legendapp/list/react-native';
-import { Platform } from 'react-native';
+import { Platform, StyleSheet, type ViewStyle } from 'react-native';
 
 import { normalizeVirtualizedListProps } from '../normalizeVirtualizedListProps';
 import type {
@@ -16,6 +16,29 @@ const LEGEND_LIST_WEB_FILL_STYLE = {
     flex: 1,
     minHeight: 0,
 } as const;
+
+// RN-web's public StyleSheet is also its DOM resolver; React Native's type
+// declaration omits that web-only call signature. Flatten first so registered
+// styles resolve to inline CSS rather than classes Legend cannot attach here.
+const resolveWebStyle = StyleSheet as unknown as (
+    style: ViewStyle,
+) => readonly [className: string, inlineStyle: React.CSSProperties | undefined];
+
+function resolveLegendWebContentStyle(style: ViewStyle): React.CSSProperties | undefined {
+    const inlineStyle = resolveWebStyle(style)[1];
+    if (!inlineStyle) return inlineStyle;
+
+    // Legend also reads these CSS dimensions for numeric scroll/item geometry.
+    // RN-web emits pixel strings; React DOM accepts equivalent numeric pixels.
+    for (const property of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'gap', 'rowGap', 'columnGap'] as const) {
+        const value = inlineStyle[property];
+        if (typeof value === 'string' && value.endsWith('px')) {
+            const pixels = Number(value.slice(0, -2));
+            if (Number.isFinite(pixels)) inlineStyle[property] = pixels;
+        }
+    }
+    return inlineStyle;
+}
 
 /**
  * Legend List backend — the long-term default the abstraction is migrating
@@ -47,10 +70,16 @@ function LegendListBackendInner<T>(
         removeClippedSubviews: _flatListRemoveClippedSubviews,
         testID,
         windowSize: _flatListWindowSize,
+        contentContainerStyle,
         style,
         webScrollHandlers,
         ...legendShared
     } = shared;
+    const legendContentContainerStyle = React.useMemo(() => (
+        Platform.OS === 'web' && contentContainerStyle
+            ? resolveLegendWebContentStyle(StyleSheet.flatten(contentContainerStyle))
+            : contentContainerStyle
+    ), [contentContainerStyle]);
     const platformIdentityAndKeyboardProps = Platform.OS === 'web'
         ? {
             'data-testid': testID,
@@ -88,6 +117,7 @@ function LegendListBackendInner<T>(
         ...platformIdentityAndKeyboardProps,
         ...nativeScrollLifecycleHandlers,
         ...webScrollHandlers,
+        contentContainerStyle: legendContentContainerStyle,
         style: Platform.OS === 'web'
             ? [LEGEND_LIST_WEB_FILL_STYLE, style]
             : style,

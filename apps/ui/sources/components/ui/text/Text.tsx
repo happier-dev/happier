@@ -17,6 +17,8 @@ import { useLocalSetting } from '@/sync/store/hooks';
 
 import { scaleTextStyle } from './uiFontScale';
 
+const WEB_FONT_SCALING_DISABLED_PROPS = { 'data-happier-ui-font-scaling': 'disabled' } as const;
+
 function isIosWeb(): boolean {
     if (Platform.OS !== 'web') return false;
     if (typeof navigator === 'undefined') return false;
@@ -87,9 +89,12 @@ export const Text = React.memo(
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
         const baseStyle = useDefaultTypography ? Typography.default() : undefined;
         const presentation = useHappierTextPresentation({ selectable, textScale: uiFontScale });
+        // Unistyles compiles all web styles, including plain numeric entries, into CSS.
+        // useWebUiFontScale owns their scaling; pre-scaling would apply the preference twice.
+        const metricScale = Platform.OS === 'web' ? 1 : presentation.metricScale;
         const scaledStyle = React.useMemo(
-            () => scaleTextStyle(style, presentation.metricScale),
-            [presentation.metricScale, style],
+            () => scaleTextStyle(style, metricScale),
+            [metricScale, style],
         );
         const mergedStyle = React.useMemo(() => {
             const entries: NonNullable<RNTextProps['style']>[] = [];
@@ -104,6 +109,7 @@ export const Text = React.memo(
                 style={mergedStyle}
                 selectable={presentation.selectable}
                 {...props}
+                {...(Platform.OS === 'web' && disableUiFontScaling ? WEB_FONT_SCALING_DISABLED_PROPS : null)}
                 allowFontScaling={allowFontScaling ?? presentation.allowHostFontScaling}
             />
         );
@@ -124,7 +130,8 @@ export const TextInput = React.memo(
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
         const { accessibilityLabel, testID, ...restProps } = props;
 
-        const scaledStyle = React.useMemo(() => scaleTextStyle(style, uiFontScale), [style, uiFontScale]);
+        const metricScale = Platform.OS === 'web' ? 1 : uiFontScale;
+        const scaledStyle = React.useMemo(() => scaleTextStyle(style, metricScale), [style, metricScale]);
         const defaultStyle = useDefaultTypography ? Typography.default() : null;
         const mergedStyle = React.useMemo(() => {
             const out: NonNullable<RNTextInputProps['style']>[] = [];
@@ -132,8 +139,9 @@ export const TextInput = React.memo(
             if (scaledStyle) out.push(scaledStyle);
             if (isIosWeb()) {
                 const resolvedFontSize = resolveFontSizeFromStyle(out);
-                if (typeof resolvedFontSize === 'number' && resolvedFontSize > 0 && resolvedFontSize < 16) {
-                    out.push({ fontSize: 16 });
+                if (typeof resolvedFontSize === 'number' && resolvedFontSize > 0 && resolvedFontSize * uiFontScale < 16) {
+                    // The CSS multiplier still applies after this floor; keep the effective size at 16px.
+                    out.push({ fontSize: 16 / uiFontScale });
                 }
             }
             if (Platform.OS === 'web') {
@@ -145,10 +153,10 @@ export const TextInput = React.memo(
                 out.push(webResetStyle);
             }
             return out;
-        }, [defaultStyle, scaledStyle]);
+        }, [defaultStyle, scaledStyle, uiFontScale]);
 
         const webAccessibilityProps = Platform.OS === 'web'
-            ? { 'data-happier-text-input': 'true' }
+            ? { 'data-happier-text-input': 'true', ...(disableUiFontScaling ? WEB_FONT_SCALING_DISABLED_PROPS : null) }
             : {};
 
         return (

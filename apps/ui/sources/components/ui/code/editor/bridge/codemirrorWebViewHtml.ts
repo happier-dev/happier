@@ -47,6 +47,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             import('https://cdn.jsdelivr.net/npm/@codemirror/lang-markdown@6.5.0/+esm'),
             import('https://cdn.jsdelivr.net/npm/@codemirror/lang-json@6.0.2/+esm'),
             import('https://cdn.jsdelivr.net/npm/@lezer/highlight@1.2.3/+esm'),
+            import('https://cdn.jsdelivr.net/npm/@codemirror/search@6.7.2/+esm'),
           ]`;
 
     // Notes:
@@ -245,6 +246,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
       let currentLanguage = null;
       let currentReadOnly = false;
       let lineSeparator = '\\n';
+      let findRequest = null;
 
       function detectLineSeparator(doc) {
         const match = doc.match(/\\r\\n|\\r|\\n/);
@@ -291,6 +293,14 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
         let defaultHighlightStyle;
         let HighlightStyle;
         let tags;
+        let search;
+        let SearchQuery;
+        let setSearchQuery;
+        let getSearchQuery;
+        let findNext;
+        let findPrevious;
+        let openSearchPanel;
+        let closeSearchPanel;
         let langJavascript;
         let langPython;
         let langMarkdown;
@@ -321,6 +331,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           ({ indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle, HighlightStyle } = bundle);
           ({ closeBrackets, closeBracketsKeymap } = bundle);
           ({ tags } = bundle);
+          ({ search, SearchQuery, setSearchQuery, getSearchQuery, findNext, findPrevious, openSearchPanel, closeSearchPanel } = bundle);
           langJavascript = bundle.langs?.javascript;
           langPython = bundle.langs?.python;
           langMarkdown = bundle.langs?.markdown;
@@ -353,6 +364,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             langMarkdown,
             langJson,
             { tags },
+            { search, SearchQuery, setSearchQuery, getSearchQuery, findNext, findPrevious, openSearchPanel, closeSearchPanel },
           ] = await Promise.all(${cdnModuleImports});
         }
 
@@ -374,6 +386,8 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             ])
           : defaultHighlightStyle;
         const baseExtensions = [
+          // The host owns the visible FindBar. This input-free panel enables engine decorations.
+          search({ createPanel: () => { const dom = document.createElement('span'); dom.hidden = true; return { dom }; } }),
           keymap.of([
             ...defaultKeymap,
             ...historyKeymap,
@@ -423,6 +437,11 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             backgroundColor: theme.activeLineColor,
             color: theme.textColor,
           },
+          '.cm-searchMatch': { backgroundColor: theme.findMatchColor },
+          '.cm-searchMatch.cm-searchMatch-selected': {
+            backgroundColor: theme.findCurrentMatchColor,
+            color: theme.findCurrentMatchForeground,
+          },
         }, { dark: Boolean(theme.isDark) });
 
         function createView(doc, language, readOnly) {
@@ -461,6 +480,8 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             doc: doc || '',
             extensions: extensions.concat([
               EditorView.updateListener.of((update) => {
+                if (update.focusChanged) sendEnvelope({ v: 1, type: 'editor.focus', payload: { focused: update.view.hasFocus } });
+                if (findRequest && (update.docChanged || update.selectionSet)) publishFindStatus();
                 if (!update.docChanged) return;
                 if (applyingRemote) return;
                 if (changeTimer) clearTimeout(changeTimer);
@@ -486,6 +507,60 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           view = createView(doc, language, readOnly);
           currentLanguage = language;
           currentReadOnly = readOnly;
+          if (findRequest) setFind(findRequest);
+        }
+
+        function publishFindStatus() {
+          if (!view) return;
+          let status = { kind: 'idle' };
+          if (findRequest && findRequest.query.length) {
+            const query = getSearchQuery(view.state);
+            if (!query.valid) {
+              status = { kind: 'invalidPattern' };
+            } else {
+              const cursor = query.getCursor(view.state);
+              const selection = view.state.selection.main;
+              let total = 0;
+              let current = null;
+              while (!cursor.next().done) {
+                total++;
+                if (cursor.value.from === selection.from && cursor.value.to === selection.to) current = total;
+              }
+              status = { kind: 'results', current, total, coverage: 'complete' };
+            }
+          }
+          sendEnvelope({ v: 1, type: 'find.status', payload: {
+            query: findRequest ? findRequest.query : '',
+            options: findRequest ? findRequest.options : { matchCase: false, regex: false },
+            status,
+          } });
+        }
+
+        function setFind(request) {
+          findRequest = request;
+          if (!view) return;
+          const options = request.options || {};
+          const query = new SearchQuery({ search: request.query, caseSensitive: options.matchCase === true,
+            regexp: options.regex === true, literal: options.regex !== true });
+          openSearchPanel(view);
+          view.dispatch({ effects: setSearchQuery.of(query) });
+          if (query.valid && request.query.length) {
+            let position = view.state.selection.main.from;
+            if (request.target) {
+              const line = view.state.doc.line(Math.max(1, Math.min(view.state.doc.lines, request.target.line)));
+              position = line.from + Math.max(0, Math.min(line.length, (request.target.column || 1) - 1));
+            }
+            let first = null;
+            let selected = null;
+            const cursor = query.getCursor(view.state);
+            while (!cursor.next().done) {
+              if (!first) first = cursor.value;
+              if (cursor.value.from >= position) { selected = cursor.value; break; }
+            }
+            selected = selected || first;
+            if (selected) view.dispatch({ selection: { anchor: selected.from, head: selected.to }, scrollIntoView: true });
+          }
+          publishFindStatus();
         }
 
         function setDoc(nextDoc) {
@@ -533,6 +608,29 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
 
       function onEnvelope(envelope) {
           if (!envelope || envelope.v !== 1 || typeof envelope.type !== 'string') return;
+          if (envelope.type === 'focus') { if (view) view.focus(); return; }
+          if (envelope.type === 'find.set') {
+            const payload = envelope.payload || {};
+            if (typeof payload.query === 'string') setFind(payload);
+            return;
+          }
+          if (envelope.type === 'find.step') {
+            if (view && findRequest && getSearchQuery(view.state).valid) {
+              if (envelope.payload && envelope.payload.direction === -1) findPrevious(view);
+              else findNext(view);
+              publishFindStatus();
+            }
+            return;
+          }
+          if (envelope.type === 'find.close') {
+            findRequest = null;
+            if (view) {
+              closeSearchPanel(view);
+              view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: '', literal: true })) });
+              publishFindStatus();
+            }
+            return;
+          }
           if (envelope.type === 'init') {
             const payload = envelope.payload || {};
             const doc = typeof payload.doc === 'string' ? payload.doc : '';

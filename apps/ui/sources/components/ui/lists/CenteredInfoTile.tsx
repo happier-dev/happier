@@ -9,6 +9,8 @@ import { Text } from '@/components/ui/text/Text';
 type CenteredInfoTileProps = Readonly<{
     icon?: React.ReactNode;
     title: string;
+    /** Optional glyph decoration within the existing title typography. */
+    titleContent?: React.ReactNode;
     description: React.ReactNode;
     titleTestID?: string;
     descriptionTestID?: string;
@@ -50,7 +52,7 @@ export const CenteredInfoTile = React.memo((props: CenteredInfoTileProps) => {
                         marginBottom: metrics?.bodyGapPx ?? 6,
                     }}
                 >
-                    {props.title}
+                    {props.titleContent ?? props.title}
                 </Text>
             }
             description={

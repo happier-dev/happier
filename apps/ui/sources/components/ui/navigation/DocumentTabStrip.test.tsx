@@ -5,10 +5,71 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { DocumentTabStrip } from './DocumentTabStrip';
+import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
 
 installPanelCommonModuleMocks();
 
 describe('DocumentTabStrip actions', () => {
+    it('offers the same semantic before-tab destination to keyboard and chooser carries', async () => {
+        const runtime = createEntityDragDropRuntime();
+        const scope = { serverId: 'home', accountId: 'account' };
+        runtime.registerSource({ id: 'row', scope, isCurrent: () => true,
+            getItem: () => ({ kind: 'destination', scope, href: '/inbox' }) });
+        const writes: unknown[] = [];
+        const screen = await renderScreen(<DocumentTabStrip
+            variant="bar" tabs={[{ key: 'anchor', title: 'Anchor', isPinned: false, isPreview: false }]}
+            activeTabKey="anchor" accessibilityLabel="Documents"
+            onActivate={() => {}} onPin={() => {}} onUnpin={() => {}} onClose={() => {}}
+            renderLeadingIcon={() => null} tabNativeId={id => id} panelNativeId={id => id}
+            entityDragDrop={{
+                runtime, id: 'strip', scope, acceptedKinds: ['destination', 'workspace-tab'],
+                getItem: tabId => ({ kind: 'workspace-tab', scope, tabId }),
+                resolve: ({ beforeTabId }) => ({ status: 'allowed', effect: {
+                    actionId: 'workspace.tabs.open', input: { href: '/inbox', beforeTabId },
+                    preview: { verb: 'Open', target: 'Anchor' },
+                } }),
+                execute: async effect => { writes.push(effect.input); return { status: 'applied' }; },
+            }}
+        />);
+        const destinations = runtime.getDestinations('row');
+        expect(destinations).toHaveLength(1);
+        await act(async () => { await runtime.perform('row', destinations[0].targetId, destinations[0].destination); });
+        expect(writes).toEqual([{ href: '/inbox', beforeTabId: 'anchor' }]);
+        await screen.unmount();
+        expect(runtime.getDestinations('row')).toEqual([]);
+    });
+    it('marks the gap before an admitting tab, and lights nothing where the strip refuses', async () => {
+        const runtime = createEntityDragDropRuntime();
+        const scope = { serverId: 'home', accountId: 'account' };
+        runtime.registerSource({ id: 'row', scope, isCurrent: () => true,
+            getItem: () => ({ kind: 'destination', scope, href: '/inbox' }) });
+        const screen = await renderScreen(<DocumentTabStrip
+            variant="bar" tabs={[
+                { key: 'open', title: 'Open', isPinned: false, isPreview: false },
+                { key: 'full', title: 'Full', isPinned: false, isPreview: false },
+            ]}
+            activeTabKey="open" accessibilityLabel="Documents"
+            onActivate={() => {}} onPin={() => {}} onUnpin={() => {}} onClose={() => {}}
+            renderLeadingIcon={() => null} tabNativeId={id => id} panelNativeId={id => id}
+            entityDragDrop={{
+                runtime, id: 'strip', scope, acceptedKinds: ['destination'],
+                getItem: () => null,
+                resolve: ({ beforeTabId }) => beforeTabId === 'open'
+                    ? { status: 'allowed', effect: { actionId: 'workspace.tabs.open', input: { beforeTabId }, preview: { verb: 'Open', target: 'Open' } } }
+                    : { status: 'refused', reason: { code: 'no', message: 'No' } },
+                execute: async () => ({ status: 'applied' }),
+            }}
+        />);
+        const targetFor = (key: string) => runtime.getDestinations('row').find(entry => entry.label === (key === 'open' ? 'Open' : 'Full'))!;
+        const carry = runtime.begin('row', 'keyboard');
+        act(() => carry?.choose(targetFor('open').targetId, targetFor('open').destination));
+        expect(screen.findHostByTestId('document-tab-drop-before-open')).toBeTruthy();
+        act(() => carry?.choose(targetFor('full').targetId, targetFor('full').destination));
+        expect(screen.findHostByTestId('document-tab-drop-before-open')).toBeFalsy();
+        expect(screen.findHostByTestId('document-tab-drop-before-full')).toBeFalsy();
+        act(() => carry?.cancel());
+        await screen.unmount();
+    });
     it.each(['bar', 'strip'] as const)('keeps pinned needs-you status visible and named in the %s presentation', async (variant) => {
         const screen = await renderScreen(<DocumentTabStrip
             variant={variant}

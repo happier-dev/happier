@@ -48,11 +48,11 @@ export function resolveBoardWidgetProvenance(
 ): BoardWidgetProvenance {
     if (source.kind === 'declarative') return provenance(t('sessionBoard.item.provenance.note'));
     if (source.kind === 'walkthrough') return provenance(resolveSessionScmReviewComparisonLabel({ kind: source.comparison }));
-    if (source.kind !== 'installedSurface') {
+    if (source.kind !== 'widget' || source.instance.definition.kind !== 'installed') {
         return provenance(t('sessionBoard.item.provenance.interactiveView'));
     }
 
-    const surface = source.surface;
+    const surface = source.instance.definition.surface;
     const installed = projection?.installedPackagesById[surface.pluginId] ?? null;
     const pluginName = installed?.displayName.trim();
     if (!pluginName) {
@@ -65,7 +65,7 @@ export function resolveBoardWidgetProvenance(
     }
 
     const placements = projection
-        ? selectWidgetPlacementsBySurface(projection, surface, 'session')
+        ? selectWidgetPlacementsBySurface(projection, surface)
         : [];
     const localize = createPluginLocalizedTextResolver({ projection });
     // Exactly one admitted placement is the same rule the mount resolver uses;

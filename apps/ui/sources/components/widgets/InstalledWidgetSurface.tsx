@@ -12,11 +12,13 @@ import { useSessionPluginPolicyContext } from '@/components/sessions/plugins/use
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { randomUUID } from '@/platform/randomUUID';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
-import type { WidgetPlacement, WidgetPresentation } from '@/sync/domains/plugins/ui/widgetContract';
+import type { WidgetPresentation } from '@/sync/domains/plugins/ui/widgetContract';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { areSessionAddressesEqual, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { t } from '@/text';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import type { ConfiguredWidgetTargetResolution, WidgetInputRepairOutcome } from '@/sync/domains/widgets/widgetBinding';
 
 import {
     resolveInstalledWidgetMount,
@@ -25,8 +27,8 @@ import {
 } from './installedWidgetMount';
 
 /**
- * The installed-plugin arm of every widget host: a Session's Board and its
- * companions (`session` target), and Home (`app` target). Each host keeps its
+ * The installed-plugin arm of every widget host. Physical Home, Board and
+ * Companion placements all support app and Session targets. Each host keeps its
  * own frame — Board cards, Home's hub section — around this one arm.
  *
  * It correlates the stable `{pluginId, localId}` reference to exactly one
@@ -77,8 +79,6 @@ export type InstalledWidgetSurfaceProps = Readonly<{
     input?: PluginUiLaunchInputV1;
     /** The public embedded presentation this physical host maps onto. */
     presentation: WidgetPresentation;
-    /** Direct host placement; Board-item references retain Board admission. */
-    placement?: WidgetPlacement;
     /** The host's plugin projection: the Session's, or the app shell's. */
     runtime: PluginUiProjectionCurrentness;
     /** Route-owned recovery retained by the incumbent plugin surface host. */
@@ -88,7 +88,7 @@ export type InstalledWidgetSurfaceProps = Readonly<{
     testID: string;
 }>;
 
-function UnavailableInstalledWidget(props: Readonly<{
+export function UnavailableInstalledWidget(props: Readonly<{
     unresolved: NonNullable<InstalledWidgetMount['unresolved']>;
     testID: string;
 }>): React.ReactElement {
@@ -203,9 +203,8 @@ export function InstalledWidgetSurface(props: InstalledWidgetSurfaceProps): Reac
         source: props.source,
         target: props.target.kind,
         presentation: props.presentation,
-        placement: props.placement,
         runtime: props.runtime,
-    }), [props.placement, props.presentation, props.runtime, props.source, props.target.kind]);
+    }), [props.presentation, props.runtime, props.source, props.target.kind]);
 
     if (mount.unresolved) {
         return <UnavailableInstalledWidget unresolved={mount.unresolved} testID={props.testID} />;
@@ -222,7 +221,14 @@ export function InstalledWidgetSurface(props: InstalledWidgetSurfaceProps): Reac
     // The projection owner's occurrence is the physical installed-plugin
     // lifetime. Aggregate snapshot and managed-package generations are
     // transport/custody metadata and must not remount an unchanged slot.
-    const lifetimeKey = `${props.recordRevision}:${mount.placement?.occurrenceId ?? 'unavailable'}`;
+    const lifetimeKey = stableJsonStringify([
+        props.recordRevision,
+        props.runtime.serverId,
+        props.runtime.machineId,
+        props.target.kind,
+        props.target.kind === 'session' ? props.target.sessionId : null,
+        mount.placement?.occurrenceId ?? null,
+    ]);
     const mountedProps: MountedWidgetProps = {
         mount,
         runtime: props.runtime,
@@ -255,4 +261,45 @@ export function InstalledWidgetSurface(props: InstalledWidgetSurfaceProps): Reac
         );
     }
     return <MountedSessionWidget key={lifetimeKey} {...mountedProps} session={session} />;
+}
+
+/** Consumes the canonical binder's admitted exact target; refusal never mounts ambient data. */
+export function ConfiguredInstalledWidgetSurface(props: Omit<InstalledWidgetSurfaceProps, 'target' | 'runtime' | 'input'> & Readonly<{
+    resolution: ConfiguredWidgetTargetResolution;
+    onRepairInputs?: (outcome: WidgetInputRepairOutcome) => void;
+}>): React.ReactElement {
+    const { resolution, onRepairInputs, ...mounted } = props;
+    if (resolution.status !== 'ready') return <ConfiguredWidgetRefusal resolution={resolution} testID={props.testID} onRepairInputs={onRepairInputs} />;
+    return <InstalledWidgetSurface {...mounted} target={resolution.target} runtime={resolution.runtime} input={resolution.input} />;
+}
+
+/** All widget definitions retain the same factual inputs-repair presentation. */
+export function ConfiguredWidgetRefusal(props: Readonly<{
+    resolution: Exclude<ConfiguredWidgetTargetResolution, { status: 'ready' }>;
+    testID: string;
+    onRepairInputs?: (outcome: WidgetInputRepairOutcome) => void;
+}>): React.ReactElement {
+    const { resolution, onRepairInputs } = props;
+        // Input repair reuses the host's editor. Missing runtime/plugin authority
+        // is not an input the person can fix by choosing another value.
+        const inputsNeedAttention = resolution.status === 'selection_required' || resolution.status === 'invalid'
+            || Boolean(resolution.fields?.length);
+        if (inputsNeedAttention && resolution.reasonCode !== 'widget_viewer_purpose_authority_unavailable') {
+            const title = resolution.status === 'selection_required' ? t('widgetAdd.previewWaiting')
+                : resolution.status === 'invalid' ? t('widgetAdd.inputsInvalid') : t('widgetAdd.inputsUnavailable');
+            return <SurfaceStateCard
+                testID={`${props.testID}-state`}
+                size="line"
+                kind={resolution.status === 'denied' ? 'denied' : 'warning'}
+                title={title}
+                diagnosticCode={resolution.reasonCode}
+                accessibilitySemantics="status"
+                {...(onRepairInputs ? { action: {
+                    label: t('widgetAdd.editInputs'),
+                    onPress: () => onRepairInputs(resolution),
+                    testID: `${props.testID}-inputs-repair`,
+                } } : {})}
+            />;
+        }
+        return <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: resolution.reasonCode }} testID={props.testID} />;
 }

@@ -6,6 +6,7 @@ import { Typography } from '@/constants/Typography';
 import { scaleTextStyle } from '@/components/ui/text/uiFontScale';
 import { useLocalSetting } from '@/sync/store/hooks';
 import { extractWebAttachmentFilesFromDataTransfer } from '@/utils/files/webAttachmentDataTransfer';
+import { useWebFileDropZone } from '@/hooks/ui/useWebFileDropZone.web';
 import { normalizeKeyboardKeyPressEvent, type KeyPressEvent as KeyboardKeyPressEvent } from '@/keyboard/events';
 import { recordLargeTextInputDiagnostic } from '@/utils/system/userInteractionDiagnostics';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from './multiTextInputTypography';
@@ -511,43 +512,16 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         }
     }, [props.onFilesPasted]);
 
-    const dragDepthRef = React.useRef(0);
-    const setDragActive = React.useCallback((active: boolean) => {
-        props.onFileDragActiveChange?.(active);
-    }, [props.onFileDragActiveChange]);
-
-    const handleDragEnter = React.useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
-        if (!props.onFilesDropped) return;
-        const types = Array.from(e.dataTransfer?.types ?? []);
-        if (!types.includes('Files')) return;
-        dragDepthRef.current += 1;
-        setDragActive(true);
-    }, [props.onFilesDropped, setDragActive]);
-
-    const handleDragLeave = React.useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
-        if (!props.onFilesDropped) return;
-        const types = Array.from(e.dataTransfer?.types ?? []);
-        if (!types.includes('Files')) return;
-        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-        if (dragDepthRef.current === 0) {
-            setDragActive(false);
-        }
-    }, [props.onFilesDropped, setDragActive]);
-
-    const handleDragOver = React.useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
-        if (!props.onFilesDropped) return;
-        e.preventDefault();
-    }, [props.onFilesDropped]);
-
-    const handleDrop = React.useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
-        const cb = props.onFilesDropped;
-        if (!cb) return;
-        e.preventDefault();
-        dragDepthRef.current = 0;
-        setDragActive(false);
-        const files = extractWebAttachmentFilesFromDataTransfer(e.dataTransfer);
-        if (files.length > 0) cb(files);
-    }, [props.onFilesDropped, setDragActive]);
+    useWebFileDropZone({
+        hostRef: textareaRef,
+        present: Boolean(props.onFilesDropped),
+        enabled: props.editable !== false && Boolean(props.onFilesDropped),
+        onFileDragActiveChange: props.onFileDragActiveChange,
+        onFilesDropped: (event) => {
+            const files = extractWebAttachmentFilesFromDataTransfer(event.dataTransfer);
+            if (files.length > 0) props.onFilesDropped?.(files);
+        },
+    });
 
     // Imperative handle for direct control
     React.useImperativeHandle(ref, () => ({
@@ -626,10 +600,6 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         onCompositionStart: handleCompositionStart,
         onCompositionEnd: handleCompositionEnd,
         onPaste: handlePaste,
-        onDragEnter: handleDragEnter,
-        onDragLeave: handleDragLeave,
-        onDragOver: handleDragOver,
-        onDrop: handleDrop,
         onFocus: props.onFocus,
         onBlur: props.onBlur,
         readOnly: props.editable === false,

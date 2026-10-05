@@ -5,7 +5,7 @@ import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const densityState = vi.hoisted(() => ({ preferred: 'cozy' as 'comfortable' | 'cozy' | 'compact' }));
+const densityState = vi.hoisted(() => ({ preferred: 'cozy' as 'comfortable' | 'cozy' | 'compact', fontScale: 1 }));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -21,18 +21,15 @@ vi.mock('@/components/ui/layout/layout', () => ({
     useLayoutMaxWidth: () => 850,
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-}));
-
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 
 // The list-density preference is device-local storage: the one boundary this test controls.
 vi.mock('@/sync/store/hooks', () => ({
-    useLocalSetting: (key: string) => (key === 'uiItemDensity' ? densityState.preferred : key === 'uiFontScale' ? 1 : null),
+    useLocalSetting: (key: string) => (key === 'uiItemDensity' ? densityState.preferred : key === 'uiFontScale' ? densityState.fontScale : null),
 }));
 
 afterEach(() => {
+    densityState.fontScale = 1;
     standardCleanup();
     vi.resetModules();
 });
@@ -87,6 +84,16 @@ async function renderPage(density: Density, section?: 'compact') {
 }
 
 describe('Item page rows follow the list-density preference', () => {
+    it('leaves web row metrics at their base size for the global CSS scale owner', async () => {
+        densityState.fontScale = 1.3;
+        const screen = await renderPage('cozy');
+        const title = flattenTestStyle(textNode(screen, 'Theme').props.style);
+        // Unistyles compiles the adapter's complete style into CSS. The global web override
+        // applies 1.3 to that CSS; pre-scaling here would produce 14 × 1.3² = 23.66px.
+        expect(title.fontSize).toBe(14);
+        expect(title.lineHeight).toBe(20);
+    });
+
     it('renders the default density exactly as the shared page anatomy plugin pages draw', async () => {
         const { HAPPIER_PAGE_METRICS, HAPPIER_PAGE_TEXT } = await import('@happier-dev/plugin-ui/presentation');
         const screen = await renderPage('cozy');

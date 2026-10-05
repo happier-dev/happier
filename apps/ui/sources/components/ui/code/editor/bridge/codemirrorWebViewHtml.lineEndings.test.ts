@@ -4,6 +4,7 @@ import * as view from '@codemirror/view';
 import * as commands from '@codemirror/commands';
 import * as language from '@codemirror/language';
 import * as autocomplete from '@codemirror/autocomplete';
+import * as search from '@codemirror/search';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildCodeMirrorWebViewHtml } from './codemirrorWebViewHtml';
@@ -11,12 +12,12 @@ import { buildCodeMirrorWebViewHtml } from './codemirrorWebViewHtml';
 // Load the installed CodeMirror modules through the WebView's embedded-bundle ABI.
 vi.mock('./codemirrorWebViewBundle.generated', () => ({ CODEMIRROR_WEBVIEW_BUNDLE_JS: '/* installed modules supplied by test */' }));
 
-type Envelope = { v: number; type: string; payload: { doc?: string; requestId?: string; message?: string } };
+type Envelope = { v: number; type: string; payload: { doc?: string; requestId?: string; message?: string; status?: unknown } };
 
 function bootBridge() {
     const messages: Envelope[] = [];
     document.body.innerHTML = '<div id="root"></div>';
-    vi.stubGlobal('__CM6__', { ...state, ...view, ...commands, ...language, ...autocomplete });
+    vi.stubGlobal('__CM6__', { ...state, ...view, ...commands, ...language, ...autocomplete, ...search });
     Object.defineProperty(window, 'ReactNativeWebView', {
         configurable: true,
         value: { postMessage: (raw: string) => messages.push(JSON.parse(raw)) },
@@ -74,6 +75,43 @@ describe('native CodeMirror WebView line endings', () => {
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
         Reflect.deleteProperty(window, 'ReactNativeWebView');
+    });
+
+    it('finds literal backslashes on the live CRLF document, seeds the addressed hit and preserves selection on close', () => {
+        const bridge = bootBridge();
+        cleanup = bridge.cleanup;
+        bridge.send('init', { doc: '😀 first\\n\r\nsecond\\n\r\nthird\\n' });
+        bridge.send('find.set', { query: '\\n', options: { matchCase: true, regex: false }, target: { line: 2, column: 7 } });
+        const editor = bridge.getView();
+        expect(editor.state.sliceDoc(editor.state.selection.main.from, editor.state.selection.main.to)).toBe('\\n');
+        expect(editor.state.doc.lineAt(editor.state.selection.main.from).number).toBe(2);
+        expect(bridge.messages.at(-1)).toMatchObject({ type: 'find.status', payload: {
+            status: { kind: 'results', current: 2, total: 3, coverage: 'complete' },
+        } });
+        expect(document.querySelector('.cm-search')).toBeNull();
+        expect(document.querySelectorAll('.cm-searchMatch')).toHaveLength(3);
+        expect(document.querySelectorAll('.cm-searchMatch-selected')).toHaveLength(1);
+
+        bridge.send('find.step', { direction: 1 });
+        expect(editor.state.doc.lineAt(editor.state.selection.main.from).number).toBe(3);
+        expect(bridge.messages.at(-1)?.payload.status).toMatchObject({ current: 3, total: 3 });
+        const selection = editor.state.selection;
+        bridge.send('find.close', {});
+        expect(editor.state.selection).toBe(selection);
+        expect(bridge.messages.at(-1)?.payload.status).toEqual({ kind: 'idle' });
+        bridge.send('requestDoc', { requestId: 'after-find' });
+        expect(bridge.messages.at(-1)?.payload.doc).toBe('😀 first\\n\r\nsecond\\n\r\nthird\\n');
+    });
+
+    it('reports invalid regex and refreshes counts from edits before the host change debounce', () => {
+        const bridge = bootBridge();
+        cleanup = bridge.cleanup;
+        bridge.send('init', { doc: 'one two' });
+        bridge.send('find.set', { query: '[', options: { matchCase: false, regex: true } });
+        expect(bridge.messages.at(-1)?.payload.status).toEqual({ kind: 'invalidPattern' });
+        bridge.send('find.set', { query: 'one', options: { matchCase: false, regex: false } });
+        bridge.getView().dispatch({ changes: { from: 7, insert: ' one' } });
+        expect(bridge.messages.at(-1)?.payload.status).toMatchObject({ kind: 'results', total: 2 });
     });
 
     it.each(['\r\n', '\r', '\n'])('preserves %j in snapshots, debounced changes and stale-host flushes', (separator) => {

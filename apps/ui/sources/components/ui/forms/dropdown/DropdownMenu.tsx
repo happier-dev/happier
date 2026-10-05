@@ -92,6 +92,11 @@ export type DropdownMenuItemTriggerConfig = Readonly<{
      */
     subtitleFormatter?: (selectedItem: DropdownMenuItem | null) => React.ReactNode;
     /**
+     * Page field only: how the bordered value box presents the current choice — a leading mark, a
+     * quieter second half, a quieter value, and the invalid border for a value that no longer resolves.
+     */
+    field?: Readonly<{ leading?: React.ReactNode; secondary?: string | null; quietValue?: boolean; invalid?: boolean }>;
+    /**
      * Pass-through props for the underlying `Item` trigger (excluding computed fields).
      */
     itemProps?: Partial<
@@ -101,6 +106,7 @@ export type DropdownMenuItemTriggerConfig = Readonly<{
 
 export type DropdownMenuProps = Readonly<{
     testID?: string;
+    header?: React.ReactNode;
     footer?: React.ReactNode;
     /**
      * The trigger element.
@@ -360,17 +366,18 @@ export function DropdownMenu(props: DropdownMenuProps) {
         }
     }, [activeSubmenu, props.open]);
 
-    // On a configuration page the trigger is a bordered field showing the current value; on phone
-    // widths it falls back to the value and a chevron beside the label (PLAN §3). Elsewhere (menus,
+    // A stacked configuration select retains its full-width field on phones. Inline phone
+    // controls use the compact value and chevron. Elsewhere (menus,
     // sheets, grouped lists) the grouped trigger is unchanged.
     const isPagePresentation = useListPresentation() === 'page';
     const viewportClass = useViewportClass();
     const pageTrigger: 'field' | 'compact' | null = !isPagePresentation
         ? null
-        : viewportClass === 'compact' ? 'compact' : 'field';
+        : viewportClass === 'compact' && props.itemTrigger?.itemProps?.accessoryLayout !== 'stacked' ? 'compact' : 'field';
+    const fieldInvalid = props.itemTrigger?.field?.invalid === true;
     const fieldColors = React.useMemo(
-        () => (pageTrigger === 'field' ? resolveFieldBoxColors(theme) : undefined),
-        [pageTrigger, theme],
+        () => (pageTrigger === 'field' ? resolveFieldBoxColors(theme, fieldInvalid ? 'invalid' : 'idle') : undefined),
+        [fieldInvalid, pageTrigger, theme],
     );
     // A page field names whatever is stored, including an option that can no longer be chosen; only
     // an empty selection asks for a choice.
@@ -415,6 +422,13 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         field: fieldColors,
                         placeholder: pageTrigger ? t('common.choose') : undefined,
                         placeholderColor: theme.colors.input.placeholder,
+                        ...(pageTrigger === 'field' && cfg.field ? {
+                            leading: cfg.field.leading,
+                            secondary: cfg.field.secondary ?? null,
+                            quietValue: cfg.field.quietValue === true,
+                            secondaryColor: theme.colors.text.tertiary,
+                            quietValueColor: theme.colors.text.secondary,
+                        } : {}),
                     })}
                     // Both page triggers measure the row (R9): a narrow row puts the value under the
                     // label rather than pushing it off the side of the screen.
@@ -440,7 +454,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
             }), props.open);
         }
         return withExpandedTriggerState(props.trigger, props.open);
-    }, [closeMenu, fieldColors, openMenu, pageSelectedItem, pageTrigger, props.itemTrigger, props.open, props.trigger, resolvedTriggerDensity, selectedItemForTrigger, theme.colors.input.placeholder, theme.colors.text.secondary, toggle]);
+    }, [closeMenu, fieldColors, openMenu, pageSelectedItem, pageTrigger, props.itemTrigger, props.open, props.trigger, resolvedTriggerDensity, selectedItemForTrigger, theme.colors.input.placeholder, theme.colors.text.secondary, theme.colors.text.tertiary, toggle]);
 
     const {
         searchQuery,
@@ -597,6 +611,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 >
                     {({ maxHeight, maxWidth, placement }) => (<>
                         <FloatingOverlay
+                            header={props.header}
                             footer={props.footer}
                             maxHeight={maxHeight}
                             edgeFades={{ top: true, bottom: true }}

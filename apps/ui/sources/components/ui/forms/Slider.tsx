@@ -147,10 +147,18 @@ export function Slider(props: SliderProps) {
     }, [commit, disabled, step]);
 
     const accessibleName = props.accessibilityLabel ?? rowAccessibleName;
+    const valueText = props.formatValueText?.(value);
     const percent = `${Math.round(progress * 1000) / 10}%` as const;
     const motion = reducedMotion || dragging ? null : TRANSITION_STYLE;
     const webKeyboardProps = Platform.OS === 'web'
-        ? ({ onKeyDown: handleKeyDown } as Record<string, unknown>)
+        ? {
+            onKeyDown: handleKeyDown,
+            // React Native Web projects the individual ARIA value props, not native accessibilityValue.
+            'aria-valuemin': min,
+            'aria-valuemax': max,
+            'aria-valuenow': value,
+            'aria-valuetext': valueText,
+        }
         : {};
 
     return (
@@ -165,7 +173,7 @@ export function Slider(props: SliderProps) {
                 min,
                 max,
                 now: value,
-                text: props.formatValueText?.(value),
+                text: valueText,
             }}
             accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
             onAccessibilityAction={handleAccessibilityAction}

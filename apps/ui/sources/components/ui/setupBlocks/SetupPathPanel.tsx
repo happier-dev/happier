@@ -162,7 +162,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 10,
     },
     pathSelected: {
-        backgroundColor: theme.colors.surface.pressedOverlay,
+        backgroundColor: theme.colors.surface.selected,
     },
     pathHovered: {
         backgroundColor: theme.colors.surface.pressed,

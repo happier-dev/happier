@@ -18,6 +18,7 @@ import ArrowRight01Icon from '@hugeicons/core-free-icons/ArrowRight01Icon';
 import ArrowRight02Icon from '@hugeicons/core-free-icons/ArrowRight02Icon';
 import ArrowShrink01Icon from '@hugeicons/core-free-icons/ArrowShrink01Icon';
 import ArrowTurnBackwardIcon from '@hugeicons/core-free-icons/ArrowTurnBackwardIcon';
+import ArrowTurnForwardIcon from '@hugeicons/core-free-icons/ArrowTurnForwardIcon';
 import ArrowUp01Icon from '@hugeicons/core-free-icons/ArrowUp01Icon';
 import ArrowUp02Icon from '@hugeicons/core-free-icons/ArrowUp02Icon';
 import ArrowUpDownIcon from '@hugeicons/core-free-icons/ArrowUpDownIcon';
@@ -27,7 +28,9 @@ import Attachment02Icon from '@hugeicons/core-free-icons/Attachment02Icon';
 import BarChartIcon from '@hugeicons/core-free-icons/BarChartIcon';
 import Book01Icon from '@hugeicons/core-free-icons/Book01Icon';
 import BookBookmark01Icon from '@hugeicons/core-free-icons/BookBookmark01Icon';
+import BookOpen01Icon from '@hugeicons/core-free-icons/BookOpen01Icon';
 import Bookmark01Icon from '@hugeicons/core-free-icons/Bookmark01Icon';
+import BookmarkPlusIcon from '@hugeicons/core-free-icons/BookmarkPlusIcon';
 import Books01Icon from '@hugeicons/core-free-icons/Books01Icon';
 import BotIcon from '@hugeicons/core-free-icons/BotIcon';
 import BrowserIcon from '@hugeicons/core-free-icons/BrowserIcon';
@@ -250,6 +253,7 @@ import type { IconName } from './iconRegistry.generated';
 export const HUGE_ICON_REGISTRY = {
     'archive': Archive01Icon,
     'arrow-arc-left': ArrowTurnBackwardIcon,
+    'arrow-arc-right': ArrowTurnForwardIcon,
     'arrow-circle-down': CircleArrowDown01Icon,
     'arrow-circle-right': CircleArrowRight01Icon,
     'arrow-circle-up': CircleArrowUp01Icon,
@@ -276,7 +280,9 @@ export const HUGE_ICON_REGISTRY = {
     'bell-slash': NotificationOff01Icon,
     'book': Book01Icon,
     'book-bookmark': BookBookmark01Icon,
+    'book-open': BookOpen01Icon,
     'bookmark': Bookmark01Icon,
+    'bookmark-plus': BookmarkPlusIcon,
     'books': Books01Icon,
     'browsers': BrowserIcon,
     'bug': Bug01Icon,

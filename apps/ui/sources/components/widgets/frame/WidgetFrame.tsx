@@ -28,6 +28,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { WidgetFrameResourceActivityContext } from './widgetFrameResourceActivity';
 
 export type WidgetFrameStyle = HappierWidgetFrameStyle;
 export type WidgetFramePlacement = HappierWidgetFramePlacement;
@@ -66,6 +67,8 @@ export type WidgetFrameFooter =
 
 export type WidgetFrameProps = Readonly<{
     testID: string;
+    /** Reuse the native body/footer inside a configured instance's existing frame. */
+    presentation?: 'frame' | 'body';
     /** Card (its own surface) or plain (on the page, a hairline above). See `useWidgetFrameStyle`. */
     frameStyle: WidgetFrameStyle;
     placement: WidgetFramePlacement;
@@ -77,6 +80,8 @@ export type WidgetFrameProps = Readonly<{
     source?: string | React.ReactElement;
     /** Freshness ("As of 10:42") or a count, only when the source actually knows it. */
     meta?: React.ReactNode;
+    /** A live fact that belongs to the title itself (a running call's clock), set right after it. */
+    titleMeta?: React.ReactNode;
     /** The widget's controls at the end of the header: its ⋯ menu, a move handle. */
     menu?: React.ReactNode;
     body: WidgetFrameBody;
@@ -85,8 +90,11 @@ export type WidgetFrameProps = Readonly<{
     rows?: number;
     /** Body box (a measured height, full-bleed insets) for a placement that sizes its body. */
     bodyStyle?: React.ComponentProps<typeof HappierWidgetFrame>['bodyStyle'];
-    /** It just arrived while you were looking (the agent added it): a one-shot ring that fades. */
-    fresh?: boolean;
+    /**
+     * It just arrived while you were looking (the agent added it): a one-shot ring that fades. A
+     * number replays the ring each time it changes (a caption asked "where is it?" again).
+     */
+    fresh?: boolean | number;
     /** Fill the grid cell, so cards in one row share a height. */
     fill?: boolean;
     accessibilityLabel?: string;
@@ -110,6 +118,19 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     const rows = props.rows ?? (props.placement === 'home' ? HOME_WIDGET_BODY_ROWS : 0);
     const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle, props.placement);
     const footer = props.footer ?? null;
+    const [refreshingResources, setRefreshingResources] = React.useState<ReadonlySet<symbol>>(() => new Set());
+    const reportResourceActivity = React.useCallback((key: symbol, refreshing: boolean) => {
+        setRefreshingResources(previous => {
+            if (previous.has(key) === refreshing) return previous;
+            const next = new Set(previous);
+            if (refreshing) next.add(key); else next.delete(key);
+            return next;
+        });
+    }, []);
+    const meta = refreshingResources.size > 0 ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx }}>
+        {props.meta}
+        <Text testID={`${props.testID}.refreshing`} style={styles.source} numberOfLines={1}>{t('widgetDefinition.refreshing')}</Text>
+    </View> : props.meta;
 
     const renderText = React.useCallback<HappierWidgetFrameTextRender>((input) => (
         <Text
@@ -171,7 +192,11 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         </View>
     ) : null;
 
+    if (props.presentation === 'body') {
+        return <>{props.meta}<WidgetFrameBodyView testID={props.testID} body={props.body} rows={0} />{footerNode}</>;
+    }
     return (
+        <WidgetFrameResourceActivityContext.Provider value={reportResourceActivity}>
         <HappierWidgetFrame
             testID={props.testID}
             frameStyle={props.frameStyle}
@@ -179,10 +204,15 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             cardStyle={styles.card}
             dividerColor={theme.colors.border.default}
             mark={mark}
-            title={props.title}
+            title={props.titleMeta && typeof props.title === 'string' ? (
+                <View style={styles.titleWithMeta}>
+                    {renderText({ role: 'title', text: props.title, testID: `${props.testID}.title` })}
+                    {props.titleMeta}
+                </View>
+            ) : props.title}
             {...(props.source ? { source: props.source } : {})}
             sourcePlacement={phone ? 'below' : 'inline'}
-            meta={props.meta}
+            meta={meta}
             accessory={props.menu}
             renderText={renderText}
             footer={footerNode}
@@ -190,7 +220,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             bodyStyle={props.bodyStyle}
             accessibilityLabel={props.accessibilityLabel
                 ?? (typeof props.source === 'string' && typeof props.title === 'string' ? `${props.title}, ${props.source}` : undefined)}
-            overlay={props.fresh ? <WidgetFrameArrivalRing frameStyle={props.frameStyle} /> : null}
+            overlay={props.fresh ? <WidgetFrameArrivalRing key={String(props.fresh)} frameStyle={props.frameStyle} /> : null}
         >
             {rows > 0 ? (
                 <WidgetFrameReservedRows rows={rows}>
@@ -200,6 +230,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                 <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
             )}
         </HappierWidgetFrame>
+        </WidgetFrameResourceActivityContext.Provider>
     );
 });
 
@@ -291,7 +322,7 @@ function WidgetFrameBodyView(props: Readonly<{ testID: string; body: WidgetFrame
 
 const stylesheet = StyleSheet.create((theme) => {
     const surfaceBorderStyle = resolveThemeSurfaceBorderStyle({
-        borderColor: theme.colors.border.surface,
+        borderColor: theme.colors.border.default,
         highlightColor: theme.colors.effect.surfaceHighlight,
     });
     const hasVisibleSurfaceChrome = surfaceBorderStyle.borderWidth > 0 || surfaceBorderStyle.borderTopWidth > 0;
@@ -306,6 +337,11 @@ const stylesheet = StyleSheet.create((theme) => {
             ...Typography.default('semiBold'),
             ...happierPageTextMetrics('sectionTitle'),
             color: theme.colors.text.primary,
+        },
+        titleWithMeta: {
+            flexDirection: 'row',
+            alignItems: 'baseline',
+            gap: 6,
         },
         source: {
             ...Typography.default('regular'),

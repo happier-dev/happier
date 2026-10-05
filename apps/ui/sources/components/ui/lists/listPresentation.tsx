@@ -18,22 +18,35 @@ import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
 export type ListPresentation = 'grouped' | 'page';
 
 const ListPresentationContext = React.createContext<ListPresentation>('grouped');
+type PageListInsets = 'standard' | 'contained';
+const PageListInsetsContext = React.createContext<PageListInsets>('standard');
 
 /**
  * Starts a list presentation scope. The scope also starts outside any page sheet: a menu, popover or
  * picker opened from a sheet row (React context crosses portals) draws its own rows, never the sheet's
  * row inset and hairlines.
  */
-export function ListPresentationProvider(props: Readonly<{ value: ListPresentation; children: React.ReactNode }>) {
+export function ListPresentationProvider(props: Readonly<{
+    value: ListPresentation;
+    /** A contained column already owns its outer padding; sections add no second page inset. */
+    pageInsets?: PageListInsets;
+    children: React.ReactNode;
+}>) {
     return (
         <HappierPageSectionContext.Provider value={null}>
-            <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>
+            <PageListInsetsContext.Provider value={props.pageInsets ?? 'standard'}>
+                <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>
+            </PageListInsetsContext.Provider>
         </HappierPageSectionContext.Provider>
     );
 }
 
 export function useListPresentation(): ListPresentation {
     return React.useContext(ListPresentationContext);
+}
+
+export function usePageListInsets(): PageListInsets {
+    return React.useContext(PageListInsetsContext);
 }
 
 /**

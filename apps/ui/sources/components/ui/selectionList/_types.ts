@@ -441,12 +441,14 @@ export type SelectionListStep = Readonly<{
      * current input value, before the user explicitly navigates rows. Returning
      * a visible option id makes it the keyboard-focused row; returning `null`
      * falls back to the SelectionList-level `selectedOptionId`, then to the
-     * first row. Re-evaluated as the input changes, so a value step can move the
+     * first row unless `autoFocusFirstOption` is false. Re-evaluated as the input changes, so a value step can move the
      * default highlight as typing begins (e.g. focus the suggested-name row when
      * empty, then the live "Create …" row once the user types). Explicit arrow
      * navigation still overrides this until the input crosses the boundary again.
      */
     resolveDefaultFocusedOptionId?: (input: string) => string | null;
+    /** Disable the first-row fallback; selected/preferred rows and arrow navigation still focus normally. */
+    autoFocusFirstOption?: boolean;
     /** Override the empty-state copy for this step. */
     emptyStateLabel?: string;
     /** Ordered array of section descriptors; the array order IS the visual order. */
@@ -803,7 +805,7 @@ export type SelectionListProps = Readonly<{
     onCommitInputValue?: (input: string) => void;
     /** Called when the user explicitly closes (Escape after stack drains). */
     onRequestClose: () => void;
-    /** Render keyboard chips/footer hints; defaults to useHasHardwareKeyboard(). */
+    /** Render keyboard hints only with a detected hardware keyboard; false opts out even on desktop. */
     keyboardHintsEnabled?: boolean;
     /**
      * Focus the search/value input when this list mounts or changes step on web.

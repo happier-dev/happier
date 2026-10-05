@@ -32,6 +32,14 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
     placeholderColor?: string;
     /** Field only: a mark before the value (the selected agent's brand mark in a toolbar select). */
     leading?: React.ReactNode;
+    /** Field only: a quieter second half after the value ("This session · happier"). */
+    secondary?: string | null;
+    /** Field only: the value reads quieter (a value the surface fills on its own). */
+    quietValue?: boolean;
+    /** Field only: colour of the quieter second half. */
+    secondaryColor?: string;
+    /** Field only: colour of a quiet value. */
+    quietValueColor?: string;
 }>) {
     const resolvedDensity = params.detailDensity ?? 'comfortable';
     const chevron = (
@@ -53,9 +61,17 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
         });
         return (
             <HappierFieldBoxTrigger colors={params.field} leading={params.leading} trailing={chevron}>
-                <Text style={label.style} numberOfLines={1}>
+                <Text
+                    style={[label.style, params.secondary ? { flexGrow: 0, flexShrink: 1, flexBasis: 'auto' } : null, params.quietValue && !label.placeholder && params.quietValueColor ? { color: params.quietValueColor } : null]}
+                    numberOfLines={1}
+                >
                     {label.text}
                 </Text>
+                {params.secondary && !label.placeholder ? (
+                    <Text style={[label.style, { flexGrow: 1, flexShrink: 1000, flexBasis: 'auto', marginLeft: 6, color: params.secondaryColor ?? label.style.color }]} numberOfLines={1}>
+                        {params.secondary}
+                    </Text>
+                ) : null}
             </HappierFieldBoxTrigger>
         );
     }

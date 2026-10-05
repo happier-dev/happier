@@ -342,7 +342,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     }
     const detectedKeyboard = useHardwareKeyboard();
     const detectedReducedMotion = useReducedMotionPreference();
-    const keyboardHintsEnabled = props.keyboardHintsEnabled ?? detectedKeyboard;
+    const keyboardHintsEnabled = props.keyboardHintsEnabled !== false && detectedKeyboard;
     // ↵ is a key: without a hardware keyboard a command row shows no mark at all.
     const rowSelectionMark = props.selectionMark === 'enter' && !keyboardHintsEnabled ? 'none' : props.selectionMark;
 
@@ -552,6 +552,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         flatVisibleOptionIds,
         ...(virtualizedOptionSource === undefined ? {} : { virtualizedOptionSource }),
         preferredFocusedOptionId,
+        autoFocusFirstOption: currentStep.autoFocusFirstOption,
         inputValue,
         inputMode,
     });

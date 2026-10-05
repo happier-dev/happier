@@ -16,6 +16,7 @@ import {
 
 import { shadowLevelStyle } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
+import { StatusPill } from '@/components/ui/status/StatusPill';
 import { GradientSurface } from '@/components/ui/surfaces/GradientSurface';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 // The motion modules directly, not the instrument barrel: a segmented control must not load the
@@ -96,6 +97,8 @@ export type SegmentedTab<T extends string = string> = Readonly<{
      * the name. Announced with the label.
      */
     count?: string;
+    /** A short recommendation or availability badge, included in the accessible name. */
+    badge?: string;
 }>;
 
 export type SegmentedTabBarProps<T extends string = string> = Readonly<{
@@ -106,6 +109,8 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
     testIDPrefix?: string;
     /** Compact mode with reduced padding and smaller font */
     compact?: boolean;
+    /** Separate pills for list filters; keeps the same selection and keyboard semantics. */
+    presentation?: 'segmented' | 'pills';
     /**
      * Animate ONE shared thumb that spring-translates between segments instead
      * of swapping each tab's own active background (design-vision toggles:
@@ -149,6 +154,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexGrow: 1,
         minWidth: 0,
     },
+    tabCaption: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
     containerContent: {
         width: 'auto',
         flexGrow: 0,
@@ -170,6 +176,26 @@ const stylesheet = StyleSheet.create((theme) => ({
     innerContent: {
         width: 'auto',
         flexGrow: 0,
+    },
+    innerPills: {
+        backgroundColor: 'transparent',
+        gap: HAPPIER_SEGMENTED_METRICS.pills.gapPx,
+        flexWrap: 'wrap',
+    },
+    pillSurface: {
+        borderRadius: HAPPIER_SEGMENTED_METRICS.pills.radiusPx,
+        paddingVertical: HAPPIER_SEGMENTED_METRICS.pills.paddingVerticalPx,
+        paddingHorizontal: HAPPIER_SEGMENTED_METRICS.pills.paddingHorizontalPx,
+        borderWidth: 1,
+        borderColor: theme.colors.border.default,
+    },
+    pillActive: {
+        backgroundColor: theme.colors.surface.inset,
+        borderColor: theme.colors.surface.inset,
+    },
+    pillLabel: {
+        fontSize: HAPPIER_SEGMENTED_METRICS.pills.labelFontSizePx,
+        lineHeight: HAPPIER_SEGMENTED_METRICS.pills.labelSlotPx,
     },
     // One dim on the track, not per segment: stacking opacity on each Pressable would double up
     // behind the active thumb and read as two different greys.
@@ -352,11 +378,12 @@ function SlidingThumb(props: Readonly<{
 function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const compact = props.compact;
+    const pills = props.presentation === 'pills';
+    const compact = pills ? false : props.compact;
     const disabled = props.disabled === true;
-    const slidingThumb = props.slidingThumb === true;
+    const slidingThumb = !pills && props.slidingThumb === true;
     const valueChoice = props.role === 'radiogroup';
-    const contentSized = props.segmentSizing === 'content';
+    const contentSized = pills || props.segmentSizing === 'content';
     // Icons replace labels only when the whole bar is iconic; a half-iconic row reads as broken.
     const iconOnly = props.tabs.length > 0 && props.tabs.every((tab) => tab.icon != null);
     const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
@@ -460,6 +487,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                     styles.inner,
                     compact ? styles.innerCompact : null,
                     contentSized ? styles.innerContent : null,
+                    pills ? styles.innerPills : null,
                     disabled ? styles.innerDisabled : null,
                 ]}
                 accessibilityRole={valueChoice ? 'radiogroup' : 'tablist'}
@@ -476,7 +504,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                     const active = isHappierTabSelected(props.activeTabId, tab.id);
                     const tabDisabled = disabled || tab.disabled === true;
                     const showOwnActiveSurface = active && !slidingThumb;
-                    const tabName = tab.count ? `${tab.label} ${tab.count}` : tab.label;
+                    const tabName = [tab.label, tab.count, tab.badge].filter(Boolean).join(' ');
                     const unavailableReason = tab.disabled === true ? tab.unavailableReason : undefined;
                     const webKeyDownProps = Platform.OS === 'web'
                         ? ({ onKeyDown: (event: any) => handleTabKeyDown(tabIndex, event) } as Record<string, unknown>)
@@ -521,12 +549,14 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                     iconOnly ? (compact ? styles.tabSurfaceIconCompact : styles.tabSurfaceIcon) : null,
                                     tabSurfaceTarget,
                                     contentSized ? styles.tabSurfaceContent : null,
-                                    showOwnActiveSurface ? styles.tabActive : null,
+                                    showOwnActiveSurface && !pills ? styles.tabActive : null,
+                                    pills ? styles.pillSurface : null,
+                                    pills && active ? styles.pillActive : null,
                                     !tabDisabled && focusedTabId === tab.id ? styles.tabFocused : null,
                                     !disabled && tab.disabled === true ? styles.tabDisabled : null,
                                 ]}
                             >
-                                {showOwnActiveSurface ? (
+                                {showOwnActiveSurface && !pills ? (
                                     <GradientSurface
                                         fallbackColor={theme.colors.segmentedControl.activeBackground}
                                         gradient={theme.colors.segmentedControl.activeGradient}
@@ -537,12 +567,14 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                 {iconOnly ? (
                                     <View style={styles.tabIcon}>{tab.icon}</View>
                                 ) : (
+                                    <View style={styles.tabCaption}>
                                     <Text
                                         numberOfLines={1}
                                         ellipsizeMode="tail"
                                         style={[
                                             styles.tabLabel,
                                             compact ? styles.tabLabelCompact : null,
+                                            pills ? styles.pillLabel : null,
                                             active ? styles.tabLabelActive : null,
                                             active ? props.activeLabelStyle : null,
                                         ]}
@@ -550,6 +582,8 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                         {tab.label}
                                         {tab.count ? <Text style={styles.tabCount}>{` ${tab.count}`}</Text> : null}
                                     </Text>
+                                    {tab.badge ? <StatusPill variant="info" hideDot label={tab.badge} /> : null}
+                                    </View>
                                 )}
                             </View>
                         </Pressable>

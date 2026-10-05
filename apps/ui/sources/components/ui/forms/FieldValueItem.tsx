@@ -3,9 +3,15 @@ import {
     resolveHappierFieldKeyboardType,
     useHappierFieldValueDraft,
     type HappierFieldValueKind,
+    HappierFieldStepper,
+    type HappierFieldStepperBounds,
 } from '@happier-dev/plugin-ui/presentation';
+import { useUnistyles } from 'react-native-unistyles';
+import { t } from '@/text';
+import { FIELD_BOX_METRICS, resolveFieldBoxColors } from './fieldBox';
 
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
+import { Text } from '@/components/ui/text/Text';
 
 import { FieldTextInput } from './FieldTextInput';
 
@@ -14,6 +20,9 @@ export type FieldValueKind = HappierFieldValueKind;
 export type FieldValueItemProps = Omit<ItemProps, 'rightElement' | 'onPress' | 'accessoryLayout' | 'showChevron' | 'detail'> & Readonly<{
     /** The saved value, as text. The field follows it whenever it changes. */
     value: string;
+    /** Visible unit beside a numeric draft; it is never included in the stored value. */
+    unit?: string;
+    stepper?: HappierFieldStepperBounds;
     /**
      * Saves the typed value. Called when focus leaves the field or on submit, and only when the draft
      * differs from `value`. Return the text the field should show afterwards (a number moved to its
@@ -50,6 +59,8 @@ export type FieldValueItemProps = Omit<ItemProps, 'rightElement' | 'onPress' | '
 export const FieldValueItem = React.memo(function FieldValueItem(props: FieldValueItemProps) {
     const {
         value,
+        unit,
+        stepper,
         onCommit,
         onDraftChange,
         kind = 'text',
@@ -67,22 +78,19 @@ export const FieldValueItem = React.memo(function FieldValueItem(props: FieldVal
     } = props;
     // The draft, its filtering and the commit rule are the shared owner's (a plugin page field
     // typed in place commits through the same one).
-    const field = useHappierFieldValueDraft({ value, onCommit, onDraftChange, kind, signed, allowEmpty });
+    const field = useHappierFieldValueDraft({ value, onCommit, onDraftChange, kind, signed, allowEmpty, stepper });
+    const { theme } = useUnistyles();
 
     const title = typeof itemProps.title === 'string' ? itemProps.title : undefined;
     // The subtitle sits beside the field, so it is attached for a screen reader focused on the field.
     const description = typeof itemProps.subtitle === 'string' ? itemProps.subtitle : undefined;
-    return (
-        <Item
-            {...itemProps}
-            showChevron={false}
-            accessoryLayout="adaptive"
-            rightElement={(
+    const input = (
                 <FieldTextInput
                     testID={fieldTestID}
                     value={field.draft}
                     onChangeText={field.change}
-                    accessibilityLabel={fieldAccessibilityLabel ?? title ?? ''}
+                    accessibilityLabel={fieldAccessibilityLabel ?? (unit ? `${title ?? ''} (${unit})` : title ?? '')}
+                    trailing={unit ? <Text style={{ fontSize: FIELD_BOX_METRICS.fontSizePx, color: theme.colors.text.secondary }}>{unit}</Text> : undefined}
                     accessibilityHint={description}
                     placeholder={placeholder}
                     keyboardType={resolveHappierFieldKeyboardType(kind, signed)}
@@ -94,8 +102,21 @@ export const FieldValueItem = React.memo(function FieldValueItem(props: FieldVal
                     autoFocus={autoFocus}
                     onBlur={field.commit}
                     onSubmitEditing={field.commit}
+                    style={stepper ? { minWidth: 0, width: FIELD_BOX_METRICS.triggerMinWidthPx } : undefined}
                 />
-            )}
+    );
+    return (
+        <Item
+            {...itemProps}
+            showChevron={false}
+            accessoryLayout="adaptive"
+            rightElement={stepper ? <HappierFieldStepper
+                testID={fieldTestID} colors={resolveFieldBoxColors(theme, error ? 'invalid' : 'idle')}
+                decreaseLabel={`${t('common.decrease')} ${title ?? ''}`}
+                increaseLabel={`${t('common.increase')} ${title ?? ''}`}
+                disabled={itemProps.disabled} canDecrement={field.canDecrement} canIncrement={field.canIncrement}
+                onStep={field.stepBy} renderSymbol={(symbol) => <Text>{symbol}</Text>}
+            >{input}</HappierFieldStepper> : input}
         />
     );
 });

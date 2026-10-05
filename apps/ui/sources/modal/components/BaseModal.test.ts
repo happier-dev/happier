@@ -171,32 +171,29 @@ describe('BaseModal (web)', () => {
 
         const overlay = screen.findAll((node) => {
             const style = flattenStyleProp((node.props as any)?.style);
-            return style.backdropFilter === 'blur(2px)' || style.WebkitBackdropFilter === 'blur(2px)';
+            return style.backdropFilter === 'blur(var(--happier-glass-floating-blur, 2px))';
         })?.[0];
         const style = flattenStyleProp((overlay?.props as any)?.style);
 
-        expect(style.WebkitBackdropFilter).toBe('blur(2px)');
-        expect(style.backdropFilter).toBe('blur(2px)');
+        expect(style.WebkitBackdropFilter).toBe('blur(var(--happier-glass-floating-blur, 2px))');
+        expect(style.backdropFilter).toBe('blur(var(--happier-glass-floating-blur, 2px))');
         expect(style.backgroundColor).toBe('rgba(255, 255, 255, 0.52)');
         expect(style.opacity).toBeUndefined();
         expect(String(style.transition)).not.toContain('opacity');
     });
 
-    it('omits backdrop blur styles when blur is disabled in local appearance settings', async () => {
+    it('does not let the retired device-local switch override Account material', async () => {
         localSettingState.uiBackdropBlurEnabled = false;
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal);
 
         const overlay = screen.findAll((node) => {
             const style = flattenStyleProp((node.props as any)?.style);
-            return style.backgroundColor === 'rgba(255, 255, 255, 0.68)' && style.position === 'fixed';
+            return style.backgroundColor === 'rgba(255, 255, 255, 0.52)' && style.position === 'fixed';
         })?.[0];
         const style = flattenStyleProp((overlay?.props as any)?.style);
-        expect(style.backgroundColor).toBe('rgba(255, 255, 255, 0.68)');
-        expect(style.backdropFilter).toBeUndefined();
-        expect(style.WebkitBackdropFilter).toBeUndefined();
-        expect(String(style.transition ?? '')).not.toContain('backdrop-filter');
-        expect(String(style.transition ?? '')).not.toContain('-webkit-backdrop-filter');
+        expect(style.backgroundColor).toBe('rgba(255, 255, 255, 0.52)');
+        expect(style.backdropFilter).toBe('blur(var(--happier-glass-floating-blur, 2px))');
 
         localSettingState.uiBackdropBlurEnabled = true;
     });

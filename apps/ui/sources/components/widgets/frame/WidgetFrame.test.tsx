@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -83,7 +84,7 @@ describe('WidgetFrame', () => {
             },
         });
         expect(screen.getTextContent()).toContain('Couldn\'t load runs');
-        screen.pressByTestId('frame.error-action');
+        await act(async () => { screen.pressByTestId('frame.error-action'); });
         await flushHookEffects({ cycles: 2 });
         expect(retry).toHaveBeenCalledTimes(1);
     });

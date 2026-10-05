@@ -22,8 +22,15 @@ import {
 } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 
 import { FLOATING_OVERLAY_METRICS } from './floatingOverlayMetrics';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
+import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 
 const OVERLAY_BORDER_RADIUS = FLOATING_OVERLAY_METRICS.radiusPx;
+
+// A sheet already owns its glass and corners. Keep the same scrolling content
+// without nesting a second floating card inside the shared modal surface.
+export const FloatingOverlaySheetContext = React.createContext(false);
 
 function extractSurfaceStyle(chromeStyle: ThemeSurfaceChromeStyle) {
     return {
@@ -44,25 +51,23 @@ const stylesheet = StyleSheet.create((theme) => {
     return {
         modalShadowFrame: {
             borderRadius: OVERLAY_BORDER_RADIUS,
-            backgroundColor: theme.colors.surface.base,
+            backgroundColor: 'transparent',
             ...shadowLevelStyle(theme.colors.shadowLevels[4]),
         },
         modalClipSurface: {
             borderRadius: OVERLAY_BORDER_RADIUS,
             overflow: 'hidden',
-            backgroundColor: theme.colors.surface.base,
             borderWidth: Platform.OS === 'web' ? 0 : 0.5,
             borderColor: theme.colors.border.modal,
         },
         themedSurfaceShadowFrame: {
             borderRadius: OVERLAY_BORDER_RADIUS,
-            backgroundColor: theme.colors.surface.base,
+            backgroundColor: 'transparent',
             ...shadowLevelStyle(theme.colors.shadowLevels[2]),
         },
         themedSurfaceClip: {
             borderRadius: OVERLAY_BORDER_RADIUS,
             overflow: 'hidden',
-            backgroundColor: theme.colors.surface.base,
             ...extractSurfaceStyle(themedSurfaceChromeStyle),
         },
     };
@@ -93,6 +98,8 @@ export type FloatingOverlayArrow =
 
 interface FloatingOverlayProps {
     children: React.ReactNode;
+    /** Fixed menu chrome; only the results between these slots scroll. */
+    header?: React.ReactNode;
     footer?: React.ReactNode;
     maxHeight?: number;
     scrollEnabled?: boolean;
@@ -123,8 +130,10 @@ interface FloatingOverlayProps {
 }
 
 export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
+    const insideSheet = React.useContext(FloatingOverlaySheetContext);
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const fadeColor = useGlassSurfaceColor(theme.colors.surface.base, 'floating', false);
     const { 
         children, 
         maxHeight = 240, 
@@ -203,7 +212,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const content = scrollEnabled ? (
         <Animated.ScrollView
             ref={scrollViewRef}
-            style={[{ maxHeight }, scrollViewStyle]}
+            style={[{ maxHeight, flexShrink: 1 }, scrollViewStyle]}
             keyboardShouldPersistTaps={keyboardShouldPersistTaps}
             showsVerticalScrollIndicator={showScrollIndicator}
             scrollEventThrottle={32}
@@ -232,35 +241,45 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         </Animated.View>
     );
 
+    const surfaceContent = <>
+        {props.header}
+        {content}
+        {props.footer}
+        {scrollEnabled && fadeCfg ? (
+            <ScrollEdgeFades color={fadeColor} size={fadeCfg.size} edges={fades.visibility} />
+        ) : null}
+        {scrollEnabled && indicatorCfg ? (
+            <ScrollEdgeIndicators
+                edges={fades.visibility}
+                color={theme.colors.text.secondary}
+                size={indicatorCfg.size}
+                opacity={indicatorCfg.opacity}
+            />
+        ) : null}
+    </>;
+
+    if (insideSheet) {
+        return <ListPresentationProvider value="grouped">
+            <Animated.View style={[{ maxHeight, flexShrink: 1, minHeight: 0 }, containerStyle]}>
+                <FloatingOverlaySheetContext.Provider value={false}>
+                    {surfaceContent}
+                </FloatingOverlaySheetContext.Provider>
+            </Animated.View>
+        </ListPresentationProvider>;
+    }
+
     const overlay = (
         <Animated.View style={[
             surfaceChrome === 'theme' ? styles.themedSurfaceShadowFrame : styles.modalShadowFrame,
             { maxHeight },
             containerStyle,
         ]}>
-            <Animated.View style={[
+            <GlassSurface surfaceGroup="floating" style={[
                 surfaceChrome === 'theme' ? styles.themedSurfaceClip : styles.modalClipSurface,
                 { maxHeight },
             ]}>
-                {content}
-                {props.footer}
-                {scrollEnabled && fadeCfg ? (
-                    <ScrollEdgeFades
-                        color={theme.colors.surface.base}
-                        size={fadeCfg.size}
-                        edges={fades.visibility}
-                    />
-                ) : null}
-
-                {scrollEnabled && indicatorCfg ? (
-                    <ScrollEdgeIndicators
-                        edges={fades.visibility}
-                        color={theme.colors.text.secondary}
-                        size={indicatorCfg.size}
-                        opacity={indicatorCfg.opacity}
-                    />
-                ) : null}
-            </Animated.View>
+                {surfaceContent}
+            </GlassSurface>
         </Animated.View>
     );
 
@@ -272,7 +291,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const arrowBoxStyle: ViewStyle & { boxShadow?: string } = {
         width: arrowSize,
         height: arrowSize,
-        backgroundColor: theme.colors.surface.base,
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'floating'),
         transform: [{ rotate: '45deg' as const }],
     };
 

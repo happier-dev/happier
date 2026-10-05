@@ -115,9 +115,6 @@ describe('Text (selectability scope)', () => {
     );
     const input = screen.findByType('RNTextInput' as any);
     expect(input.props.style).toEqual(expect.arrayContaining([
-      expect.objectContaining({ outlineStyle: 'none' }),
-    ]));
-    expect(input.props.style).toEqual(expect.arrayContaining([
       expect.objectContaining({ outlineWidth: 0 }),
     ]));
     expect(input.props.style).not.toEqual(expect.arrayContaining([

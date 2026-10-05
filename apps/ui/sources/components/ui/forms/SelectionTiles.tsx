@@ -1,4 +1,5 @@
 import React from 'react';
+import { Platform, type TextStyle } from 'react-native';
 import {
     HAPPIER_SELECTION_TILE_TEXT,
     HappierSelectionTiles,
@@ -13,6 +14,12 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+
+// RNW defaults to break-word; option names and captions wrap at normal word boundaries instead.
+const WEB_VISUAL_TEXT_WRAPPING: TextStyle & { overflowWrap: 'normal'; wordBreak: 'normal' } = {
+    overflowWrap: 'normal',
+    wordBreak: 'normal',
+};
 
 /**
  * Happier core's adapter for the shared tile owner (`HappierSelectionTiles` in
@@ -66,6 +73,11 @@ type SelectionTilesBaseProps<T extends string> = {
     testIdPrefix?: string;
     density?: 'regular' | 'compact';
     minimumColumns?: number;
+    maximumColumns?: number;
+    /** Card variant: the narrowest tile before the grid drops a column. */
+    minimumTileWidth?: number;
+    /** Card variant: description lines before it ellipsizes (default 4); the tile announces all of it. */
+    subtitleLines?: number;
     renderOptionFooter?: SelectionTileFooterRenderer<T>;
 };
 
@@ -103,25 +115,13 @@ export type SelectionTilesProps<T extends string> =
     | MultipleSelectionTilesProps<T>
     | ActionSelectionTilesProps<T>;
 
-/** An option's mark travels to the shared owner as a glyph token the adapter draws back. */
-type MarkGlyphToken = `mark:${string}`;
-type TileGlyphName = IconName | MarkGlyphToken;
-
-function markToken(id: string): MarkGlyphToken {
-    return `mark:${id}`;
-}
-
-function isMarkToken(name: TileGlyphName): name is MarkGlyphToken {
-    return name.startsWith('mark:');
-}
-
 export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const colors = React.useMemo((): HappierSelectionTilesColors => ({
         tileBackground: theme.colors.surface.base,
         tileBorder: theme.colors.border.default,
-        selection: theme.colors.button.primary.background,
+        selection: theme.colors.border.focus,
         glyph: theme.colors.text.secondary,
         ring: theme.colors.text.primary,
         previewBackground: theme.colors.background.canvas,
@@ -130,23 +130,18 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
     }), [theme]);
 
     const renderText = React.useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines }) => (
-        <Text style={textStyle(styles, role, selected, compact)} numberOfLines={numberOfLines}>{text}</Text>
+        <Text style={[
+            textStyle(styles, role, selected, compact),
+            Platform.OS === 'web' && (role === 'visualLabel' || role === 'visualSublabel') ? WEB_VISUAL_TEXT_WRAPPING : null,
+        ]} numberOfLines={numberOfLines}>{text}</Text>
     ), [styles]);
 
-    const marks = React.useMemo(() => {
-        const byToken = new Map<MarkGlyphToken, React.ReactNode>();
-        for (const option of props.options) if (option.mark) byToken.set(markToken(option.id), option.mark);
-        return byToken;
-    }, [props.options]);
-    const options = React.useMemo(() => (marks.size === 0 ? props.options : props.options.map((option) => (
-        option.mark ? { ...option, icon: markToken(option.id) } : option
-    ))), [marks, props.options]);
-    const renderGlyph = React.useCallback<HappierSelectionTilesGlyphRenderer<TileGlyphName>>(({ glyph, size, color }) => {
-        if (glyph.kind === 'icon' && isMarkToken(glyph.name)) return marks.get(glyph.name) ?? null;
-        return <Icon name={glyph.kind === 'icon' && !isMarkToken(glyph.name) ? glyph.name : 'check-circle'} size={size} color={color} />;
-    }, [marks]);
+    const options = props.options;
+    const renderGlyph = React.useCallback<HappierSelectionTilesGlyphRenderer<IconName>>(({ glyph, size, color }) => (
+        <Icon name={glyph.kind === 'icon' ? glyph.name : 'check'} size={size} color={color} />
+    ), []);
     const footer = props.variant === 'action' ? undefined : props.renderOptionFooter;
-    const renderOptionFooter = React.useCallback<HappierSelectionTileFooterRenderer<T, TileGlyphName>>((params) => {
+    const renderOptionFooter = React.useCallback<HappierSelectionTileFooterRenderer<T, IconName>>((params) => {
         const option = props.options.find((candidate) => candidate.id === params.option.id);
         return option && footer ? footer({ ...params, option }) : null;
     }, [props.options, footer]);

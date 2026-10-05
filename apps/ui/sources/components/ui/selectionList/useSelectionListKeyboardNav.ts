@@ -64,6 +64,7 @@ export type SelectionListRovingFocusParams = Readonly<{
      * existing selected row on open.
      */
     preferredFocusedOptionId?: string | null;
+    autoFocusFirstOption?: boolean;
     inputValue: string;
     /** Phase 2.5: 'search' (default) or 'value' (typed input is the commit value). */
     inputMode?: SelectionListInputMode;
@@ -165,6 +166,7 @@ function resolveDefaultFocusedIndex(
     flatVisibleOptionIds: ReadonlyArray<string>,
     preferredFocusedOptionId: string | null | undefined,
     virtualizedOptionSource?: SelectionListVirtualizedOptionSource,
+    autoFocusFirstOption = true,
 ): number {
     if (virtualizedOptionSource) {
         if (preferredFocusedOptionId) {
@@ -173,13 +175,13 @@ function resolveDefaultFocusedIndex(
                 return preferredIndex;
             }
         }
-        return virtualizedOptionSource.getFirstFocusableOptionIndex();
+        return autoFocusFirstOption ? virtualizedOptionSource.getFirstFocusableOptionIndex() : -1;
     }
     if (preferredFocusedOptionId) {
         const preferredIndex = flatVisibleOptionIds.indexOf(preferredFocusedOptionId);
         if (preferredIndex >= 0) return preferredIndex;
     }
-    return flatVisibleOptionIds.length > 0 ? 0 : -1;
+    return autoFocusFirstOption && flatVisibleOptionIds.length > 0 ? 0 : -1;
 }
 
 type RovingFocusState = Readonly<{
@@ -231,6 +233,7 @@ function resolveFocusSeedKey(params: SelectionListRovingFocusParams): string {
         optionIdentity,
         inputMode ?? '',
         preferredFocusedOptionId ?? '',
+        String(params.autoFocusFirstOption !== false),
         inputMode === 'value' ? '' : inputValue,
     ].join(FOCUS_SEED_FIELD_SEPARATOR);
 }
@@ -244,6 +247,9 @@ function resolveReseededFocusedIndex(
         preferredFocusedOptionId,
         virtualizedOptionSource,
     } = params;
+    if (!previous.explicit && params.autoFocusFirstOption === false) {
+        return resolveDefaultFocusedIndex(flatVisibleOptionIds, preferredFocusedOptionId, virtualizedOptionSource, false);
+    }
     if (virtualizedOptionSource) {
         if (previous.optionId !== null) {
             const survivingIndex = virtualizedOptionSource.findOptionIndexById(previous.optionId);
@@ -255,6 +261,7 @@ function resolveReseededFocusedIndex(
             flatVisibleOptionIds,
             preferredFocusedOptionId,
             virtualizedOptionSource,
+            params.autoFocusFirstOption,
         );
         if (!previous.explicit && preferredFocusedOptionId) return defaultIndex;
         let nearestIndex = -1;
@@ -304,6 +311,7 @@ export function useSelectionListRovingFocus(
     const {
         flatVisibleOptionIds,
         preferredFocusedOptionId,
+        autoFocusFirstOption,
         inputMode,
         inputValue,
         virtualizedOptionSource,
@@ -313,6 +321,7 @@ export function useSelectionListRovingFocus(
         () => resolveFocusSeedKey({
             flatVisibleOptionIds,
             preferredFocusedOptionId,
+            autoFocusFirstOption,
             inputMode,
             inputValue,
             ...(virtualizedOptionSource === undefined ? {} : { virtualizedOptionSource }),
@@ -320,6 +329,7 @@ export function useSelectionListRovingFocus(
         [
             flatVisibleOptionIds,
             preferredFocusedOptionId,
+            autoFocusFirstOption,
             inputMode,
             inputValue,
             virtualizedOptionSource,
@@ -332,6 +342,7 @@ export function useSelectionListRovingFocus(
             flatVisibleOptionIds,
             preferredFocusedOptionId,
             virtualizedOptionSource,
+            autoFocusFirstOption,
         );
         return {
             seedKey,
@@ -351,6 +362,7 @@ export function useSelectionListRovingFocus(
         const index = resolveReseededFocusedIndex(state, {
             flatVisibleOptionIds,
             preferredFocusedOptionId,
+            autoFocusFirstOption,
             inputMode,
             inputValue,
             ...(virtualizedOptionSource === undefined ? {} : { virtualizedOptionSource }),

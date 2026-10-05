@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     getPathBrowserRowTestId,
@@ -86,11 +86,20 @@ const machineCreateDirectoryMock = vi.hoisted(() => vi.fn<(machineId: string, pa
 const machineWorkspaceFileListMock = vi.hoisted(() => vi.fn<(machineId: string, input: Readonly<{ rootPath: string; query?: string; includeHidden?: boolean }>, options?: unknown) => Promise<{
     ok: boolean;
     paths?: string[];
+    truncated?: boolean;
     exitCode?: number;
 }>>(async () => ({
     ok: true,
     paths: [],
+    truncated: false,
 })));
+// Secure credentials are an environment boundary; credential and lifetime owners stay real.
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
+    return createTokenStorageModuleMock({ importOriginal, tokenStorage: {
+        getCredentialsForServerUrl: async () => ({ token: `header.${Buffer.from(JSON.stringify({ sub: 'target-account' })).toString('base64')}.signature` }),
+    } });
+});
 const modalPromptMock = vi.hoisted(() => vi.fn<(...args: any[]) => Promise<string | null>>(async () => null));
 const modalAlertMock = vi.hoisted(() => vi.fn());
 const itemRenderCounts = vi.hoisted(() => new Map<string, number>());
@@ -242,14 +251,21 @@ vi.mock('@/sync/domains/input/machineFileBrowser', () => ({
     warmMachineFileBrowserRoots: (params: unknown) => listMachineFileBrowserRootsMock(params as any),
 }));
 
+const defaultDirectoryEntries = listMachineFileBrowserDirectoryEntriesMock.getMockImplementation()!;
+const defaultRoots = listMachineFileBrowserRootsMock.getMockImplementation()!;
+
 describe('MachinePathBrowserModal', () => {
-    beforeEach(() => {
-        listMachineFileBrowserRootsMock.mockClear();
-        listMachineFileBrowserDirectoryEntriesMock.mockClear();
+    afterEach(() => { vi.useRealTimers(); });
+    beforeEach(async () => {
+        const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        const home = await upsertServerProfile({ serverUrl: 'https://path-browser-active.example.test', name: 'Active Home' });
+        await setActiveServerId(home.id);
+        listMachineFileBrowserRootsMock.mockReset().mockImplementation(defaultRoots);
+        listMachineFileBrowserDirectoryEntriesMock.mockReset().mockImplementation(defaultDirectoryEntries);
         flatListScrollToIndexMock.mockClear();
         machineCreateDirectoryMock.mockClear();
-        machineWorkspaceFileListMock.mockClear();
-        modalPromptMock.mockClear();
+        machineWorkspaceFileListMock.mockReset().mockResolvedValue({ ok: true, paths: [], truncated: false });
+        modalPromptMock.mockReset().mockResolvedValue(null);
         modalAlertMock.mockClear();
         itemRenderCounts.clear();
     });
@@ -418,6 +434,25 @@ describe('MachinePathBrowserModal', () => {
         await screen.pressByTestIdAsync(getPathBrowserRowTestId('/repo/apps/ui/README.md'));
 
         expect(onPickPath).toHaveBeenCalledWith('/repo/apps/ui/README.md');
+        vi.useRealTimers();
+    });
+
+    it('binds a targeted Home search to its credential Account and reports incomplete coverage', async () => {
+        const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+        const targetHome = await upsertServerProfile({ serverUrl: 'https://path-browser-target.example.test', name: 'Target Home' });
+        vi.useFakeTimers();
+        machineWorkspaceFileListMock.mockResolvedValueOnce({ ok: true, paths: ['src/needle.ts'], truncated: true });
+        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
+        const screen = await renderScreen(<MachinePathBrowserView machineId="machine-1" serverId={targetHome.id}
+            rootDirectoryPath="/repo" includeFiles selectionMode="file" variant="popover" onPickPath={vi.fn()} />);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        await act(async () => { screen.changeTextByTestId('path-browser-search', 'needle'); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+        expect(machineWorkspaceFileListMock.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
+            serverId: targetHome.id, accountId: 'target-account', signal: expect.any(AbortSignal),
+        }));
+        expect(screen.findByTestId('path-browser-search-incomplete')).toBeTruthy();
+        expect(screen.findByTestId(getPathBrowserRowTestId('/repo/src/needle.ts'))).toBeTruthy();
         vi.useRealTimers();
     });
 
@@ -892,12 +927,14 @@ describe('MachinePathBrowserModal', () => {
         expect(confirmAfter?.props.disabled).toBe(true);
 
         await screen.pressByTestIdAsync('dropdown-option-create-folder');
-
-        expect(machineCreateDirectoryMock).toHaveBeenCalledWith(
-            'machine-1',
-            '/Users/child',
-            expect.anything(),
-        );
+        // The real menu admits the action after its teardown frame, not after a fixed number of microtasks.
+        await act(async () => {
+            await vi.waitFor(() => expect(machineCreateDirectoryMock).toHaveBeenCalledWith(
+                'machine-1',
+                '/Users/child',
+                expect.anything(),
+            ));
+        });
     });
 
     it('uses context-menu semantics instead of row long-press on web to avoid delayed tap selection', async () => {

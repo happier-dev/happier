@@ -19,7 +19,7 @@ import {
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import { useNativeBackLayerDescendant } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useLocalSetting } from '@/sync/domains/state/storage';
+import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
 import type {
     PopoverAnchor,
     PopoverBackdropEffect,
@@ -44,6 +44,11 @@ import {
     type FocusReturnTarget,
 } from '@/keyboard/focusReturn';
 import { resolveHappierPopoverPlacement } from '@happier-dev/plugin-ui/presentation';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { BaseModal } from '@/modal/components/BaseModal';
+import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
+import { FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
 
 const ViewWithWheel = View as unknown as React.ComponentType<ViewProps & { onWheel?: any }>;
 
@@ -165,6 +170,9 @@ function areWindowRectsEqual(a: WindowRect | null, b: WindowRect | null): boolea
 
 type PopoverCommonProps = Readonly<{
     open: boolean;
+    /** Reuse the shared bottom-sheet navigation and chrome on phone viewports. */
+    phonePresentation?: 'sheet';
+    accessibilityLabel?: string;
     /** Move focus into the popover after it opens when the content is menu-like. */
     autoFocusOnOpen?: boolean;
     anchorRef?: React.RefObject<any>;
@@ -242,7 +250,7 @@ type PopoverWithoutBackdrop = PopoverCommonProps & Readonly<{
 
 export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const {
-        open,
+        open: requestedOpen,
         anchorRef: anchorRefLegacy,
         anchor: anchorProp,
         focusReturnRef: focusReturnRefProp,
@@ -260,6 +268,10 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         containerStyle,
         children,
     } = props;
+    const deviceType = useDeviceType();
+    const phoneSheet = props.phonePresentation === 'sheet' && deviceType === 'phone';
+    const insets = useChromeSafeAreaInsets();
+    const open = requestedOpen && !phoneSheet;
     const keyboardBottomInsetProp = props.keyboardBottomInset;
     const autoFocusOnOpen = props.autoFocusOnOpen === true;
     const resolvedAnchorMode: 'view' | 'rect' = anchorProp ? anchorProp.kind : 'view';
@@ -369,7 +381,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         }
     }, []);
     const reducedMotion = useReducedMotionPreference();
-    const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
+    const { blurEnabled: materialBlurEnabled } = useGlassBlurSetting();
     const popoverMotionPreset = React.useMemo(
         () => resolveOverlayMotionPreset({ kind: 'popover' }),
         [],
@@ -1564,7 +1576,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             ? (backdrop.effect ?? 'none')
             : 'none';
     const resolvedBackdropEffect: PopoverBackdropEffect =
-        backdropEffect === 'blur' && !uiBackdropBlurEnabled
+        backdropEffect === 'blur' && !materialBlurEnabled
             ? 'dim'
             : backdropEffect;
     const backdropBlurOnWeb = typeof backdrop === 'object' && backdrop ? backdrop.blurOnWeb : undefined;
@@ -1754,6 +1766,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                             <OverlayMotionFrame
                                 visible={motionVisible}
                                 kind="popover"
+                                disableTransformOnWeb
                                 direction={popoverMotionDirection}
                             >
                                 {children({ ...computed, requestClose })}
@@ -1764,6 +1777,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                     <OverlayMotionFrame
                         visible={motionVisible}
                         kind="popover"
+                        disableTransformOnWeb
                         direction={popoverMotionDirection}
                     >
                         {children({ ...computed, requestClose })}
@@ -1798,6 +1812,39 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         enabled: shouldUseOverlayPortalOnNative,
         content,
     });
+
+    if (phoneSheet) {
+        const maxHeight = Math.min(maxHeightCap, Math.max(0, windowHeight - insets.top - insets.bottom));
+        const closeSheet = () => onRequestClose?.();
+        return <BaseModal
+            visible={requestedOpen}
+            onClose={closeSheet}
+            placement="bottom"
+            scrollHost="body"
+            accessibilityLabel={props.accessibilityLabel}
+            focusReturnRef={resolvedFocusReturnRef}
+        >
+            <ModalCardFrame
+                presentation="sheet"
+                sheetBottomInset={insets.bottom}
+                title={props.accessibilityLabel}
+                closeButtonTestID="popover-sheet.close"
+                onClose={onRequestClose ? closeSheet : undefined}
+                style={{ maxHeight: Math.max(0, windowHeight - insets.top) }}
+                bodyStyle={{ flexGrow: 0, paddingLeft: insets.left, paddingRight: insets.right }}
+            >
+                <FloatingOverlaySheetContext.Provider value={true}>
+                    {children({
+                        placement: 'bottom',
+                        maxWidth: Math.max(0, windowWidth - insets.left - insets.right),
+                        maxHeight,
+                        presentation: 'sheet',
+                        requestClose: closeSheet,
+                    })}
+                </FloatingOverlaySheetContext.Provider>
+            </ModalCardFrame>
+        </BaseModal>;
+    }
 
     if (!shouldRender) return null;
 

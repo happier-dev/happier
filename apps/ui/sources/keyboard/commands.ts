@@ -1,6 +1,21 @@
 import type { KeyboardCommand, KeyboardCommandId, KeyboardCommandSettingsTitleKey, KeybindingRule } from './types';
 
 export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
+    {
+        id: 'appearance.theme.toggle',
+        settingsTitleKey: 'settingsAppearance.glassControls.themeCommand',
+        // Safari reserves Cmd+Shift+L for its sidebar; desktop webviews keep the normal chord.
+        get defaultBindings(): readonly KeybindingRule[] {
+            const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+            const safari = /Safari\//.test(ua) && !/(Chrome|Chromium|CriOS|Edg|OPR|FxiOS)\//.test(ua);
+            return [
+                { binding: 'Mod+Shift+L', platforms: ['web'], webHost: 'desktop', nativeConsumable: true },
+                { binding: safari ? 'Mod+Alt+L' : 'Mod+Shift+L', platforms: ['web'], webHost: 'browser' },
+                { binding: 'Mod+Shift+L', blockedSurfaces: ['web'], nativeConsumable: true },
+            ];
+        },
+        when: context => !context.isEditableTarget,
+    },
     // Browser chrome (UB-6). Guest<->host policy: these are HOST shortcuts and fire only while the
     // app chrome owns the keyboard. A page loaded in the in-app browser lives in a separate frame
     // or a native child webview, so its key events never reach this document's listener and it can
@@ -61,6 +76,19 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         when: (context) => !context.isEditableTarget,
     },
     {
+        id: 'composer.prompts.open',
+        settingsTitleKey: 'settingsKeyboard.commands.composerPromptsOpen',
+        defaultBindings: [
+            { binding: 'Ctrl+R', platforms: ['macos'], webHost: 'browser', allowInEditable: true, nativeConsumable: true },
+            { binding: 'Ctrl+R', webHost: 'desktop', allowInEditable: true, nativeConsumable: true },
+        ],
+    },
+    {
+        id: 'voice.toggle',
+        settingsTitleKey: 'settingsKeyboard.commands.voiceToggle',
+        defaultBinding: { binding: 'Mod+Alt+V', allowInEditable: true, nativeConsumable: true },
+    },
+    {
         id: 'composer.sendImmediate',
         settingsTitleKey: 'settingsKeyboard.commands.composerSendImmediate',
         defaultBinding: { binding: 'Mod+Enter', allowInEditable: true, nativeConsumable: true },
@@ -83,6 +111,29 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         id: 'mode.cycle',
         settingsTitleKey: 'settingsKeyboard.commands.modeCycle',
         defaultBinding: { binding: 'Alt+Shift+M', allowInEditable: true },
+    },
+    {
+        id: 'search.textInFiles',
+        settingsTitleKey: 'settingsKeyboard.commands.searchTextInFiles',
+        defaultBinding: { binding: 'Mod+Shift+F', allowInEditable: true, nativeConsumable: true },
+    },
+    {
+        id: 'find.open', settingsTitleKey: 'settingsKeyboard.commands.findOpen',
+        defaultBinding: { binding: 'Mod+F', allowInEditable: true, nativeConsumable: true },
+    },
+    {
+        id: 'find.next', settingsTitleKey: 'settingsKeyboard.commands.findNext',
+        defaultBindings: [
+            { binding: 'Mod+G', allowInEditable: true, nativeConsumable: true },
+            { binding: 'Enter', allowInEditable: true, nativeConsumable: true, conflictScope: 'findInput' },
+        ],
+    },
+    {
+        id: 'find.previous', settingsTitleKey: 'settingsKeyboard.commands.findPrevious',
+        defaultBindings: [
+            { binding: 'Mod+Shift+G', allowInEditable: true, nativeConsumable: true },
+            { binding: 'Shift+Enter', allowInEditable: true, nativeConsumable: true, conflictScope: 'findInput' },
+        ],
     },
     {
         id: 'permission.cycle',
@@ -111,6 +162,14 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
             { binding: 'Ctrl+Tab', blockedSurfaces: ['web'] },
         ],
         when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'session.pending.next',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionPendingNext',
+        defaultBindings: [
+            { binding: 'Alt+Shift+J', platforms: ['web'], webHost: 'browser', allowInEditable: true },
+            { binding: 'Mod+Shift+J', webHost: 'desktop', allowInEditable: true, nativeConsumable: true },
+        ],
     },
     {
         id: 'session.mru.previous',
@@ -410,6 +469,8 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         defaultBinding: { binding: 'Home' },
         when: (context) => !context.isEditableTarget,
     },
+    { id: 'workflow.new', settingsTitleKey: 'workflows.newWorkflow' },
+    { id: 'workflow.createWithAgent', settingsTitleKey: 'workflows.authoring.create' },
     // Workflow authoring. Both commands fire while the caret is inside the workflow editor's own
     // fields, so they are `allowInEditable`; save/run are exactly the actions an author reaches for
     // mid-edit and there is no competing text-field meaning for either chord.

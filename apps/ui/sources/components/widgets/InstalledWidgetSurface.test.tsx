@@ -113,6 +113,22 @@ const source = {
 };
 
 describe('InstalledWidgetSurface', () => {
+    it('retires the mounted lifetime when an exact Session target changes under the same instance revision', async () => {
+        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
+        const current = runtime();
+        const render = (sessionId: string) => React.createElement(InstalledWidgetSurface, {
+            target: { kind: 'session' as const, sessionId, session: createSessionFixture({ id: sessionId, serverId: 'home-a' }) },
+            recordRevision: 'same-instance-revision', source, presentation: 'content' as const,
+            runtime: current, testID: 'widget',
+        });
+        const screen = await renderScreen(render('session-a'));
+        const firstKey = state.mounts.at(-1)!.mountInstanceKey;
+        await act(async () => { screen.tree.update(render('session-b')); });
+        const mountedB = state.mounts.at(-1)!;
+        expect(mountedB.sessionId).toBe('session-b');
+        expect(mountedB.mountInstanceKey).not.toBe(firstKey);
+    });
+
     it('mounts an App widget with the app target and no Session facts', async () => {
         const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const appProjection = widgetProjectionOf(

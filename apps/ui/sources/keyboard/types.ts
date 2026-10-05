@@ -3,19 +3,27 @@ import type { TranslationKeyNoParams } from '@/text';
 export type KeyboardPlatform = 'macos' | 'ios' | 'windows' | 'linux' | 'android' | 'web';
 
 export type KeyboardCommandId =
+    | 'appearance.theme.toggle'
     | 'browser.address.focus'
     | 'browser.back'
     | 'browser.forward'
     | 'browser.reload'
     | 'composer.abortConfirm'
     | 'composer.focus'
+    | 'composer.prompts.open'
     | 'composer.sendImmediate'
     | 'composer.sendPending'
+    | 'voice.toggle'
     | 'commandPalette.open'
+    | 'search.textInFiles'
+    | 'find.open'
+    | 'find.next'
+    | 'find.previous'
     | 'mode.cycle'
     | 'permission.cycle'
     | 'shortcutsHelp.open'
     | 'session.new'
+    | 'session.pending.next'
     | 'session.mru.next'
     | 'session.mru.previous'
     | 'sessions.row.moveDown'
@@ -58,23 +66,35 @@ export type KeyboardCommandId =
     | 'transcript.scroll.pageUp'
     | 'transcript.scroll.top'
     | 'workflow.run'
+    | 'workflow.new'
+    | 'workflow.createWithAgent'
     | 'workflow.save';
 
 export type KeyboardCommandSettingsTitleKey = Extract<
     TranslationKeyNoParams,
+    | 'workflows.newWorkflow'
+    | 'workflows.authoring.create'
+    | 'settingsAppearance.glassControls.themeCommand'
     | 'settingsKeyboard.commands.browserAddressFocus'
     | 'settingsKeyboard.commands.browserBack'
     | 'settingsKeyboard.commands.browserForward'
     | 'settingsKeyboard.commands.browserReload'
     | 'settingsKeyboard.commands.composerAbortConfirm'
     | 'settingsKeyboard.commands.composerFocus'
+    | 'settingsKeyboard.commands.composerPromptsOpen'
     | 'settingsKeyboard.commands.composerSendImmediate'
     | 'settingsKeyboard.commands.composerSendPending'
+    | 'settingsKeyboard.commands.voiceToggle'
     | 'settingsKeyboard.commands.commandPaletteOpen'
+    | 'settingsKeyboard.commands.searchTextInFiles'
+    | 'settingsKeyboard.commands.findOpen'
+    | 'settingsKeyboard.commands.findNext'
+    | 'settingsKeyboard.commands.findPrevious'
     | 'settingsKeyboard.commands.modeCycle'
     | 'settingsKeyboard.commands.permissionCycle'
     | 'settingsKeyboard.commands.shortcutsHelpOpen'
     | 'settingsKeyboard.commands.sessionNew'
+    | 'settingsKeyboard.commands.sessionPendingNext'
     | 'settingsKeyboard.commands.sessionMruNext'
     | 'settingsKeyboard.commands.sessionMruPrevious'
     | 'settingsKeyboard.commands.sessionsRowMoveDown'
@@ -112,6 +132,7 @@ export type KeyboardCommandSettingsTitleKey = Extract<
     | 'settingsKeyboard.commands.workflowSave'
     | 'settingsKeyboard.commands.workspaceTabNew'
     | 'settingsKeyboard.commands.workspaceTabClose'
+    | 'settingsKeyboard.commands.workspaceTabReopen'
     | `settingsKeyboard.commands.workspaceTabSelect${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
     | 'settingsKeyboard.commands.terminalJump'
     | 'settingsKeyboard.commands.terminalToggle'
@@ -122,6 +143,7 @@ export type KeyboardCommandSettingsTitleKey = Extract<
 export type KeyboardContext = Readonly<{
     isEditableTarget: boolean;
     isComposing: boolean;
+    findInputFocused?: boolean;
 }>;
 
 export type NormalizedKeyboardEvent = Readonly<{
@@ -136,11 +158,14 @@ export type NormalizedKeyboardEvent = Readonly<{
 }>;
 
 export type KeyboardSurface = 'native' | 'web';
+export type KeyboardWebHost = 'browser' | 'desktop';
 
 export type KeybindingRule = Readonly<{
     binding: string;
     platforms?: readonly KeyboardPlatform[];
     blockedSurfaces?: readonly KeyboardSurface[];
+    /** Select a web host without changing existing browser shortcut policies. */
+    webHost?: KeyboardWebHost;
     allowInEditable?: boolean;
     nativeConsumable?: boolean;
     conflictScope?: string;

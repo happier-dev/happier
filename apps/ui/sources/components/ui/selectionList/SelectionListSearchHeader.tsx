@@ -177,6 +177,8 @@ export type SelectionListSearchHeaderProps = Readonly<{
     style?: StyleProp<ViewStyle>;
     /** Hook the underlying TextInput ref so the parent can imperatively focus. */
     inputRef?: React.Ref<RNTextInput>;
+    onInputFocus?: () => void;
+    onInputBlur?: () => void;
     /**
      * Key event handler. Web sends `KeyboardEvent`-like objects via rn-web's
      * `onKeyPress`; native sends `NativeSyntheticEvent<TextInputKeyPressEventData>`.
@@ -467,6 +469,8 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
                         selectionColor={useOverlayInput ? theme.colors.input.text : undefined}
                         autoCapitalize="none"
                         autoCorrect={false}
+                        onFocus={props.onInputFocus}
+                        onBlur={props.onInputBlur}
                         onKeyPress={nativeKeyPress}
                         // Web commits via the keydown listener (Enter); wiring
                         // onSubmitEditing there too would double-fire. Native has

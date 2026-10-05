@@ -119,6 +119,8 @@ export type PopoverRenderProps = Readonly<{
     maxHeight: number;
     maxWidth: number;
     placement: ResolvedPopoverPlacement;
+    /** Sheet chrome owns the title/close action; callers may omit their anchored title band. */
+    presentation?: 'anchored' | 'sheet';
     /**
      * Dismiss through the incumbent Popover lifecycle. Selection, Escape, and
      * Android Back restore the configured trigger; outside dismissal does not.

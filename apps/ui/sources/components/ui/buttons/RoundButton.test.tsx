@@ -204,6 +204,6 @@ describe('RoundButton', () => {
         ).fontSize;
         expect(fontSizeFor('Global')).toBe(21);
         expect(fontSizeFor('Footer')).toBe(16);
-        expect(fontSizeFor('Explicit')).toBe(14);
+        expect(fontSizeFor('Explicit')).toBe(13);
     });
 });

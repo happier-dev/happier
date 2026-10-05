@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 import type { StyleProp, TextInputProps as RNTextInputProps, ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
 
 import { FIELD_BOX_METRICS, resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -39,6 +40,8 @@ export type FieldTextInputProps = Readonly<{
     monospace?: boolean;
     autoCapitalize?: RNTextInputProps['autoCapitalize'];
     autoFocus?: boolean;
+    /** Selects the whole value on focus, so typing replaces a suggested value (a rename). */
+    selectTextOnFocus?: boolean;
     /** Masks the value as it is typed (secrets); the value is never echoed back. */
     secureTextEntry?: boolean;
     keyboardType?: RNTextInputProps['keyboardType'];
@@ -48,12 +51,16 @@ export type FieldTextInputProps = Readonly<{
     textContentType?: RNTextInputProps['textContentType'];
     returnKeyType?: RNTextInputProps['returnKeyType'];
     onSubmitEditing?: () => void;
+    /** Raw key presses (web carries Escape here): an in-place field cancels on Escape. */
+    onKeyPress?: RNTextInputProps['onKeyPress'];
     /** Fires when focus leaves the field: fields that commit a draft (numbers, prompts) save here. */
     onBlur?: () => void;
     maxLength?: number;
     /** Test id of the input; its error is `<testID>.error`. */
     testID?: string;
     style?: StyleProp<ViewStyle>;
+    /** Inline field actions (paste, reveal, clear), kept inside the shared field box. */
+    trailing?: React.ReactNode;
 }>;
 
 /**
@@ -86,6 +93,7 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                     </Text>
                 ) : undefined}
             >
+                <View style={props.trailing ? styles.fieldRow : undefined}>
                 <TextInput
                     ref={ref}
                     testID={props.testID}
@@ -100,6 +108,7 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                     autoCapitalize={props.autoCapitalize ?? 'none'}
                     autoCorrect={false}
                     autoFocus={props.autoFocus}
+                    selectTextOnFocus={props.selectTextOnFocus}
                     secureTextEntry={props.secureTextEntry}
                     keyboardType={props.keyboardType}
                     inputMode={props.inputMode}
@@ -107,6 +116,7 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                     textContentType={props.textContentType}
                     returnKeyType={props.returnKeyType}
                     onSubmitEditing={props.onSubmitEditing}
+                    onKeyPress={props.onKeyPress}
                     onBlur={props.onBlur}
                     maxLength={props.maxLength}
                     // A multiline field keeps the platform default: Return inserts a newline and
@@ -124,14 +134,20 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                         }),
                         props.monospace ? styles.inputMono : null,
                         { color: colors.valueColor },
+                        props.trailing ? styles.inputWithAction : null,
                     ]}
                 />
+                {props.trailing ? <View style={styles.trailing}>{props.trailing}</View> : null}
+                </View>
             </HappierFieldTextBox>
         );
     },
 ));
 
 const stylesheet = StyleSheet.create((theme) => ({
+    fieldRow: { flexDirection: 'row', alignItems: 'center', minWidth: 0 },
+    inputWithAction: { flex: 1, minWidth: 0 },
+    trailing: { flexShrink: 0, paddingRight: 4 },
     input: {
         ...Typography.default(),
     },

@@ -26,40 +26,6 @@ export type PageHeaderMenuAction = Readonly<{
 }>;
 
 /**
- * The mark at the head of an entity page (agent logo, machine glyph, avatar). `size="row"` is the same
- * mark at the head of a row that stands for an entity inside a page (a service at the top of its
- * sheet, a mark in an add invitation).
- *
- * A real mark — a logo, a monogram, a palette preview — sits on a borderless filled shape. A plain
- * glyph (`appearance="glyph"`) stands alone on the paper: a bordered or filled tile around an ordinary
- * icon is decoration, not identity. Either way the mark keeps the tile's height, so a header or row
- * does not change size with the kind of mark it carries, and its leading edge is the content edge.
- */
-export function PageHeaderMarkTile(props: Readonly<{
-    children: React.ReactNode;
-    testID?: string;
-    size?: 'page' | 'row';
-    appearance?: 'mark' | 'glyph';
-    /** An identity tint for the tile's fill (a monogram's deterministic colour); defaults to the inset surface. */
-    fill?: string;
-}>) {
-    const row = props.size === 'row';
-    const glyph = props.appearance === 'glyph';
-    return (
-        <View
-            testID={props.testID}
-            style={[
-                glyph ? stylesheet.glyph : stylesheet.markTile,
-                row ? (glyph ? stylesheet.glyphRow : stylesheet.markTileRow) : null,
-                !glyph && props.fill ? { backgroundColor: props.fill } : null,
-            ]}
-        >
-            {props.children}
-        </View>
-    );
-}
-
-/**
  * An entity page's `⋯` menu of rare operations, placed in `PageHeader` `actions`. `testID` names the
  * menu; its trigger is `<testID>.trigger`.
  */
@@ -165,28 +131,6 @@ export const PageHeaderStateSwitch = React.memo(function PageHeaderStateSwitch(p
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
-    markTile: {
-        width: 44,
-        height: 44,
-        borderRadius: 11,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: theme.colors.surface.inset,
-        overflow: 'hidden',
-    },
-    markTileRow: {
-        width: 36,
-        height: 36,
-        borderRadius: 9,
-    },
-    glyph: {
-        height: 44,
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-    },
-    glyphRow: {
-        height: 36,
-    },
     stateSwitch: {
         flexDirection: 'row',
         alignItems: 'center',

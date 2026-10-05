@@ -35,6 +35,20 @@ vi.mock('react-native', async () => {
  * only).
  */
 describe('SurfaceStateCard', () => {
+    it('keeps a caller-owned domain summary before recovery actions, without adding it to a line state', async () => {
+        const onOpen = vi.fn();
+        const screen = await renderScreen(<SurfaceStateCard testID="summary" layout="inline" kind="success" title="Ready" live={{ text: 'Last pushed' }} body={<span>Current commit</span>} actionCaption="Suggested next" action={{ label: 'Open PR', onPress: onOpen }} />);
+        const content = screen.getTextContent();
+        expect(content).toContain('Current commit');
+        expect(content.indexOf('Last pushed')).toBeLessThan(content.indexOf('Current commit'));
+        expect(content.indexOf('Current commit')).toBeLessThan(content.indexOf('Open PR'));
+        expect(content).toContain('Suggested next');
+        expect(content.indexOf('Current commit')).toBeLessThan(content.indexOf('Suggested next'));
+        await screen.pressByTestIdAsync('summary-action');
+        expect(onOpen).toHaveBeenCalledOnce();
+        const line = await renderScreen(<SurfaceStateCard size="line" kind="success" title="Ready" body={<span>Current commit</span>} />);
+        expect(line.getTextContent()).not.toContain('Current commit');
+    });
     it('keeps a pending line recovery disabled and preserves its caller test identity', async () => {
         const onRetry = vi.fn();
         const screen = await renderScreen(<SurfaceStateCard testID="error" size="line" kind="error" title="Try again" action={{ testID: 'retry', label: 'Retry', onPress: onRetry, disabled: true, busy: true }} />);

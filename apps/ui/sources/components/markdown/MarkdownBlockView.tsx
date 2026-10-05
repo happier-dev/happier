@@ -17,6 +17,10 @@ import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyF
 import { EnrichedMarkdownTextAdapter } from './enriched/EnrichedMarkdownTextAdapter';
 import type { MarkdownRenderingProfile } from './rendering/MarkdownRenderingProfile';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
+import { MarkdownFindDecorationContext, projectLeafRanges } from './rendering/MarkdownFindDecorationContext';
+import { projectMarkdownFindSpans } from '@/components/markdown/rendering/markdownFindProjection';
 
 // Option type for callback
 export type Option = {
@@ -39,6 +43,9 @@ type MarkdownBlockViewProps = {
     streamingReveal: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
     agentTexMath: boolean;
+    findRanges?: readonly FindTextRange[];
+    findOptionRanges?: readonly (readonly FindTextRange[])[];
+    findTableRanges?: Readonly<{ headers: readonly (readonly FindTextRange[])[]; rows: readonly (readonly (readonly FindTextRange[])[])[] }>;
 };
 
 type MarkdownSpanStyleId = MarkdownSpan['styles'][number];
@@ -57,7 +64,10 @@ function areMarkdownBlockViewPropsEqual(prev: MarkdownBlockViewProps, next: Mark
         && prev.profile === next.profile
         && prev.streamingReveal === next.streamingReveal
         && prev.streamingRevealPreset === next.streamingRevealPreset
-        && prev.agentTexMath === next.agentTexMath;
+        && prev.agentTexMath === next.agentTexMath
+        && prev.findRanges === next.findRanges
+        && prev.findOptionRanges === next.findOptionRanges
+        && prev.findTableRanges === next.findTableRanges;
 }
 
 export const MarkdownBlockView = React.memo((props: MarkdownBlockViewProps) => {
@@ -74,15 +84,15 @@ export const MarkdownBlockView = React.memo((props: MarkdownBlockViewProps) => {
         return <RenderNumberedListBlock items={block.items} first={props.first} last={props.last} selectable={props.selectable} onLinkPress={props.onLinkPress} textStyle={props.textStyle} variant={props.variant} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} />;
     } else if (block.type === 'code-block') {
         if (props.variant === 'thinking') {
-            return <RenderThinkingCodeBlock content={block.content} language={block.language} first={props.first} last={props.last} selectable={props.selectable} textStyle={props.textStyle} />;
+            return <RenderThinkingCodeBlock content={block.content} language={block.language} first={props.first} last={props.last} selectable={props.selectable} textStyle={props.textStyle} findRanges={props.findRanges} />;
         }
-        return <RenderCodeBlock content={block.content} language={block.language} first={props.first} last={props.last} selectable={props.selectable} />;
+        return <RenderCodeBlock content={block.content} language={block.language} first={props.first} last={props.last} selectable={props.selectable} findRanges={props.findRanges} />;
     } else if (block.type === 'mermaid') {
         return <MermaidRenderer content={block.content} />;
     } else if (block.type === 'options') {
-        return <RenderOptionsBlock items={block.items} first={props.first} last={props.last} selectable={props.selectable} onOptionPress={props.onOptionPress} onOptionLongPress={props.onOptionLongPress} textStyle={props.textStyle} />;
+        return <RenderOptionsBlock items={block.items} first={props.first} last={props.last} selectable={props.selectable} onOptionPress={props.onOptionPress} onOptionLongPress={props.onOptionLongPress} textStyle={props.textStyle} findRanges={props.findOptionRanges} />;
     } else if (block.type === 'table') {
-        return <RenderTableBlock headers={block.headers} rows={block.rows} alignments={block.alignments} first={props.first} last={props.last} selectable={props.selectable} onLinkPress={props.onLinkPress} textStyle={props.textStyle} variant={props.variant} profile={props.profile} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} agentTexMath={props.agentTexMath} />;
+        return <RenderTableBlock headers={block.headers} rows={block.rows} alignments={block.alignments} first={props.first} last={props.last} selectable={props.selectable} onLinkPress={props.onLinkPress} textStyle={props.textStyle} variant={props.variant} profile={props.profile} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} agentTexMath={props.agentTexMath} findRanges={props.findTableRanges} />;
     }
     return null;
 }, areMarkdownBlockViewPropsEqual);
@@ -178,23 +188,24 @@ function RenderNumberedListBlock(props: { items: { depth: number, number: number
     );
 }
 
-function RenderCodeBlock(props: { content: string, language: string | null, first: boolean, last: boolean, selectable: boolean }) {
+function RenderCodeBlock(props: { content: string, language: string | null, first: boolean, last: boolean, selectable: boolean, findRanges?: readonly FindTextRange[] }) {
     return (
         <View style={[style.codeBlock, props.first && style.first, props.last && style.last]}>
             <MarkdownCodeBlock
                 content={props.content}
                 language={props.language}
                 selectable={props.selectable}
+                findRanges={props.findRanges}
             />
         </View>
     );
 }
 
-function RenderThinkingCodeBlock(props: { content: string, language: string | null, first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle> }) {
+function RenderThinkingCodeBlock(props: { content: string, language: string | null, first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle>, findRanges?: readonly FindTextRange[] }) {
     return (
         <View style={[style.thinkingCodeBlockContainer, props.first && style.first, props.last && style.last]}>
             <Text selectable={props.selectable} style={[style.text, props.textStyle, style.thinkingCodeBlockText]}>
-                {props.content}
+                <FindHighlightedText text={props.content} ranges={props.findRanges} />
             </Text>
         </View>
     );
@@ -208,6 +219,7 @@ function RenderOptionsBlock(props: {
     onOptionPress?: (option: Option) => void,
     onOptionLongPress?: OptionLongPressHandler,
     textStyle?: StyleProp<TextStyle>,
+    findRanges?: readonly (readonly FindTextRange[])[],
 }) {
     const optionTextStyle = [style.optionText, props.textStyle];
     return (
@@ -223,12 +235,13 @@ function RenderOptionsBlock(props: {
                             textStyle={optionTextStyle}
                             onOptionPress={props.onOptionPress}
                             onOptionLongPress={props.onOptionLongPress}
+                            findRanges={props.findRanges?.[index]}
                         />
                     );
                 } else {
                     return (
                         <View key={index} style={style.optionItem}>
-                            <Text selectable={props.selectable} style={optionTextStyle}>{item}</Text>
+                            <Text selectable={props.selectable} style={optionTextStyle}><FindHighlightedText text={item} ranges={props.findRanges?.[index]} /></Text>
                         </View>
                     );
                 }
@@ -244,6 +257,7 @@ function MarkdownOptionButton(props: {
     textStyle: StyleProp<TextStyle>,
     onOptionPress: (option: Option) => void,
     onOptionLongPress?: OptionLongPressHandler,
+    findRanges?: readonly FindTextRange[],
 }) {
     const feedback = useTemporaryCopyFeedback();
     const feedbackKey = String(props.index);
@@ -277,7 +291,7 @@ function MarkdownOptionButton(props: {
             onPress={handlePress}
             onLongPress={props.onOptionLongPress ? handleLongPress : undefined}
         >
-            <Text selectable={props.selectable && !props.onOptionLongPress} style={props.textStyle}>{props.item}</Text>
+            <Text selectable={props.selectable && !props.onOptionLongPress} style={props.textStyle}><FindHighlightedText text={props.item} ranges={props.findRanges} /></Text>
             <CopiedPill
                 visible={feedback.isCopied(feedbackKey)}
                 testID={`markdown-option-copy-feedback:${props.index}`}
@@ -306,6 +320,7 @@ function RenderTableBlock(props: {
     streamingReveal: boolean,
     streamingRevealPreset?: StreamingTextRevealPreset,
     agentTexMath: boolean,
+    findRanges?: MarkdownBlockViewProps['findTableRanges'],
 }) {
   const columnCount = props.headers.length;
   const rowCount = props.rows.length;
@@ -333,6 +348,7 @@ function RenderTableBlock(props: {
                   <View style={[style.tableCell, cellAlignmentStyle, style.tableHeaderCell, style.tableCellFirst]}>
                       <RenderTableCellContent
                           markdown={header}
+                          findSourceRanges={props.findRanges?.headers[colIndex]}
                           selectable={props.selectable}
                           onLinkPress={props.onLinkPress}
                           textStyle={[style.tableHeaderText, textAlignmentStyle, props.textStyle]}
@@ -355,6 +371,7 @@ function RenderTableBlock(props: {
                       >
                           <RenderTableCellContent
                               markdown={row[colIndex] ?? ''}
+                              findSourceRanges={props.findRanges?.rows[rowIndex]?.[colIndex]}
                               selectable={props.selectable}
                               onLinkPress={props.onLinkPress}
                               textStyle={[style.tableCellText, textAlignmentStyle, props.textStyle]}
@@ -395,13 +412,29 @@ function RenderTableCellContent(props: Readonly<{
     streamingReveal: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
     agentTexMath: boolean;
+    findSourceRanges?: readonly FindTextRange[];
 }>) {
+    const findSpans = React.useMemo(() => {
+        if (!props.findSourceRanges?.length) return null;
+        const decorations = new Map<MarkdownSpan, readonly FindTextRange[]>();
+        const spans = projectMarkdownFindSpans(props.markdown).map((leaf) => {
+            const span: MarkdownSpan = { text: leaf.text, styles: leaf.styles, url: leaf.url };
+            decorations.set(span, projectLeafRanges(leaf, 0, props.findSourceRanges!));
+            return span;
+        });
+        return { spans, decorations };
+    }, [props.findSourceRanges, props.markdown]);
     const spans = React.useMemo(
         () => containsPotentialEnrichedMath(props.markdown, props.agentTexMath)
             ? null
             : parseMarkdownSpans(props.markdown, false),
         [props.markdown, props.agentTexMath],
     );
+    if (findSpans) return <MarkdownFindDecorationContext.Provider value={findSpans.decorations}>
+        <Text selectable={props.selectable} style={props.textStyle}><MarkdownSpansView spans={findSpans.spans}
+            baseStyle={props.textStyle} linkStyle={style.link} onLinkPress={props.onLinkPress}
+            resolveSpanStyle={(styleId) => resolveMarkdownSpanStyle(styleId, props.variant)} inlineTextSelectable={false} /></Text>
+    </MarkdownFindDecorationContext.Provider>;
     if (spans && (spans.length === 0 || (
         spans.length === 1
         && spans[0].text === props.markdown
@@ -485,6 +518,9 @@ const style = StyleSheet.create((theme) => ({
     },
     semibold: {
         ...Typography.default('semiBold'),
+    },
+    strikethrough: {
+        textDecorationLine: 'line-through',
     },
     code: {
         ...Typography.mono(),
@@ -815,6 +851,7 @@ const markdownSpanStylesById = {
     italic: style.italic,
     bold: style.bold,
     semibold: style.semibold,
+    strikethrough: style.strikethrough,
     code: style.code,
 } satisfies Record<MarkdownSpanStyleId, StyleProp<TextStyle>>;
 
