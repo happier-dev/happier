@@ -45,3 +45,33 @@ export type PromptInvocationsV1 = z.infer<typeof PromptInvocationsV1Schema>;
 export function normalizePromptInvocationTokenV1(token: string): string {
   return String(token ?? '').trim().toLowerCase();
 }
+
+/** A session-only template requires an actually addressed session, not a draft. */
+export function isPromptInvocationAvailable(
+  entry: Pick<PromptInvocationEntryV1, 'availableIn'>,
+  context: Readonly<{ sessionId: string | null }>,
+): boolean {
+  return entry.availableIn === 'global'
+    || (entry.availableIn === 'session_only' && Boolean(context.sessionId?.trim()));
+}
+
+export function validatePromptInvocationTokenV1(params: Readonly<{
+  token: string;
+  entries: readonly Pick<PromptInvocationEntryV1, 'id' | 'token'>[];
+  excludingInvocationId?: string | null;
+  /** UI-enabled slash tokens from the canonical Action catalogue. */
+  actionTokens: readonly string[];
+}>): Readonly<{ ok: true; token: string } | { ok: false; reason: 'invalid' | 'reserved' | 'actionCollision' | 'duplicate' }> {
+  const trimmed = params.token.trim();
+  const token = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  if (!PromptInvocationTokenV1Schema.safeParse(token).success) return { ok: false, reason: 'invalid' };
+  const normalized = normalizePromptInvocationTokenV1(token);
+  if (normalized === '/clear' || normalized === '/compact') return { ok: false, reason: 'reserved' };
+  if (params.actionTokens.some((candidate) => candidate.startsWith('/') && normalizePromptInvocationTokenV1(candidate) === normalized)) {
+    return { ok: false, reason: 'actionCollision' };
+  }
+  if (params.entries.some((entry) => entry.id !== params.excludingInvocationId && normalizePromptInvocationTokenV1(entry.token) === normalized)) {
+    return { ok: false, reason: 'duplicate' };
+  }
+  return { ok: true, token };
+}

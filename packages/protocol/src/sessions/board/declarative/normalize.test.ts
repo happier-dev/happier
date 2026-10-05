@@ -4,6 +4,13 @@ import { PluginDeclarativeDocumentNormalizationErrorV1 } from '../../../plugins/
 import { normalizeSessionSurfaceDeclarativeDocumentV1 } from './normalize.js';
 
 describe('Session surface declarative document normalization', () => {
+  it('refuses plugin drag declarations without an installed declaration authority', () => {
+    for (const root of [
+      { kind: 'dragSource', sourceId: 'card', reference: '42', children: [] },
+      { kind: 'dropTarget', targetId: 'tray', children: [] },
+      { kind: 'widgetArea', area: 'pinned' },
+    ]) expect(() => normalizeSessionSurfaceDeclarativeDocumentV1({ document: { version: 1, root }, admittedHostActions: [] })).toThrow();
+  });
   it('normalizes the restricted Session document through the shared declarative owner', () => {
     const normalized = normalizeSessionSurfaceDeclarativeDocumentV1({
       document: {

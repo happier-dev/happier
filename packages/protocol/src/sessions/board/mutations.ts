@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { SessionSystemRecordRevisionSchema } from '../system/records/sessionSystemRecordRevision.js';
 import { SessionSurfaceItemIdSchema } from './ids.js';
-import { SessionSurfaceItemV1Schema } from './item.js';
+import { SessionSurfaceItemV1Schema, isSessionSurfaceItemIdentityCorrespondingV1 } from './item.js';
 import { SessionBoardLayoutV1Schema } from './layout.js';
 
 const SessionBoardEncryptedRecordContentV1Schema = z.object({
@@ -58,6 +58,10 @@ export const SessionBoardMutationV1Schema = z.discriminatedUnion('operation', [
     itemPlacementParticipant: SessionBoardItemPlacementParticipantV1Schema.optional(),
   }).strict(),
 ]).superRefine((mutation, context) => {
+  if (mutation.operation === 'upsert_item' && mutation.itemContent.t === 'plain'
+    && !isSessionSurfaceItemIdentityCorrespondingV1(mutation.itemId, mutation.itemContent.v)) {
+    context.addIssue({ code: 'custom', path: ['itemContent', 'v', 'source', 'instance', 'id'], message: 'Widget instance identity must match its Board item identity' });
+  }
   if (mutation.operation === 'upsert_item' && mutation.expectedItemRevision === null && !mutation.placement) {
     context.addIssue({ code: 'custom', path: ['placement'], message: 'Item creation requires an atomic first placement' });
   }

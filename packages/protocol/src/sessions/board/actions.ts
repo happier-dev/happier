@@ -14,8 +14,8 @@ import {
   type SessionBoardActionIdV1,
 } from './actionIds.js';
 import { SessionBoardTabIdSchema, SessionSurfaceItemIdSchema } from './ids.js';
-import { SessionSurfaceItemV1Schema, type SessionSurfaceItemV1 } from './item.js';
-import { SessionBoardItemWidthSchema, SessionBoardLayoutV1Schema } from './layout.js';
+import { SessionSurfaceItemV1Schema, isSessionSurfaceItemIdentityCorrespondingV1, type SessionSurfaceItemV1 } from './item.js';
+import { SessionBoardItemWidthSchema, SessionBoardItemFrameStyleSchema, SessionBoardLayoutV1Schema } from './layout.js';
 import {
   SessionBoardMutationResultV1Schema,
   SessionBoardMutationV1Schema,
@@ -36,7 +36,7 @@ import {
   SessionBoardItemPlacementV1Schema,
   SessionBoardLayoutOperationV1Schema,
   sessionBoardItemPlacementOperandsRetainedV1,
-  sessionBoardPlacedWidthRetainsPlacementV1,
+  sessionBoardPlacedDestinationRetainsPlacementV1,
 } from './layoutOperations.js';
 
 /**
@@ -56,7 +56,7 @@ const SessionBoardActionSessionIdSchema = z.string().trim().min(1).optional();
 
 /** Mirrors the closed `SessionSurfaceItemV1` source union; a new arm must be classified here too. */
 const SessionSurfaceItemSourceKindV1Schema: z.ZodType<SessionSurfaceItemV1['source']['kind']> =
-  z.enum(['declarative', 'hostedHtml', 'installedSurface', 'walkthrough']);
+  z.enum(['declarative', 'hostedHtml', 'widget', 'walkthrough']);
 
 export const SessionBoardGetInputV1Schema = z.object({
   sessionId: SessionBoardActionSessionIdSchema,
@@ -164,6 +164,9 @@ export const SessionBoardItemUpsertInputV1Schema = z.object({
   item: z.lazy(() => SessionSurfaceItemV1Schema),
   placement: SessionBoardItemPlacementV1Schema.optional(),
 }).strict().superRefine((input, context) => {
+  if (!isSessionSurfaceItemIdentityCorrespondingV1(input.itemId, input.item)) {
+    context.addIssue({ code: 'custom', path: ['item', 'source', 'instance', 'id'], message: 'Widget instance identity must match its Board item identity' });
+  }
   if (input.expectedItemRevision === null && !input.placement) {
     context.addIssue({
       code: 'custom',
@@ -203,6 +206,7 @@ export const SessionBoardMutationActionResultV1Schema = z.object({
   destination: z.object({
     tabId: SessionBoardTabIdSchema,
     width: SessionBoardItemWidthSchema,
+    frameStyle: SessionBoardItemFrameStyleSchema.optional(),
   }).strict().nullable(),
   preview: z.object({
     title: z.string(),
@@ -807,7 +811,7 @@ export function parseSessionBoardActionPortResultV1(
       || (upsert.placement !== undefined && (
         mutationOutput.destination === null
         || (upsert.placement.tabId !== undefined && mutationOutput.destination.tabId !== upsert.placement.tabId)
-        || !sessionBoardPlacedWidthRetainsPlacementV1(mutationOutput.destination.width, upsert.placement)
+        || !sessionBoardPlacedDestinationRetainsPlacementV1(mutationOutput.destination, upsert.placement)
       ))
       || (upsert.placement === undefined && mutationOutput.destination !== null)
     ) return { success: false };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { PromptInvocationEntryV1Schema, PromptInvocationsV1Schema, normalizePromptInvocationTokenV1 } from './promptInvocationsV1.js';
+import { validatePromptInvocationTokenV1 } from './promptInvocationsV1.js';
 
 describe('PromptInvocationsV1Schema', () => {
   it('preserves additive fields on invocation payloads', () => {
@@ -93,6 +94,14 @@ describe('PromptInvocationsV1Schema', () => {
 });
 
 describe('normalizePromptInvocationTokenV1', () => {
+  it('validates reserved, action and duplicate tokens through one owner', () => {
+    const entries = [PromptInvocationEntryV1Schema.parse({ id: 'existing', token: '/Foo', title: 'Foo', target: { kind: 'doc', artifactId: 'doc' } })];
+    expect(validatePromptInvocationTokenV1({ token: 'compact', entries, actionTokens: [] })).toEqual({ ok: false, reason: 'reserved' });
+    expect(validatePromptInvocationTokenV1({ token: '/foo', entries, actionTokens: [] })).toEqual({ ok: false, reason: 'duplicate' });
+    expect(validatePromptInvocationTokenV1({ token: '/foo', entries, excludingInvocationId: 'existing', actionTokens: [] })).toEqual({ ok: true, token: '/foo' });
+    expect(validatePromptInvocationTokenV1({ token: '/review', entries, actionTokens: ['/Review'] })).toEqual({ ok: false, reason: 'actionCollision' });
+    expect(validatePromptInvocationTokenV1({ token: 'bad/path', entries, actionTokens: [] })).toEqual({ ok: false, reason: 'invalid' });
+  });
   it('lowercases and trims', () => {
     expect(normalizePromptInvocationTokenV1('  /Foo  ')).toBe('/foo');
   });

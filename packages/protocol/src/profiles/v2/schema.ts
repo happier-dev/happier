@@ -9,6 +9,7 @@ import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
 import { SessionExecutionTargetV1Schema } from '../../sessions/creation/sessionExecutionTargetV1.js';
 import { SESSION_PERMISSION_MODES } from '../../sessions/metadata/sessionPermissionModes.js';
 import { EnvironmentVariableSchema, EnvVarRequirementSchema } from '../environmentVariables.js';
+import { LaunchProfileIdV2Schema } from './profileId.js';
 
 /**
  * Canonical minimum of routing/auth/model selectors that a launch profile may
@@ -72,7 +73,7 @@ export type LaunchProfileCheckoutPreferenceV1 = z.infer<typeof LaunchProfileChec
 
 export const LaunchProfileV2Schema = z.object({
   v: z.literal(2),
-  id: z.string().trim().min(1).max(256),
+  id: LaunchProfileIdV2Schema,
   name: z.string().trim().min(1).max(100),
   description: z.string().max(500).optional(),
   extraEnvironmentVariables: z.array(EnvironmentVariableSchema).max(256).default([]),

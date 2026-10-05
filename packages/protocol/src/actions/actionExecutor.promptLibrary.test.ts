@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { createPromptDocInLibrary, listPromptLibrary, setPromptDocFavorite, type PromptLibraryStoredArtifact } from '../prompts/library/promptLibraryActionOperations.js';
+import { getActionSpec } from './actionSpecs.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -42,6 +44,27 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (prompt library actions)', () => {
+  it('creates, inventories, and favourites through real library operations on agent, MCP, CLI and UI surfaces', async () => {
+    let stored: PromptLibraryStoredArtifact | null = null;
+    const store = { read: async () => stored,
+      create: async ({ header, body }: { header: Readonly<Record<string, unknown>>; body: string }) => {
+        stored = { id: 'saved', header, body, revision: { headerVersion: 1, bodyVersion: 1 } }; return 'saved';
+      },
+      update: async ({ header, body }: { header: Readonly<Record<string, unknown>>; body: string }) => { stored = { ...stored!, header, body }; },
+      list: async () => ({ items: stored ? [{ id: stored.id, header: stored.header, updatedAtMs: 1 }] : [], coverage: 'complete' as const }),
+    };
+    const executor = createExecutor({
+      promptDocCreate: async ({ signal, ...request }) => createPromptDocInLibrary({ store, request, signal }),
+      promptDocFavoriteSet: async ({ signal, ...request }) => setPromptDocFavorite({ store, request, signal }),
+      promptsLibraryList: async ({ signal, ...request }) => listPromptLibrary({ store, request, signal }),
+    });
+    for (const surface of ['agent', 'mcp', 'cli', 'ui'] as const) {
+      expect(getActionSpec('prompt_doc.create').surfaces[surface]).toBe(true);
+      expect(await executor.execute('prompt_doc.create', { title: 'Saved', markdown: 'Text', favorite: false }, { surface })).toMatchObject({ ok: true, result: { artifactId: 'saved' } });
+      expect(await executor.execute('prompt_doc.favorite.set', { artifactId: 'saved', favorite: true }, { surface })).toMatchObject({ ok: true });
+      expect(await executor.execute('prompts.library.list', {}, { surface })).toMatchObject({ ok: true, result: { coverage: 'complete', items: [{ artifactId: 'saved', favorite: true }] } });
+    }
+  });
   it('routes daemon prompt adapter actions through canonical deps with caller cancellation', async () => {
     const signal = new AbortController().signal;
     const daemonPromptAssetsDiscover = vi.fn(async () => ({ ok: true, items: [] }));

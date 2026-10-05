@@ -4,6 +4,7 @@ import { cloneStrictPluginJsonValue } from '../strictJsonValue.js';
 import {
   MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1,
   MAX_PLUGIN_DECLARATIVE_DOCUMENT_PLAIN_VALUES_V1,
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1,
   preflightPluginDeclarativeDocumentV1,
 } from './declarativeDocumentPreflightV1.js';
 
@@ -29,6 +30,13 @@ function nestedInputAtWholeDocumentDepth(depth: number): unknown {
 }
 
 describe('declarative document structural preflight', () => {
+  it('applies the existing semantic node budget inside drag wrappers', () => {
+    for (const kind of ['dragSource', 'dropTarget']) {
+      expect(preflightPluginDeclarativeDocumentV1({ version: 1, root: { kind, children:
+        Array.from({ length: MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1 }, () => ({ kind: 'text', text: 'Card' })),
+      } })).toMatchObject({ ok: false, code: 'plugin_declarative_nodes_exceeded' });
+    }
+  });
   it('accepts depth 48 and rejects depth 49 through the declarative-only profile', () => {
     const accepted = actionDocumentWithInput(nestedInputAtWholeDocumentDepth(
       MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1,

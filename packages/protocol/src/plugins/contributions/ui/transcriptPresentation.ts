@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isPluginDeclarativeDataNodeV1 } from './declarativeDataV1.js';
 
 import {
   PluginDeclarativeNodeV2Schema,
@@ -12,10 +13,11 @@ import {
  */
 export type PluginTranscriptPresentationNodeV1 = Exclude<
   PluginDeclarativeNodeV2,
-  Readonly<{ kind: 'field' | 'collectionList' | 'targetedSurface' }>
+  Readonly<{ kind: 'field' | 'collectionList' | 'targetedSurface' | 'dragSource' | 'dropTarget' | 'widgetArea' }>
 >;
 
 export const PLUGIN_TRANSCRIPT_PRESENTATION_NODE_V1_KINDS = [
+  'metric', 'table', 'rows', 'chart',
   'text',
   'markdown',
   'stack',
@@ -46,7 +48,7 @@ type _EveryTranscriptKindIsListed = Assert<
 type _EveryDeclarativeKindIsExplicitlyAccountedFor = Assert<
   Exclude<
     PluginDeclarativeNodeV2['kind'],
-    PluginTranscriptPresentationNodeV1Kind | 'field' | 'collectionList' | 'targetedSurface'
+    PluginTranscriptPresentationNodeV1Kind | 'field' | 'collectionList' | 'targetedSurface' | 'dragSource' | 'dropTarget' | 'widgetArea'
   > extends never
     ? true
     : false
@@ -57,9 +59,13 @@ function findExcludedTranscriptNodePath(
   path: readonly (string | number)[] = [],
 ): readonly (string | number)[] | null {
   if (
-    node.kind === 'field'
+    (isPluginDeclarativeDataNodeV1(node) && node.data.kind === 'resource')
+    || node.kind === 'field'
+    || node.kind === 'dragSource'
+    || node.kind === 'dropTarget'
     || node.kind === 'collectionList'
     || node.kind === 'targetedSurface'
+    || node.kind === 'widgetArea'
     || (node.kind === 'action' && (node.effect?.kind === 'composerApply' || node.hostAction !== undefined))
   ) return path;
 

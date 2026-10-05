@@ -38,6 +38,8 @@ function readRecord(value: unknown): PlainRecord | null {
 
 function isContainerKind(kind: string): boolean {
   return kind === 'stack'
+    || kind === 'dragSource'
+    || kind === 'dropTarget'
     || kind === 'group'
     || kind === 'list'
     || kind === 'section'

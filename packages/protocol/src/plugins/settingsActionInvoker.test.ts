@@ -30,6 +30,29 @@ function nestedJson(depth: number): JsonValue {
 }
 
 describe('host-internal plugin settings action invoker', () => {
+  it('can request real human admission for automation without fabricating a gesture', async () => {
+    const events: string[] = [];
+    let approve!: (approved: boolean) => void;
+    const admission = new Promise<boolean>((resolve) => { approve = resolve; });
+    const invoker = createHostPluginSettingsActionInvoker({
+      createError,
+      confirm: async () => { events.push('confirm'); return await admission; },
+      snapshot: async () => { events.push('snapshot'); return { values: {}, revision: '1' }; },
+      execute: async () => { events.push('execute'); return { patch: { endpoint: 'new' } }; },
+      applyPatch: async () => { events.push('apply'); },
+    });
+    const pending = invoker.invoke({
+      key: 'human-admission', declaration: { ...declaration, confirmation: { kind: 'none' } },
+      userGesture: false, requestHumanInteraction: true,
+      signal: new AbortController().signal, isCurrent: () => true,
+    });
+    void pending.catch(() => undefined);
+    expect(events).toEqual(['confirm']);
+    approve(true);
+    await pending;
+    expect(events).toEqual(['confirm', 'snapshot', 'execute', 'apply']);
+  });
+
   it('passes the invocation context to the confirmation owner before it can present', async () => {
     const context = Object.freeze({ contributionId: 'voice-settings-action' });
     const confirm = vi.fn(async () => true);
