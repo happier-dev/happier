@@ -56,7 +56,7 @@ import { normalizeSessionListShellState } from './normalizeSessionListShellState
 import { resolveSelectedSessionIdForList } from '@/sync/domains/session/listing/resolveSelectedSessionIdForList';
 import { useSessionCanvasSelection } from './view/useSessionCanvasSelection';
 import { useSessionListA11yAnnouncements } from './accessibility/useSessionListA11yAnnouncements';
-import type { SessionListMoveSheetTarget } from './move-sheet/buildSessionListMoveSheetTargets';
+
 import { useSessionListMoveSheet } from './move-sheet/useSessionListMoveSheet';
 import {
     buildServerScopedSessionKey,
@@ -1438,25 +1438,7 @@ export function useSessionListViewStateFromPaneState(
         surfaceOwnership.interactive,
     ]));
 
-    const handleMoveSessionToFolder = React.useCallback(async (
-        sessionId: string,
-        serverId: string,
-        folderId: string | null,
-    ) => {
-        try {
-            const scope = await getAvailableOrganizationMutationScope(serverId);
-            await writeSessionOrganizationFolderAssignment({
-                scope,
-                sessionId,
-                folderId,
-            });
-        } catch (error) {
-            Modal.alert(
-                t('common.error'),
-                error instanceof HappyError ? error.message : t('sessionsList.failedToMoveSessionToFolder'),
-            );
-        }
-    }, [getAvailableOrganizationMutationScope]);
+
 
     const virtualizedListRef = React.useRef<VirtualizedListRef | null>(null);
     const treeViewportRef = React.useRef<TreeDropMeasurableRef | null>(null);
@@ -1604,10 +1586,7 @@ export function useSessionListViewStateFromPaneState(
         return labels;
     }, [renderedListItems]);
 
-    const resolveDropDestinationLabel = React.useCallback((target: SessionListMoveSheetTarget) => {
-        if (target.kind === 'root') return t('sessionsList.moveToWorkspaceRoot');
-        return target.label;
-    }, []);
+
 
     const resolveDropResultDestinationLabel = React.useCallback((
         result: Parameters<typeof sessionListA11y.announceDropResult>[0]['result'],
@@ -1621,38 +1600,37 @@ export function useSessionListViewStateFromPaneState(
         return null;
     }, [rowLabelByTreeRowId]);
 
-    const applyMoveTargetWithAnnouncement = React.useCallback((
-        sourceRowId: string,
-        sourceLabel: string,
-        target: SessionListMoveSheetTarget,
-    ) => {
-        const committed = rowInteractions.applyMoveSheetTarget(sourceRowId, target);
-        if (!committed) return;
-        void sessionListA11y.announceDropResultAfterCommit(committed, {
-            label: sourceLabel,
-            destinationLabel: resolveDropDestinationLabel(target),
-            result: target.result,
-        });
-    }, [resolveDropDestinationLabel, rowInteractions, sessionListA11y]);
+    const handleMoveSessionToFolder = React.useCallback(async (sessionId: string, serverId: string, folderId: string | null) => {
+        await rowInteractions.moveToFolder(serverId, sessionId, folderId);
+    }, [rowInteractions.moveToFolder]);
 
     const openMoveSheetForTreeRow = React.useCallback(async (sourceRowId: string, sourceLabel: string) => {
-        const targets = rowInteractions.resolveMoveSheetTargets(sourceRowId);
-        if (targets.length === 0) return;
-        const selectedTarget = await openMoveSheet({
-            sourceLabel,
-            targets,
-        });
-        if (!selectedTarget) return;
-        applyMoveTargetWithAnnouncement(sourceRowId, sourceLabel, selectedTarget);
-    }, [applyMoveTargetWithAnnouncement, openMoveSheet, rowInteractions]);
+        let source: ReturnType<typeof rowInteractions.prepareTreeRowSource>;
+        try { source = rowInteractions.prepareTreeRowSource(sourceRowId); } catch { return; }
+        if (!source) return;
+        try {
+            await openMoveSheet({ sourceLabel, runtime: rowInteractions.entityDragDrop.runtime, sourceId: source.sourceId });
+        } finally { source.dispose(); }
+    }, [openMoveSheet, rowInteractions.entityDragDrop.runtime, rowInteractions.prepareTreeRowSource]);
 
     const moveTreeRowToWorkspaceRoot = React.useCallback((sourceRowId: string, sourceLabel: string) => {
-        const rootTarget = rowInteractions.resolveMoveSheetTargets(sourceRowId).find((target) =>
-            target.kind === 'root' && !target.disabled
-        );
-        if (!rootTarget) return;
-        applyMoveTargetWithAnnouncement(sourceRowId, sourceLabel, rootTarget);
-    }, [applyMoveTargetWithAnnouncement, rowInteractions]);
+        const source = rowInteractions.prepareTreeRowSource(sourceRowId);
+        if (!source) return;
+        const runtime = rowInteractions.entityDragDrop.runtime;
+        const destination = runtime.getDestinations(source.sourceId).find(entry => {
+            const value = entry.destination;
+            return entry.targetId === rowInteractions.entityDragDrop.targetId && value && typeof value === 'object'
+                && !Array.isArray(value) && value.instructionKind === 'move-to-root';
+        });
+        if (!destination || destination.admission.status !== 'allowed') { source.dispose(); return; }
+        void runtime.perform(source.sourceId, destination.targetId, destination.destination, 'chooser').then(outcome => {
+            const value = destination.destination;
+            if (outcome?.status === 'applied' && value && typeof value === 'object' && !Array.isArray(value)
+                && typeof value.containerId === 'string') sessionListA11y.announceDropResult({ label: sourceLabel,
+                destinationLabel: t('sessionsList.moveToWorkspaceRoot'), result: { instruction: { kind: 'move-to-root',
+                    containerId: value.containerId, rootId: value.containerId, depth: 0 }, visual: { kind: 'none' } } });
+        }).finally(source.dispose);
+    }, [rowInteractions.entityDragDrop.runtime, rowInteractions.entityDragDrop.targetId, rowInteractions.prepareTreeRowSource, sessionListA11y]);
 
     const moveTreeRowByKeyboard = React.useCallback((
         sourceRowId: string,

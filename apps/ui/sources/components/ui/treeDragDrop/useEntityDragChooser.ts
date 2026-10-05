@@ -19,13 +19,15 @@ export function useEntityDragChooser(runtime: EntityDragDropRuntime, sourceId: s
         }
     }, [runtime, sourceId]);
     useEffect(() => () => { carry.current?.cancel('chooser-unmounted'); carry.current = null; }, [runtime, sourceId]);
-    const select = useCallback((destination: EntityDropDestination | undefined) => {
+    const select = useCallback(async (destination: EntityDropDestination | undefined) => {
         const active = carry.current;
-        if (!destination || !active) return;
+        if (!destination || !active || destination.admission.status !== 'allowed') return null;
         carry.current = null;
         active.choose(destination.targetId, destination.destination);
-        void active.release().then(outcome => { if (outcome?.status === 'applied') applied.current?.(); });
         setOpen(false);
+        const outcome = await active.release();
+        if (outcome?.status === 'applied') applied.current?.();
+        return outcome;
     }, []);
     const onMenuKeyDown = useCallback((event: Readonly<{ key?: string; shiftKey?: boolean; nativeEvent?: { key?: string; shiftKey?: boolean }; preventDefault?: () => void; stopPropagation?: () => void }>) => {
         const key = event.key ?? event.nativeEvent?.key;

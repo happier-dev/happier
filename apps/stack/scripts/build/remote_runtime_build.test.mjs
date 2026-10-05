@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildRuntimeArtifactComponentsAtPlacement, resolveRuntimeBuildPlacement } from './remote_runtime_build.mjs';
 import { buildRuntimeArtifactComponents } from './build_stack_artifacts.mjs';
+import { WORKSPACE_BUILD_MODE_ENV } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { resolveRemoteCommandPolicy } from '../utils/dev_targets/remote_commands.mjs';
 import { resolveMutagenSessionName } from '../utils/dev_targets/mutagen_project.mjs';
 import { REMOTE_DOCTOR_RUNTIME_TARGET_PREFIX } from '../utils/dev_targets/remote_commands.mjs';
@@ -31,9 +32,15 @@ test('admitted source transfer stays independent of later producer edits and a d
       await mkdir(join(repoDir, 'apps', name), { recursive: true });
       await writeFile(join(repoDir, 'apps', name, 'package.json'), JSON.stringify({ name: `@happier-dev/${name}` }));
     }
+    await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
+    await writeFile(join(repoDir, 'apps/server/package.json'), JSON.stringify({ name: '@happier-dev/server', dependencies: { '@happier-dev/example': '0.0.0' } }));
+    await mkdir(join(repoDir, 'packages/example'), { recursive: true });
+    await writeFile(join(repoDir, 'packages/example/package.json'), JSON.stringify({ name: '@happier-dev/example' }));
+    await writeFile(join(repoDir, 'packages/example/tsconfig.json'), JSON.stringify({ extends: './tsconfig.tests.json' }));
+    await writeFile(join(repoDir, 'packages/example/tsconfig.tests.json'), JSON.stringify({ compilerOptions: { strict: true } }));
     const input = join(repoDir, 'apps/server/sources/index.ts');
     await writeFile(input, 'captured input');
-    await writeFile(join(repoDir, '.gitignore'), 'apps/server/sources/generated.ts\n');
+    await writeFile(join(repoDir, '.gitignore'), 'apps/server/sources/generated.ts\npackages/example/tsconfig.tests.json\n');
     await writeFile(join(repoDir, 'apps/server/sources/generated.ts'), 'consumed generated input');
     execFileSync('git', ['init', '--quiet'], { cwd: repoDir });
     const target = { name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror', cliHomeDir: '/worker' };
@@ -63,7 +70,9 @@ test('admitted source transfer stays independent of later producer edits and a d
     execFileSync('tar', ['-xf', archive, '-C', captured]);
     assert.equal(await readFile(join(captured, 'apps/server/sources/index.ts'), 'utf8'), 'captured input');
     assert.equal(await readFile(join(captured, 'apps/server/sources/generated.ts'), 'utf8'), 'consumed generated input');
+    assert.deepEqual(JSON.parse(await readFile(join(captured, 'packages/example/tsconfig.tests.json'), 'utf8')), { compilerOptions: { strict: true } });
     assert.ok(request.expectedInputs.server);
+    assert.equal(request.env[WORKSPACE_BUILD_MODE_ENV], 'qa-runtime');
     assert.notEqual(request.workspaceDir + '/repo', target.repoDir);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

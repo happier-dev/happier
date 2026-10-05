@@ -3,7 +3,7 @@ import { buildOutgoingMessageMeta } from "@happier-dev/session-core/messages";
 import type { MessageMeta } from "@happier-dev/session-core/messages";
 
 export function buildSendMessageMeta(args: {
-    sentFrom: string;
+    sentFrom: NonNullable<MessageMeta['sentFrom']>;
     permissionMode: NonNullable<MessageMeta['permissionMode']>;
     appendSystemPrompt?: string;
     model?: MessageMeta['model'];

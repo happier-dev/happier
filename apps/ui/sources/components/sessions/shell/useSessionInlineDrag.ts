@@ -1,10 +1,13 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useSyncExternalStore } from 'react';
 import type { ViewStyle } from 'react-native';
 import { useSharedValue, useAnimatedStyle, type AnimatedStyle } from 'react-native-reanimated';
 import { Gesture, type ComposedGesture, type GestureType } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
 import { ENTITY_DRAG_ACTIVATION_DISTANCE_PX } from '@/components/ui/treeDragDrop/entityDragGestureAdapter';
 import { HAPPIER_CARRIED_SOURCE_OPACITY } from '@happier-dev/plugin-ui/presentation';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { treeRowId } from './drop-resolution/treeRowId';
 
 import {
     TREE_DROP_OVERLAY_KIND_LINE,
@@ -112,7 +115,18 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
     const callbacksRef = useRef(params);
     callbacksRef.current = params;
 
-    const isDragging = useSharedValue(false);
+    const runtime = useEntityDragDropRuntime();
+    // Only the matching row wakes on semantic carry retirement. Pointer frames never subscribe here.
+    const isDragging = useSyncExternalStore(runtime.subscribe, () => {
+        const snapshot = runtime.getSnapshot();
+        if (snapshot.phase !== 'carrying' && snapshot.phase !== 'pending') return false;
+        const item = snapshot.item;
+        if (!item) return false;
+        const key = item.kind === 'session' ? sessionAddressKey(item.address)
+            : item.kind === 'session-folder' ? treeRowId.folder(item.scope.serverId, item.folderId)
+                : item.kind === 'session-workspace' ? treeRowId.workspaceRoot(item.workspaceId) : null;
+        return sessionKey !== null && key === sessionKey;
+    }, () => false);
     const didEnd = useSharedValue(false);
     const didStartDrag = useSharedValue(false);
 
@@ -163,7 +177,6 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                 'worklet';
                 if (!didStartDrag.value) {
                     didStartDrag.value = true;
-                    isDragging.value = true;
                     scheduleOnRN(fireDragStart);
                 }
                 scheduleOnRN(fireDragUpdate, e.absoluteX, e.absoluteY);
@@ -173,7 +186,6 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                 const didDrag = didStartDrag.value === true;
                 didEnd.value = true;
                 didStartDrag.value = false;
-                isDragging.value = false;
                 if (!didDrag) {
                     scheduleOnRN(clearOverlay);
                 } else if (success === false) {
@@ -190,7 +202,6 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                 }
                 const didDrag = didStartDrag.value === true;
                 didStartDrag.value = false;
-                isDragging.value = false;
                 scheduleOnRN(didDrag ? fireDragCancel : clearOverlay);
             })
             .onTouchesCancelled(() => {
@@ -198,14 +209,13 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                 const didDrag = didStartDrag.value === true;
                 didEnd.value = true;
                 didStartDrag.value = false;
-                isDragging.value = false;
                 scheduleOnRN(didDrag ? fireDragCancel : clearOverlay);
             });
     // Only recreate when the row's identity changes — callbacks are read through a ref.
-    }, [didEnd, didStartDrag, enabled, groupKey, isDragging, sessionKey, dataIndex, overlayShared]);
+    }, [didEnd, didStartDrag, enabled, groupKey, sessionKey, dataIndex, overlayShared]);
 
     const animatedStyle = useAnimatedStyle<ViewStyle>(() => ({
-        opacity: enabled && isDragging.value ? HAPPIER_CARRIED_SOURCE_OPACITY : 1,
+        opacity: enabled && isDragging ? HAPPIER_CARRIED_SOURCE_OPACITY : 1,
     }));
 
     return { gesture, animatedStyle };

@@ -125,7 +125,7 @@ describe('mounted Session list organization writer bridge', () => {
                 setSessionFolderAssignment: input => writeSessionOrganizationFolderAssignment({ scope, sessionId: input.sessionId, folderId: input.folderId }),
             }))), [writers.setSessionListGroupOrderV1, writers.setSessionWorkspaceOrderV1, writers.setSessionFoldersV1]);
         });
-        const pending = invokeSessionListOrganizationAction({ input: {
+        const pending = invokeSessionListOrganizationAction({ mutationScope: scope, input: {
             scope: entityScope, sourceRowId: treeRowId.session(scope.serverId, 'session-b'), sourceKind: 'leaf', instructionKind: 'reorder-before',
             targetRowId: treeRowId.session(scope.serverId, 'session-a'), containerId: null, parentRowId: null, depth: 0, edge: 'top',
         } });

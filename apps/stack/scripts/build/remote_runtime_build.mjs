@@ -98,10 +98,13 @@ export async function buildRuntimeArtifactComponentsAtPlacement({ rootDir, stack
   const command = async commandArgs => await runCommand({ target, stackBaseDir, commandArgs, syncAlreadyVerified: true, dependencyAdmission: 'skip', workspacePreparation: 'skip', provenance: 'skip', env });
   try {
     const captured = await captureBuildSource({ rootDir, selection, env, directory });
+    const { WORKSPACE_BUILD_MODE_ENV } = await import('../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs');
     const requestPath = join(directory, 'request.json');
     const request = { ...captured, archivePath: undefined, selection, workspaceDir,
       target: { platform: process.platform, arch: process.arch },
-      env: Object.fromEntries(BUILD_ENV_KEYS.filter(key => env[key] != null).map(key => [key, env[key]])),
+      // Apply the component owner's existing runtime policy to bootstrap too,
+      // rather than introducing a strict preparation phase before QA admission.
+      env: { ...Object.fromEntries(BUILD_ENV_KEYS.filter(key => env[key] != null).map(key => [key, env[key]])), [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' },
     };
     await writeFile(requestPath, JSON.stringify(request));
     let preparationError = null;

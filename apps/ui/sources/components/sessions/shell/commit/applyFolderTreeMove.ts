@@ -13,7 +13,7 @@ export async function applyFolderTreeMove(params: Readonly<{
     beforeFolderId?: string | null;
     afterFolderId?: string | null;
     now: number;
-    setSessionFoldersV1: (next: SessionFoldersV1) => void | Promise<void>;
+    setSessionFoldersV1: (next: SessionFoldersV1) => Promise<void>;
 }>): Promise<ApplyFolderTreeMoveResult> {
     const moved = moveSessionFolder({
         current: params.current,

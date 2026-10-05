@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
-import { ActionSurfaceSchema, getActionSpec } from './actionSpecs.js';
+import { ActionSurfaceSchema, ActionRequiredAuthoritySchema, getActionSpec } from './actionSpecs.js';
 import type { ActionExecuteResult } from './executor/types.js';
 import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
 
@@ -10,8 +10,8 @@ export const UiActionDispatchRequestV1Schema = z.object({
   actionId: ActionIdSchema,
   input: z.unknown(),
   context: z.object({
-    surface: ActionSurfaceSchema,
-    authority: z.enum(['present_user', 'account_automation']),
+    surface: ActionSurfaceSchema.keyof(),
+    authority: ActionRequiredAuthoritySchema,
     defaultSessionId: z.string().min(1).optional(),
     defaultSessionMachineId: z.string().min(1).optional(),
     workspaceWrites: z.enum(['allow', 'deny']).optional(),

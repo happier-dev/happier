@@ -306,6 +306,34 @@ Run admission. The separate `execution.run.send` host Action is only for a
 detached Run with `sessionId: null`; it must not be used as a shortcut around
 Session permissions, encryption, or target recovery.
 
+### Host Actions that run in a connected app
+
+> **Development status:** Connected-app delivery for host Actions is part of
+> the current 0.3 development source and has not shipped in a public Happier release.
+
+Host Actions such as Find, Next and workspace tab controls execute through the
+answering app's existing owners. An admitted Session Agent, MCP or daemon-hosted
+caller can reach a connected app on its machine through the existing reverse
+channel. The caller's authority, enabled invocation surface and required
+approval are checked before delivery; the app keeps that authority and surface
+when executing the admitted request.
+
+The channel selects one eligible connected app using its existing routing rule.
+An Action that names a Session, composer or mounted surface still needs that
+exact owner on the answering app. With no connected handler, Find and the prompt
+picker return `unavailable` with `reason: 'noClient'`, Next returns
+`status: 'unavailable'`, and other Actions return an `unavailable` failure.
+An older app that does not advertise the method is unavailable in the same way.
+If a response is lost after dispatch, `outcome_uncertain` means the operation may
+have run; the host does not automatically retry it.
+
+Standalone CLI commands remain unavailable for these client-placed host Actions.
+Plugin-declared `execution: { target: 'client', ... }` Actions keep the separate
+artifact and plugin-lifecycle contract described above. The generated
+[host Action reference](/plugins/api/host-actions) identifies each Action's
+declared invocation surfaces; declaration alone does not guarantee that its
+required mounted owner is present.
+
 ### Widgets and current-Session presentation in development
 
 Use qualified `widgets.*` host Actions to discover, configure and arrange

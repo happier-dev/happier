@@ -20,7 +20,7 @@ describe('SessionListMoveSheet runtime destinations', () => {
             listDestinations: () => [{ destination: null, label: 'Bind conversation' }],
             resolve: () => ({ status: 'refused', reason: { code: 'where-machine', message: 'Choose the matching machine' } }),
             execute: async () => { throw new Error('A refused destination cannot dispatch'); } });
-        const screen = await renderScreen(<SessionListMoveSheet sourceLabel="Session" targets={[]} onSelectTarget={vi.fn()} runtime={runtime} sourceId="source" onCancel={vi.fn()} />);
+        const screen = await renderScreen(<SessionListMoveSheet sourceLabel="Session" runtime={runtime} sourceId="source" onCancel={vi.fn()} />);
         const refused = screen.findByTestId('session-list-move-sheet:root:option:1');
         expect(refused?.props.disabled).toBe(true);
         await act(async () => { invokeTestInstanceHandler(refused, 'onPress'); });

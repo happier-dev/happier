@@ -8,6 +8,8 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { buildWorkflowReviewedRunSeed, storeWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 import { WorkflowEditorHostScreen } from './WorkflowEditorHostScreen';
+import { WorkflowBuiltinSourceScreen } from './WorkflowPluginSourceScreen';
+import { AgentInputChipPickerPanel } from '@/components/sessions/agentInput/components/AgentInputChipPickerPanel';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { AgentInput } from '@/components/sessions/agentInput';
@@ -68,6 +70,43 @@ describe('editor workflow composer', () => {
         });
     });
     afterEach(() => { clearActiveUnsavedChangesGuard(); standardCleanup(); vi.restoreAllMocks(); });
+
+    it('reads a builtin through the editor with settings, Run now and Duplicate instead of Save', async () => {
+        const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol');
+        const builtin = getBuiltinWorkflowCatalogV1().find(entry => entry.requiresOriginSession !== true)!;
+        const screen = await renderScreen(<AppPaneProvider><WorkflowBuiltinSourceScreen workflow={builtin.id} intent="run" /></AppPaneProvider>);
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        const body = screen.root.findByType(WorkflowEditorBody);
+        expect(body.props.documentPresentation).toMatchObject({ editable: false });
+        expect(body.props.onSave).toBeUndefined();
+        expect(body.props.onDuplicate).toBeTypeOf('function');
+        expect(screen.findByTestId('workflow-builtin-settings-toggle')).not.toBeNull();
+        expect(screen.findByTestId('workflow-builtin-duplicate')).not.toBeNull();
+        expect(screen.findByTestId('workflow-builtin-run-now')).not.toBeNull();
+        expect(screen.findByTestId('workflow-run-inputs-preview')).not.toBeNull();
+        expect(screen.root.findAllByType(AgentInput).filter(input => input.props.onSend === undefined).every(input => input.props.disabled === true)).toBe(true);
+    });
+
+    it('opens the real native engine panel from the step composer and only edits authoring values', async () => {
+        const definitionId = '8fab3a81-5e64-4000-8000-000000000001';
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>, {
+            createNodeMock: () => ({ getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }),
+                addEventListener: () => {}, removeEventListener: () => {},
+                measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
+        });
+        const composer = screen.root.findAllByType(AgentInput)[0]!;
+        expect(composer.props.onAgentClick).toBeTypeOf('function');
+        expect(composer.props.extraActionChips.some((chip: { key: string }) => chip.key === 'workflow-step-engine')).toBe(false);
+        await act(async () => composer.props.onAgentClick());
+        const panel = screen.root.findByType(AgentInputChipPickerPanel);
+        const option = panel.props.options.find((candidate: { disabled?: boolean }) => !candidate.disabled);
+        expect(option).toBeDefined();
+        await act(async () => option.onSelectImmediate());
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        const body = screen.root.findByType(WorkflowEditorBody);
+        expect(body.props.draft.blocks[0].execution?.agentTarget).toBeDefined();
+        expect(transport.mock.calls.filter(([action]) => ['session.spawn', 'workflow.run.start', 'workflow.definition.update'].includes(action))).toHaveLength(0);
+    });
 
     it('makes a Can-use recipient’s personal triggers reachable and saves them through the real page without definition.update', async () => {
         const definitionId = '8fab3a81-5e64-4000-8000-000000000001';

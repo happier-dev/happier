@@ -104,6 +104,7 @@ import { captureMountedWorkspaceAction, invokeWorkspaceAction } from '@/componen
 import { invokeSessionCanvasAction } from '@/components/sessions/canvas/sessionSplitCanvasRuntime';
 import { invokeWorkflowConversationBinding } from './workflowAuthoringAction';
 import { invokeSessionListOrganizationAction } from '@/components/sessions/shell/drag/sessionListOrganizationAction';
+import { createSessionOrganizationMutationScopeForAccount } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
 import { invokeSessionTerminalAction } from '@/components/sessions/terminal/sessionTerminalActions';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
@@ -961,7 +962,13 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     workspaceAction: invokeWorkspaceAction,
     sessionCanvasAction: invokeSessionCanvasAction,
     workflowConversationBind: invokeWorkflowConversationBinding,
-    sessionOrganizationMove: invokeSessionListOrganizationAction,
+    sessionOrganizationMove: async request => {
+      if (!accountContext) return { status: 'unavailable' as const };
+      return await invokeSessionListOrganizationAction({
+        ...request,
+        mutationScope: createSessionOrganizationMutationScopeForAccount(accountContext),
+      });
+    },
     composerIngress: executeComposerIngressAction,
     listReorder: executeListReorderAction,
     todoSessionLink: executeTodoSessionLinkAction,

@@ -2,11 +2,9 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flattenTestStyle } from '@/dev/testkit';
-import { getStorage } from '@/sync/domains/state/storageStore';
-import { glassPresetMaterials } from '@/components/ui/glass/glassMaterial';
 // Collect the real owner graph before the interaction timeout starts.
 import { AgentInput } from './AgentInput';
 
@@ -78,30 +76,17 @@ vi.mock('@/hooks/ui/useWebFileDropZone', async () => await import('@/hooks/ui/us
 vi.unmock('color');
 
 const mounted: Array<{ root: ReturnType<typeof createRoot>; container: HTMLElement }> = [];
-let restoreSettings: () => void = () => {};
-
-beforeEach(() => {
-    const store = getStorage();
-    const previous = store.getState().settings;
-    restoreSettings = () => store.setState({ settings: previous });
-    store.setState({ settings: {
-        ...previous,
-        glassBlurEnabled: true,
-        glassSurfaceMaterials: { ...glassPresetMaterials('solid'), floating: { blur: 'strong', opacity: 0.125 } },
-    } });
-});
 
 afterEach(async () => {
     await act(async () => {
         for (const { root } of mounted) root.unmount();
-        restoreSettings();
     });
     for (const { container } of mounted) container.remove();
     mounted.length = 0;
 });
 
-function createFileDragEvent(type: string, files: readonly File[] = []): Event {
-    const event = new Event(type, { bubbles: true, cancelable: true });
+function createFileDragEvent(type: string, files: readonly File[] = [], point = { x: 0, y: 0 }): Event {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: point.x, clientY: point.y });
     Object.defineProperty(event, 'dataTransfer', {
         value: { files, items: files.map(file => ({ kind: 'file', getAsFile: () => file })), types: ['Files'] },
     });
@@ -126,23 +111,20 @@ async function renderAgentInput(onAttachmentsAdded: (files: readonly File[]) => 
 }
 
 describe('AgentInput (attachments drag overlay)', () => {
-    it('keeps the drop overlay solid without blur when the Account material is Solid', async () => {
-        const store = getStorage();
-        store.setState({ settings: { ...store.getState().settings, glassBlurEnabled: false, glassSurfaceMaterials: null } });
+    it('shows Attach beside the pointer and retires it on Escape without changing the draft', async () => {
         const rendered = await renderAgentInput(() => {});
-        await act(async () => { rendered.dropSurface.dispatchEvent(createFileDragEvent('dragenter')); });
-        const overlay = rendered.container.querySelector<HTMLElement>('[data-testid="agent-input-drop-overlay"]');
+        await act(async () => { rendered.dropSurface.dispatchEvent(createFileDragEvent('dragenter', [], { x: 96, y: 128 })); });
+        const overlay = document.querySelector<HTMLElement>('[data-testid="agent-input-drop-overlay"]');
         expect(overlay).not.toBeNull();
-        expect(overlay?.style.backdropFilter ?? '').toBe('');
-        expect(overlay?.style.backgroundColor).toBeTruthy();
-    });
-
-    it('uses the custom floating material for a drop overlay over the composer panel', async () => {
-        const rendered = await renderAgentInput(() => {});
-        await act(async () => { rendered.dropSurface.dispatchEvent(createFileDragEvent('dragenter')); });
-        const overlay = rendered.container.querySelector<HTMLElement>('[data-testid="agent-input-drop-overlay"]');
-        expect(overlay).not.toBeNull();
-        expect(overlay?.style.backdropFilter).toBe('blur(var(--happier-glass-floating-blur, 2px))');
+        expect(getComputedStyle(overlay!).position).toBe('fixed');
+        expect(parseFloat(getComputedStyle(overlay!).left)).toBeGreaterThan(96);
+        expect(parseFloat(getComputedStyle(overlay!).top)).toBeGreaterThan(128);
+        await act(async () => { rendered.dropSurface.dispatchEvent(createFileDragEvent('dragover', [], { x: 240, y: 320 })); });
+        expect(parseFloat(getComputedStyle(overlay!).left)).toBeGreaterThan(240);
+        expect(parseFloat(getComputedStyle(overlay!).top)).toBeGreaterThan(320);
+        await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+        expect(document.querySelector('[data-testid="agent-input-drop-overlay"]')).toBeNull();
+        expect(rendered.container.querySelector<HTMLTextAreaElement>('[data-testid="new-session-composer-input"]')?.value).toBe('');
     });
 
     it('adds attachments dropped on the enclosing panel outside the textarea', async () => {
