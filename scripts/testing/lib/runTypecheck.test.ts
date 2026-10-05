@@ -88,8 +88,19 @@ test('compiler-only typecheck executes compilers after preparation and reports c
     },
   }), /compiler rejected source/u);
   assert.ok(executed.length > 2);
+  const uiCommands = executed.filter((args) => args.includes('apps/ui'));
+  assert.deepEqual(uiCommands, [['--cwd', 'apps/ui', '-s', 'typecheck']]);
+  const uiPackage = JSON.parse(readFileSync('apps/ui/package.json', 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+  assert.equal(uiPackage.scripts.typecheck, '../stack/bin/hstack-exec --script=typecheck:local');
+  assert.equal(uiPackage.scripts['typecheck:local'], 'yarn -s typecheck:source:finite');
+  assert.equal(uiPackage.scripts['typecheck:source:finite'],
+    'node ../../scripts/workspaces/runTypeScriptCli.mjs --project tsconfig.source.json --project tsconfig.test.json');
   for (const args of executed.slice(2)) {
-    assert.ok(args.includes('--noEmit'));
-    assert.equal(args[0], 'tsc');
+    if (!uiCommands.includes(args)) {
+      assert.equal(args[0], 'tsc');
+      assert.ok(args.includes('--noEmit'));
+    }
   }
 });

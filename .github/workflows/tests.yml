@@ -267,12 +267,9 @@ jobs:
       - name: Check compiler diagnostics without governance or test phases
         id: gate-compiler
         env:
-          # OOM persisted with GOGC 50 after a 10 GiB live heap. Keep room for
-          # runtime/host overhead; this Go soft target is not an RSS hard limit.
-          GOGC: "50"
-          GOMEMLIMIT: "12GiB"
+          # Each native project reports its own OS-measured peak resident memory.
+          HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: "1"
         run: |
-          export GODEBUG="${GODEBUG:+$GODEBUG,}gctrace=1"
           echo "GATE_COMPILER_STARTED_AT=$(date --utc --iso-8601=seconds)" >> "$GITHUB_ENV"
           compiler_cgroup_path="$(awk -F: '$1 == "0" && $2 == "" { print $3; exit }' /proc/self/cgroup)"
           compiler_cgroup_directory="/sys/fs/cgroup$compiler_cgroup_path"

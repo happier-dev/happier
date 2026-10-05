@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "disableSourceOfProjectReferenceRedirect": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsc/ui.test.typecheck.tsbuildinfo"
+  },
+  "references": [
+    { "path": "./tsconfig.source.json" }
+  ],
+  "include": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.d.ts",
+    ".expo/types/**/*.ts"
+  ]
+}
