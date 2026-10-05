@@ -4,9 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { resolveDestinationRefFromHref, type CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
-import { DestinationInstanceHost } from './DestinationInstanceHost';
+import { DestinationInstanceHost, useDestinationInstanceKey } from './DestinationInstanceHost';
 import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
-import { createWorkspaceState, reduceWorkspaceState, type WorkspaceState } from './workspaceState';
+import { createWorkspaceState, reduceWorkspaceState, type WorkspaceAction, type WorkspaceState } from './workspaceState';
 import { WorkspaceShell } from './WorkspaceShell';
 import type { SplitCanvasHostControls } from '../splitCanvas/components/SplitCanvasHost';
 import { registerWorkspaceRouteContext } from './workspaceRouteContext';
@@ -15,8 +15,17 @@ installPanelCommonModuleMocks();
 // Expo's module-loader boundary supplies the empty new-tab body used by this shell journey.
 registerWorkspaceRouteContext((key) => {
     if (key !== './(app)/index.tsx') throw new Error(`Unexpected shell route: ${key}`);
-    return { WorkspaceRouteBody: () => null };
+    return { WorkspaceRouteBody: StatefulRouteBody };
 });
+
+let nextBodyMount = 0;
+function StatefulRouteBody() {
+    const tabId = useDestinationInstanceKey();
+    const [mount] = React.useState(() => ++nextBodyMount);
+    const [draft, setDraft] = React.useState('');
+    const [viewport, setViewport] = React.useState(0);
+    return React.createElement('StatefulRouteBodyProbe', { tabId, mount, draft, viewport, setDraft, setViewport });
+}
 // Recipient-envelope HTTP/process APIs are outside this deterministic workspace owner harness.
 vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
     const unavailable = () => { throw new Error('Unexpected recipient-envelope API in workspace owner test'); };
@@ -48,12 +57,12 @@ function Harness(props: Readonly<{ initial: WorkspaceState }>) {
         registerBackStep: () => () => {}, back: () => {}, forward: () => {},
     };
     return <WorkspaceNavigationContext.Provider value={value}>
-        <StateProbe state={state} />
+        <StateProbe state={state} dispatch={dispatch} />
         <WorkspaceShell catalog={[]} />
     </WorkspaceNavigationContext.Provider>;
 }
 
-function StateProbe(props: Readonly<{ state: WorkspaceState }>) {
+function StateProbe(props: Readonly<{ state: WorkspaceState; dispatch: React.Dispatch<WorkspaceAction> }>) {
     return React.createElement('WorkspaceStateProbe', props);
 }
 
@@ -142,6 +151,28 @@ describe('WorkspaceShell', () => {
         expect(stateOf(screen).tabs.b).toBeUndefined();
         expect(stateOf(screen).groups['group:1'].activeTabId).toBe('a');
         expect(screen.root.findAllByType(DestinationInstanceHost).map((node) => node.props.tabId)).toEqual(['a']);
+    });
+
+    it('preserves the mounted body, draft and viewport when a tab moves across groups', async () => {
+        const initial = reduceWorkspaceState(createWorkspaceState({ id: 'a', target: { kind: 'newTab', params: {} }, pinned: false, preview: false }),
+            { type: 'openTab', groupId: 'group:1', tab: { id: 'b', target: { kind: 'newTab', params: {} }, pinned: false, preview: false } });
+        const screen = await renderScreen(<Harness initial={initial} />);
+        const body = () => screen.root.findAllByType('StatefulRouteBodyProbe').find(node => node.props.tabId === 'b')!;
+        const mount = body().props.mount;
+        await act(async () => {
+            body().props.setDraft('Keep this unsent draft');
+            body().props.setViewport(387);
+            measureCanvas(screen, 1200, 800);
+        });
+        await chooseFromTabMenu(screen, 'b', 'workspace-tab-menu-split-right');
+        expect(stateOf(screen).groups[stateOf(screen).focusedGroupId].tabIds).toEqual(['b']);
+        expect(body().props).toMatchObject({ mount, draft: 'Keep this unsent draft', viewport: 387 });
+        const stateProbe = screen.root.findByType('WorkspaceStateProbe');
+        await act(async () => {
+            stateProbe.props.dispatch({ type: 'moveTab', tabId: 'b', sourceGroupId: stateOf(screen).focusedGroupId, targetGroupId: 'group:1' });
+        });
+        expect(stateOf(screen).groups['group:1'].tabIds).toContain('b');
+        expect(body().props).toMatchObject({ mount, draft: 'Keep this unsent draft', viewport: 387 });
     });
 
     it('refuses an unmeasured split, then moves the selected tab using the measured group extent', async () => {
