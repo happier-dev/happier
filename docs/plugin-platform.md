@@ -43,11 +43,13 @@ For collection-based plugin pages, the public Plugin UI `Collection` composes on
 
 `definePlugin` declares `dragSources` and `dropTargets` through the existing contribution catalog. Each source has a declared JSON reference schema and a client execution reference; each target declares accepted built-in or qualified `plugin:<pluginId>/<localId>` kinds and an explicit host/contributed Action allowlist. `activate(api)` registers only admitted local ids through `api.dragSources.register` and `api.dropTargets.register`. These families have client occurrence rights, not daemon or Session runtime rights.
 
+A source may select its own declared `composerAttachment` local id and register `toComposerAttachment(reference)`, returning the incumbent `ComposerAttachmentAuthorValueV1` or `null`. Composer admission validates the reference and current source registration, then matches the attachment declaration in the same occurrence of the mounted composer's composition. `composer.transaction.apply` accepts an optional exact `attachmentContributor` selection; the mounted owner derives authority and mints attachment identity through the existing revision-bound transaction core. The selection carries no generation, provenance or staged-media custody. Triage maps its actual entry/source-instance reference through its existing attachment builder; its resolver still reads the current entry at dispatch.
+
 Protocol owns the [portable entity contracts](../packages/protocol/src/plugins/ui/entityDragDrop.ts) and [declaration admission](../packages/protocol/src/plugins/contributions/entityDragDrop.ts). The mounted UI's [treeDragDrop runtime](../apps/ui/sources/components/ui/treeDragDrop/entityDragDropRuntime.ts) owns carry, current geometry, target selection, release revalidation and cancellation. The plugin binding validates custom references and Action allowlists against the current occurrence; it supplies host-built identity for built-in references. A reference selects an item and grants neither access nor execution authority.
 
 Public Plugin UI `DragSource` and `DropTarget`, declarative `dragSource`/`dropTarget` nodes, and SDK hosted DOM bindings join that same runtime. Authors supply declared local ids, JSON references and target-local input. The host supplies scope, measurements, currentness and caller provenance. Hosted methods `readEntityDragItem`, `updateEntityDragDrop` and `watchEntityDragDrop` are negotiated through the existing Host API; frame coordinates are converted at the host boundary. Retired or hidden mounts cannot begin an effect.
 
-The portable item union is closed, including the development `work-board-widget` arm. Native WorkBoard sources build that qualified Board/instance reference from current membership. Widget-shaped JSON supplied as a plugin reference stays within the contributed `plugin` arm; it cannot manufacture a built-in reference or select its authority.
+The portable item union is closed, including the development `work-board-widget` and `widget-area-instance` arms. Native WorkBoard sources build their qualified Board/instance reference from current membership; Project/plugin areas carry an exact `WidgetInstanceRefV1` whose surface matches the captured Home/Account. Widget-shaped JSON supplied as a plugin reference stays within the contributed `plugin` arm; it cannot manufacture a built-in reference or select its authority.
 
 A target's synchronous `resolve` returns an allowed Action request with release preview, or a typed refusal with a reason. Hover performs no mutation. Completed release resolves again before the ordinary Action front door applies current admission and approval policy; a dispatched unknown result stays with that effect owner. Core and plugin sources use the same release preview, Organize grip, staged keyboard and chooser primitives. OS Files retain boundary-local acquisition handles and never enter serialized plugin references. See [Actions](actions.md#entity-drop-effects-development) and the [authoring guide](../apps/docs/content/docs/plugins/ui/react-native.mdx#entity-drag-and-drop-development).
 
@@ -74,6 +76,16 @@ Home layout and setup dismissals use one Account Artifact; shared Session instan
 The declaration correlates a viewer field through `connectedAccountPurposeBindings: [{ path, purpose, consumer: { pluginId, localId } }]`. The consumer must identify an explicitly declared current Resource whose purpose advertises the permitted services. The existing purpose admission/materialization owner admits that Resource consumer and uses the viewer's own qualified purpose selection, including an admitted member of a selected group. Changing that selection uses the existing Connected Account preference and lifetime, and can affect other viewer bindings for the same qualified purpose; it is not an instance-only connection edit. Personal pinned references, by contrast, remain instance bindings. The exact target supplies current Resource and service-authentication declarations; a Session pin is resolved before its full credential binding, without granting execution from the pin. Missing connection is a typed Connect requirement; missing declaration or read authority remains unavailable/denied. Shared content retains viewer intent, not the selected private ref or credentials.
 
 `widgets.instance.move` accepts `{ ref, toIndex }` for current-view widget-ordinal reordering, or `{ ref, to: { surface, tabId?, index } }` for owner-native mixed-content insertion. Board view changes use its existing layout owner. Cross-surface movement admits both authorities, adds through the destination and conditionally removes through the source; refused/unknown outcomes report observed owner state rather than promising a transaction across independent stores. Add retains the caller's instance id and returns the acknowledged qualified reference.
+
+For a widget `select` field marked `connectedAccountOptions: true`, the existing
+`action.options.resolve` widget-consumer dispatch returns credential-free pin
+choices from the viewing Account's active qualified profiles, filtered by that
+same declared Resource purpose's permitted services. A personal pin does not
+require an existing purpose selection; a `viewer` binding still does, and a
+missing selection remains Connect. Shared Board pins remain refused. The marker
+cannot be combined with static options, `optionsSourceId` or `inputType`; these
+constraints belong to the neutral field grammar, not a widget-specific options
+registry or public host service.
 
 These are development-source contracts, not release or loaded-platform certification. WorkBoard, Project/plugin-area layouts, reusable declarative definitions and setup/edit composition consume the same identities through their respective program owners. Home includes built-in visibility and setup dismissals in its layout Artifact. WorkBoard widget intents use its existing `work-board.v1` Artifact reducer/CAS writer alongside work references and smart sections, with one/two-card widths. Project/plugin areas share the [`widget-area-layout.v1` owner](../packages/protocol/src/widgets/widgetSurfaceArtifactV1.ts); changing page context does not create a new layout. Plugin areas use half/full widths; Project areas use order and a Plain default.
 
@@ -151,6 +163,13 @@ validated data, never routing or authority. Gallery, Set up, Edit inputs,
 frames and mutations reuse the Home/widget owners. Declarative area nodes
 require a mounted plugin page and are excluded from Session Board documents
 and transcript projection.
+
+Area copies use the shared pointer grip, staged keyboard and Move-to chooser.
+Current membership and anchors become requests to `widgets.instance.move`;
+its incumbent surface ports own admission, approvals and persistence. Canonical
+Artifact publication refreshes both mounted ends of a transfer. An injected
+Project area binds preview and execution to its existing host movement owner;
+that component seam neither grants authority nor supplies a Project Source.
 
 Hosted HTML pages do not embed host widget areas: the plugin owns the whole
 iframe. They manage widgets through ordinary `widgets.*` Actions, not a hosted
@@ -486,6 +505,16 @@ status/items are a distinct shape, not a native artifact reference. The app play
 thumbnail are bindings over Plugin UI's shared presentation; transport,
 decoding, media verification and approval remain host-owned. These are source
 contracts, not evidence of package publication or a loaded-platform pass.
+
+Artifact preview cards, HTML reading frames, public-link cards and revision
+lists likewise have one presentation owner under Plugin UI's `/presentation`
+entrypoint. App bindings supply localized text, typography, theme facts and
+typed rendering leaves. Artifact loading, authenticated publication, fragment
+secret custody, audit reads and revision restoration stay with their existing
+host owners. The shared HTML frame owns geometry and loading/error presentation,
+not sandbox admission: the app retains isolated-URL validation, credentialless
+web framing and private native WebView/navigation policy. These are 0.3
+development source contracts, not evidence of publication or live visual parity.
 
 Notification channel authors must account for the development sender signature's
 [optional-category migration](compatibility.md#notification-channel-sender-source-migration-development)

@@ -78,6 +78,24 @@ permit an admitted surface to construct a host provider, access internal mount
 state, or import app, host, or protocol internals. Keep
 `defineUiSurface` as the sole provider installation boundary.
 
+### Artifact presentation in development
+
+The prepublication `/presentation` tier includes `HappierArtifactPreviewCard`,
+`HappierHtmlSandboxFrame`, `HappierPublicLinkCard`, and
+`HappierArtifactRevisionList`. Happier core uses these same presentation owners.
+Supply localized labels, theme facts, and their typed rendering bindings rather
+than importing app components. Preview cards consume already available content;
+revision rows consume the canonical owner's saved revision facts.
+
+These components do not authorize publication, fetch Artifacts, retain bearer
+secrets, or restore revisions. Those operations remain with the admitted host
+services. `HappierHtmlSandboxFrame` owns reading-area geometry and state
+presentation only: its typed `renderFrame` binding must enforce the host's URL
+admission, isolated origin, platform sandbox and navigation policy. Passing HTML
+to a frame does not establish an execution sandbox. Consult the installed API
+inventory for the exact bindings; this development surface is not a released
+stability or platform-certification promise.
+
 ## Personal widget areas in development
 
 In **0.3 development / Developer Preview authoring**, an app-page View can
@@ -104,6 +122,11 @@ from a shared Session Board. Copies keep independent inputs, order and
 half/full width; changing the page context keeps that layout identity. A
 declarative plugin page can use a `widgetArea` node against the same host port.
 Such nodes are page composition, not Session Board or transcript content.
+
+Copies use the same pointer grip, staged keyboard and Move-to chooser as other
+host widgets. Available destinations come from currently mounted surfaces and
+their admitted inputs and rights; moving uses the existing widget Action, not
+a page-owned layout writer. A retired page or Account cannot start a move.
 
 The component renders its `fallback` where no host presentation bridge exists.
 Hosted HTML pages do not embed host widget areas; they manage widgets through
@@ -230,6 +253,16 @@ where `preview` names the verb, target and optional consequence, or
 `{ status: 'refused', reason: { code, message } }` with an optional preview.
 Keep this resolver free of writes: the host resolves again on release and
 dispatches the admitted Action through its existing approval policy.
+
+To make your reference attachable to a composer, set the source declaration's
+`composerAttachment` to one of your own declared attachment local ids. Register
+`toComposerAttachment(reference)` alongside `describe`; return a
+`ComposerAttachmentAuthorValueV1`, or `null` when the reference cannot be
+attached. The host checks the current source and attachment occurrences, then
+uses the composer's existing revision-bound transaction to mint the attachment.
+This leaves draft text and selection unchanged. Keep only the attachment's
+identity and routing value in the draft; its existing dispatch resolver remains
+responsible for reading current context when the message is sent.
 
 Declare permitted host Actions with `{ kind: 'host', actionId }`, or a
 contributed Action with `{ kind: 'plugin', action: 'local-action-id' }`.
