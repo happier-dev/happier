@@ -2042,6 +2042,11 @@ HTML text or a phase-B private blob containing HTML or a strict
 HTML entrypoint and a path-indexed set of MIME/base64 assets. Every asset lives in
 that one blob, so encryption, integrity, budgets and retained-version lifetime
 stay with the existing Artifact blob owner; there are no independent asset grants.
+UI and CLI writes use the same Protocol HTML-content parser before committing an
+HTML Artifact. Invalid bundles are refused without a document mutation; changing
+an existing binary Artifact to HTML also opens and validates its retained content
+through the canonical mode and integrity reader. A later preview failure remains
+distinct from this pre-write validation and does not replay a committed write.
 
 Private viewers open the current authorized content through the existing
 Account-mode and blob-integrity readers. The Home returns only a per-Artifact
