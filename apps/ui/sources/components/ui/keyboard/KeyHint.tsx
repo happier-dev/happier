@@ -8,6 +8,11 @@ import { Typography } from '@/constants/Typography';
 export type KeyHintProps = Readonly<{
     label: string;
     enabled?: boolean;
+    /**
+     * `attention`: a key on an attention (amber) pill — borderless, in its ink; the pill passes the well's tint.
+     * Default `neutral`: the bordered keycap of menus and settings.
+     */
+    tone?: 'neutral' | 'attention';
     testID?: string;
     style?: StyleProp<ViewStyle>;
 }>;
@@ -42,6 +47,19 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...resolveKeyHintTypography(),
         color: theme.colors.text.secondary,
     },
+    attentionContainer: {
+        minWidth: 16,
+        paddingHorizontal: 3,
+        paddingVertical: 1,
+        borderRadius: 5,
+        borderWidth: 0,
+        backgroundColor: theme.colors.state.warning.background,
+    },
+    attentionLabel: {
+        ...Typography.default('semiBold'),
+        fontSize: 10.5,
+        color: theme.colors.state.attention.foreground,
+    },
 }));
 
 export function KeyHint(props: KeyHintProps): React.ReactElement | null {
@@ -52,11 +70,11 @@ export function KeyHint(props: KeyHintProps): React.ReactElement | null {
         <View
             testID={props.testID}
             accessibilityLabel={props.label}
-            style={[styles.container, props.style]}
+            style={[styles.container, props.tone === 'attention' ? styles.attentionContainer : null, props.style]}
         >
             <Text
                 testID={props.testID ? `${props.testID}:label` : undefined}
-                style={styles.label}
+                style={[styles.label, props.tone === 'attention' ? styles.attentionLabel : null]}
             >
                 {props.label}
             </Text>

@@ -49,6 +49,7 @@ const requiredTokenIds = [
     'state.warning.foreground',
     'state.warning.background',
     'state.warning.border',
+    'state.attention.foreground',
     'state.danger.foreground',
     'state.danger.background',
     'state.danger.border',
@@ -132,6 +133,10 @@ const requiredTokenIds = [
     'overlay.scrimWizard',
     'overlay.foreground',
     'overlay.secondaryForeground',
+    'find.matchAll',
+    'find.matchCurrent',
+    'find.matchCurrentForeground',
+    'find.overviewMark',
 ] as const;
 
 const legacyFragments = [

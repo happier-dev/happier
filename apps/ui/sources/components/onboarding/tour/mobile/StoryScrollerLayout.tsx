@@ -52,8 +52,7 @@ export function resolveStoryScrollerStageBandPercent(beat: JourneyBeat): 60 | 35
  * Natural config-body height (dp) that separates a controller whose thumb zone
  * only has to seat its action row from one carrying a real body. Narration beats
  * hand the slot a placeholder that measures nothing (up to one empty text line on
- * Android); the smallest real body is the two-row attention choice at ~128dp, and
- * the finale reel is several times that.
+ * Android); setup forms and the finale reel carry substantial config bodies.
  */
 const SUBSTANTIAL_CONFIG_BODY_HEIGHT = 64;
 

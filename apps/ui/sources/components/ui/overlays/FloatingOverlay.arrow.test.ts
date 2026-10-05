@@ -45,14 +45,17 @@ vi.mock('react-native-unistyles', async () => {
     };
 });
 
-vi.mock('react-native-reanimated', () => {
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    const boundary = createReanimatedModuleMock();
     const AnimatedView = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('AnimatedView', props, props.children);
     const AnimatedScrollView = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('AnimatedScrollView', props, props.children);
     return {
-        __esModule: true,
+        ...boundary,
         default: {
+            ...boundary.default,
             View: AnimatedView,
             ScrollView: AnimatedScrollView,
         },
@@ -134,10 +137,13 @@ function findOverlayClipSurface(screen: RenderedOverlayScreen): Readonly<{
     rawStyle: unknown;
     style: Record<string, unknown>;
 }> {
-    const node = findAnimatedViewStyles(screen).find(({ style }) => (
-        style.overflow === 'hidden'
-        && style.borderRadius === 12
+    // The clipped material is a platform View/BlurView, while only the shadow
+    // frame animates. Inspect its public geometry without fixing the renderer tier.
+    const candidate = screen.tree.root.findAll((node) => typeof node.type === 'string').find((node) => (
+        flattenStyle(node.props.style).overflow === 'hidden'
+        && flattenStyle(node.props.style).borderRadius === 12
     ));
+    const node = candidate ? { rawStyle: candidate.props.style, style: flattenStyle(candidate.props.style) } : undefined;
     if (!node) throw new Error('expected floating overlay clipped surface to exist');
     return node;
 }
@@ -149,6 +155,7 @@ function findOverlayClipStyle(screen: RenderedOverlayScreen): Record<string, unk
 function findOverlayClipRawStyle(screen: RenderedOverlayScreen): unknown {
     return findOverlayClipSurface(screen).rawStyle;
 }
+
 
 function hasShadow(style: Record<string, unknown>): boolean {
     return style.boxShadow !== undefined || style.shadowOpacity !== undefined || style.elevation !== undefined;
@@ -276,14 +283,12 @@ describe('FloatingOverlay', () => {
         expect(frameStyleEntries[1]).toEqual({ maxHeight: 200 });
 
         const clipRawStyle = findOverlayClipRawStyle(screen);
-        expect(Array.isArray(clipRawStyle)).toBe(true);
-        const clipStyleEntries = clipRawStyle as readonly unknown[];
-        expect(clipStyleEntries[0]).toMatchObject({
+        expect(flattenStyle(clipRawStyle)).toMatchObject({
             borderRadius: 12,
             overflow: 'hidden',
             borderColor: 'rgba(0,0,0,0.08)',
             borderTopColor: 'rgba(0,0,0,0.08)',
+            maxHeight: 200,
         });
-        expect(clipStyleEntries[1]).toEqual({ maxHeight: 200 });
     });
 });

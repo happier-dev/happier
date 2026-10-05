@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { lightTheme } from '@/theme';
+import { MeterBar } from './MeterBar';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -40,7 +41,6 @@ describe('MeterBar', () => {
         ['danger' as const, lightTheme.colors.state.danger.foreground],
         ['neutral' as const, lightTheme.colors.state.neutral.foreground],
     ])('paints the fill with state[%s].foreground (no opacity transform)', async (tone, expectedColor) => {
-        const { MeterBar } = await import('./MeterBar');
         const screen = await renderScreen(<MeterBar testID="meter" tone={tone} fillFraction={0.5} />);
 
         const fill = screen.findByTestId('meter:fill');
@@ -52,7 +52,6 @@ describe('MeterBar', () => {
     });
 
     it('maps the remaining fraction to the fill width percentage', async () => {
-        const { MeterBar } = await import('./MeterBar');
         const screen = await renderScreen(<MeterBar testID="meter" tone="success" fillFraction={0.42} />);
 
         const fill = screen.findByTestId('meter:fill');
@@ -61,7 +60,6 @@ describe('MeterBar', () => {
     });
 
     it('clamps value into the 0..1 range', async () => {
-        const { MeterBar } = await import('./MeterBar');
 
         const over = await renderScreen(<MeterBar testID="over" tone="success" fillFraction={1.8} />);
         expect(flattenStyle(over.findByTestId('over:fill')?.props.style).width).toBe('100%');
@@ -73,12 +71,11 @@ describe('MeterBar', () => {
         expect(flattenStyle(nan.findByTestId('nan:fill')?.props.style).width).toBe('0%');
     });
 
-    it('renders the track with the default surface overlay token and honors trackColor override', async () => {
-        const { MeterBar } = await import('./MeterBar');
+    it('renders the track with the neutral separator token and honors trackColor override', async () => {
 
         const defaulted = await renderScreen(<MeterBar testID="meter" tone="success" fillFraction={0.5} />);
         expect(flattenStyle(defaulted.findByTestId('meter:track')?.props.style).backgroundColor)
-            .toBe(lightTheme.colors.surface.pressedOverlay);
+            .toBe(lightTheme.colors.border.default);
 
         const overridden = await renderScreen(
             <MeterBar testID="meter2" tone="success" fillFraction={0.5} trackColor="#123456" />,
@@ -88,7 +85,6 @@ describe('MeterBar', () => {
     });
 
     it('renders an optional caption', async () => {
-        const { MeterBar } = await import('./MeterBar');
         const screen = await renderScreen(
             <MeterBar testID="meter" tone="warning" fillFraction={0.2} caption="18% left" />,
         );

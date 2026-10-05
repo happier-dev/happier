@@ -106,7 +106,27 @@ const PHOSPHOR_PINNED = new Set<IconName>([
     // HugeIcons' star is a thin, wide five-point outline that reads as a rating widget next to the
     // dense favourite rows it sits in; Phosphor's is tighter and more compact.
     'star',
+    // The hang-up handset. Every HugeIcons `CallEnd*` carries a second mark (a down arrow or an
+    // ×) that reads as "missed call" at 15-18px; Phosphor's plain handset, turned flat by
+    // {@link ICON_ROTATION_DEG}, is the universal hang-up glyph.
+    'phone-hang-up',
 ]);
+
+/**
+ * Concepts drawn with another concept's glyph turned to a fixed orientation (degrees, clockwise).
+ * The hang-up handset is the ordinary phone handset laid flat with its earpiece and mouthpiece down.
+ */
+const ICON_ROTATION_DEG: Partial<Record<IconName, number>> = {
+    'phone-hang-up': 135,
+};
+
+/**
+ * Concepts whose glyph reads only in one weight. The hang-up handset is a solid shape everywhere it
+ * is used (lab `vpEnd`); outlined at well size it reads as an arch rather than a handset.
+ */
+const ICON_DEFAULT_WEIGHT: Partial<Record<IconName, IconWeight>> = {
+    'phone-hang-up': 'fill',
+};
 
 /**
  * The stroke, in HugeIcons' 24-unit grid, that a glyph of `size` should draw with.
@@ -179,17 +199,21 @@ export const Icon = React.memo((props: IconProps) => {
         return <View style={[{ width: nominal, height: nominal }, props.style]} testID={props.testID} />;
     }
 
-    return (
+    const rotation = ICON_ROTATION_DEG[props.name];
+    const glyph = (
         <Glyph
             size={Math.round(nominal * scale)}
             color={props.color ?? theme.colors.text.secondary}
-            weight={props.weight ?? 'regular'}
+            weight={props.weight ?? ICON_DEFAULT_WEIGHT[props.name] ?? 'regular'}
             mirrored={props.mirrored}
-            style={props.style}
+            style={rotation === undefined ? props.style : { transform: [{ rotate: `${rotation}deg` }] }}
             testID={props.testID}
             {...accessibilityProps}
         />
     );
+    // The caller's style (positioning, its own transforms, the optical nudge) stays on the outer
+    // box so the glyph's orientation never competes with it.
+    return rotation === undefined ? glyph : <View style={props.style}>{glyph}</View>;
 });
 
 Icon.displayName = 'Icon';

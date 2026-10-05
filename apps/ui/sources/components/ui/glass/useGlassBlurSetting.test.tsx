@@ -1,49 +1,50 @@
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { createPartialStorageModuleMock, renderHook } from '@/dev/testkit';
+import { renderHook, standardCleanup } from '@/dev/testkit';
 
-let blurEnabledSetting = true;
-let blurIntensitySetting: 'light' | 'regular' | 'strong' | undefined = 'regular';
+let storage: typeof import('@/sync/domains/state/storage')['storage'];
+let previousState: ReturnType<typeof storage.getState>;
+beforeAll(async () => {
+    ({ storage } = await import('@/sync/domains/state/storage'));
+    previousState = storage.getState();
+});
+afterEach(() => {
+    standardCleanup();
+    act(() => storage.setState(previousState, true));
+});
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    await createPartialStorageModuleMock(importOriginal as <T>() => Promise<T>, {
-        useSetting: (key: string) => {
-            if (key === 'glassBlurEnabled') return blurEnabledSetting;
-            if (key === 'glassBlurIntensity') return blurIntensitySetting;
-            return undefined;
-        },
-    }),
-);
+function setBlurSettings(enabled: boolean, intensity: 'light' | 'regular' | 'strong') {
+    act(() => storage.setState({ settings: { ...previousState.settings, glassBlurEnabled: enabled, glassBlurIntensity: intensity, glassSurfaceMaterials: null } }));
+}
 
 describe('useGlassBlurSetting', () => {
     it('resolves the intensity enum to a blur radius and passes enabled through', async () => {
         const { useGlassBlurSetting } = await import('./useGlassBlurSetting');
 
-        blurEnabledSetting = true;
-        blurIntensitySetting = 'light';
+        setBlurSettings(true, 'light');
         expect((await renderHook(() => useGlassBlurSetting())).getCurrent()).toEqual({
             blurEnabled: true,
             blurIntensity: 25,
         });
 
-        blurIntensitySetting = 'regular';
+        setBlurSettings(true, 'regular');
         expect((await renderHook(() => useGlassBlurSetting())).getCurrent()).toEqual({
             blurEnabled: true,
             blurIntensity: 50,
         });
 
-        blurIntensitySetting = 'strong';
+        setBlurSettings(true, 'strong');
         expect((await renderHook(() => useGlassBlurSetting())).getCurrent()).toEqual({
             blurEnabled: true,
             blurIntensity: 80,
         });
     });
 
-    it('reports disabled and falls back to the regular intensity for an unknown value', async () => {
+    it('reports disabled while preserving the selected regular intensity', async () => {
         const { useGlassBlurSetting } = await import('./useGlassBlurSetting');
 
-        blurEnabledSetting = false;
-        blurIntensitySetting = undefined;
+        setBlurSettings(false, 'regular');
         expect((await renderHook(() => useGlassBlurSetting())).getCurrent()).toEqual({
             blurEnabled: false,
             blurIntensity: 50,

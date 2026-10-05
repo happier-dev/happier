@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useIsFocused } from '@react-navigation/native';
+import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 
 import { PopoverScope } from '@/components/ui/popover';
 import { ModalProvider } from '@/modal';

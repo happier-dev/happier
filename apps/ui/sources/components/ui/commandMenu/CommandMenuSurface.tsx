@@ -5,6 +5,7 @@ import {
     Popover,
     type PopoverBackdropOptions,
     type PopoverPlacement,
+    type PopoverPortalOptions,
 } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import type { CommandMenuAnchor } from './commandMenuTypes';
@@ -12,6 +13,16 @@ import type { CommandMenuAnchor } from './commandMenuTypes';
 const DEFAULT_MAX_HEIGHT = 280;
 const DEFAULT_MAX_WIDTH = 400;
 const DEFAULT_GAP = 4;
+let anchorWidthPortalOptions: PopoverPortalOptions | null = null;
+/** The modal-aware portal, sized to the anchor; built once, on first use, so its identity is stable. */
+function resolveAnchorWidthPortalOptions(): PopoverPortalOptions {
+    anchorWidthPortalOptions ??= { ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, matchAnchorWidth: true };
+    return anchorWidthPortalOptions;
+}
+const fillStyles = {
+    frame: { flexDirection: 'column', minHeight: 0 },
+    body: { flex: 1, minHeight: 0 },
+} as const satisfies Record<string, ViewStyle>;
 
 type WebPointerDownEvent = Readonly<{ preventDefault?: () => void }>;
 
@@ -46,6 +57,8 @@ interface CommandMenuSurfaceProps {
     open: boolean;
     anchor: CommandMenuAnchor;
     children: React.ReactNode;
+    header?: React.ReactNode;
+    footer?: React.ReactNode;
     maxHeight?: number;
     maxWidth?: number;
     placement?: PopoverPlacement;
@@ -57,6 +70,11 @@ interface CommandMenuSurfaceProps {
     consumeOutsidePointerDown?: boolean;
     containerStyle?: StyleProp<ViewStyle>;
     onRequestClose: () => void;
+    preserveHostFocus?: boolean;
+    /** Size to the composer (anchor) width instead of the content-capped menu width. */
+    matchAnchorWidth?: boolean;
+    /** Hold the full available height, so filtering never resizes the surface. */
+    fillHeight?: boolean;
     testID?: string;
 }
 
@@ -104,19 +122,33 @@ export const CommandMenuSurface = React.memo((props: CommandMenuSurfaceProps) =>
             consumeOutsidePointerDown={consumeOutsidePointerDown}
             onRequestClose={onRequestClose}
             backdrop={backdrop}
-            portal={MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
+            portal={props.matchAnchorWidth ? resolveAnchorWidthPortalOptions() : MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
         >
             {({ maxHeight: resolvedMaxHeight }) => (
-                <View testID={testID} collapsable={false} {...preserveHostFocusOnWebPointerDown}>
-                    <FloatingOverlay
-                        maxHeight={resolvedMaxHeight}
-                        scrollEnabled={false}
-                        edgeFades={{ top: true, bottom: true, size: 18 }}
-                        edgeIndicators
-                        surfaceChrome="theme"
-                    >
-                        {children}
-                    </FloatingOverlay>
+                <View testID={testID} collapsable={false} {...(props.preserveHostFocus !== false ? preserveHostFocusOnWebPointerDown : {})}>
+                    {props.fillHeight ? (
+                        // One fixed frame: header and footer keep their place, the body takes the rest.
+                        <FloatingOverlay maxHeight={resolvedMaxHeight} scrollEnabled={false} surfaceChrome="theme">
+                            <View style={[fillStyles.frame, { height: resolvedMaxHeight }]}>
+                                {props.header}
+                                <View style={fillStyles.body}>{children}</View>
+                                {props.footer}
+                            </View>
+                        </FloatingOverlay>
+                    ) : (
+                        <FloatingOverlay
+                            header={props.header}
+                            footer={props.footer}
+                            maxHeight={resolvedMaxHeight}
+                            scrollEnabled={false}
+                            scrollViewStyle={props.header || props.footer ? { flexShrink: 1, minHeight: 0 } : undefined}
+                            edgeFades={{ top: true, bottom: true, size: 18 }}
+                            edgeIndicators
+                            surfaceChrome="theme"
+                        >
+                            {children}
+                        </FloatingOverlay>
+                    )}
                 </View>
             )}
         </Popover>

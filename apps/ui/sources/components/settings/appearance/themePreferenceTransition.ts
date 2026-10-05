@@ -94,12 +94,21 @@ export async function runThemePreferenceChange(input: ThemePreferenceChangeInput
     }
 
     let didMutate = false;
+    let mutationFailed = false;
+    let mutationError: unknown;
     try {
         await nativeController.run(() => {
             didMutate = true;
-            input.mutation();
+            try {
+                input.mutation();
+            } catch (error) {
+                mutationFailed = true;
+                mutationError = error;
+                throw error;
+            }
         });
     } catch {
+        if (mutationFailed) throw mutationError;
         if (!didMutate) {
             input.mutation();
         }

@@ -22,6 +22,15 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('FieldTextInput', () => {
+    it('keeps an inline field action accessible beside its input', async () => {
+        const { Pressable } = await import('react-native');
+        const { FieldTextInput } = await import('./FieldTextInput');
+        const onClear = vi.fn();
+        const screen = await renderScreen(<FieldTextInput value="secret" onChangeText={() => {}} accessibilityLabel="API key"
+            trailing={<Pressable testID="clear-secret" accessibilityRole="button" accessibilityLabel="Clear API key" onPress={onClear} />} />);
+        await screen.pressByTestIdAsync('clear-secret');
+        expect(onClear).toHaveBeenCalledOnce();
+    });
     it('shows a value that can be read and selected but not changed', async () => {
         const onChangeText = vi.fn();
         const { FieldTextInput } = await import('./FieldTextInput');

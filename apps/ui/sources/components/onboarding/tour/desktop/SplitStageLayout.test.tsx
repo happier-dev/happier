@@ -65,8 +65,6 @@ function createProgress(beatId: JourneyBeatId): JourneyProgressController {
 
     return {
         ...model,
-        attentionChoice: 'keep_current',
-        setAttentionChoice: vi.fn(),
         advance: vi.fn(),
         back: vi.fn(),
         skipToSetup: vi.fn(),

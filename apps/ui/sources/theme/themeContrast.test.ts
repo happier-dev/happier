@@ -276,3 +276,50 @@ describe('browser and local-services corridor contrast', () => {
         expect(contrastRatio('#000000', '#ffffff', '#ffffff')).toBeCloseTo(21, 5);
     });
 });
+
+/**
+ * The "needs you" ink (Next: the header "2 need you" pill, the phone count capsule, the Next capsule's
+ * dot and Go fill, their keycaps). The system warning orange it replaced measured ~2:1 on its own tint
+ * in light mode. The pill paints the ink on a 12% tint of itself (18% under the pointer), so each
+ * pairing is measured against that composite, over every surface the pill stands on, in the base
+ * themes and every built-in profile.
+ */
+const ATTENTION_SURFACES = ['surface.base', 'background.canvas'] as const;
+
+function withAlpha(color: string, alpha: number): string {
+    const { red, green, blue } = parseColor(color);
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function attentionInkFailures(colors: unknown, label: string): string[] {
+    const canvas = readTokenPath(colors, 'background.canvas');
+    const ink = readTokenPath(colors, 'state.attention.foreground');
+    const failures: string[] = [];
+    for (const surface of ATTENTION_SURFACES) {
+        const backdrop = compositeOver(parseColor(withAlpha(ink, 0.12)), parseColor(readTokenPath(colors, surface)));
+        const pill = `rgba(${backdrop.red}, ${backdrop.green}, ${backdrop.blue}, 1)`;
+        const ratio = contrastRatio(ink, pill, canvas);
+        if (ratio < 4.5) failures.push(`${label}: attention ink on its tint over ${surface} = ${ratio.toFixed(2)}:1 (needs 4.5:1)`);
+    }
+    // Go knocks its label out of the fill in the surface colour, so it holds in every profile.
+    const go = contrastRatio(readTokenPath(colors, 'surface.base'), ink, canvas);
+    if (go < 4.5) failures.push(`${label}: Go label on the attention fill = ${go.toFixed(2)}:1 (needs 4.5:1)`);
+    return failures;
+}
+
+describe('needs-you attention ink contrast', () => {
+    it('keeps the attention ink AA on its own tint and under the Go label in both base themes', () => {
+        expect([
+            ...attentionInkFailures(lightTheme.colors, 'light'),
+            ...attentionInkFailures(darkTheme.colors, 'dark'),
+        ]).toEqual([]);
+    });
+
+    it('keeps the attention ink AA in every built-in theme profile', () => {
+        const failures = BUILT_IN_THEME_PROFILES.flatMap((definition) => (
+            (['light', 'dark'] as const).flatMap((mode) => attentionInkFailures(
+                resolveThemeProfile({ mode, profile: definition.profile }).colors, `${definition.presetId}/${mode}`))
+        ));
+        expect(failures).toEqual([]);
+    });
+});

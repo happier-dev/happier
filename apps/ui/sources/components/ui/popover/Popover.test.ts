@@ -58,11 +58,12 @@ vi.mock('@/utils/web/reactDomCjs', () => ({
 installPopoverCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        const native = await createReactNativeWebMock();
         return createReactNativeWebMock({
             useWindowDimensions: () => ({ width: 1000, height: 800 }),
-            StyleSheet: {
+            StyleSheet: Object.assign(native.StyleSheet, {
                 absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-            },
+            }),
             View: React.forwardRef((props: any, ref) => {
                 React.useImperativeHandle(ref, () => {
                     if (mockPopoverContentRefKind !== 'dom') {
@@ -113,6 +114,25 @@ describe('Popover (web)', () => {
         capturedTimingConfigs = [];
         vi.useRealTimers();
         vi.unstubAllGlobals();
+    });
+
+    it('keeps the glass backdrop visible to the browser through its motion frame', async () => {
+        const { Popover } = await import('./Popover');
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef: { current: null },
+            onRequestClose: () => {},
+            children: () => React.createElement('PopoverChild'),
+        }));
+
+        const child = screen.findByType('PopoverChild');
+        let motionFrame = child.parent;
+        while (motionFrame && String(motionFrame.type) !== 'AnimatedView') {
+            motionFrame = motionFrame.parent;
+        }
+        expect(motionFrame).not.toBeNull();
+        // A transformed ancestor prevents the glass from sampling the page behind the panel.
+        expect(flattenStyle(motionFrame!.props.style).transform).toBeUndefined();
     });
 
     it('keeps the content above the backdrop when not using a portal', async () => {
@@ -1585,7 +1605,7 @@ describe('Popover (web)', () => {
         expect(hostEffects.length).toBe(1);
 
         const style = flattenStyle(hostEffects[0]?.props?.style);
-        expect(style.backdropFilter).toBe('blur(3px)');
+        expect(style.backdropFilter).toBe('blur(var(--happier-glass-floating-blur, 3px))');
         expect(style.backgroundColor).toBe('rgba(255, 255, 255, 0.18)');
     });
 

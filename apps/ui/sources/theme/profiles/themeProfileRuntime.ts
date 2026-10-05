@@ -1,7 +1,6 @@
 import { Appearance, Platform } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import { setStatusBarStyle } from 'expo-status-bar';
-import type { StatusBarStyle } from 'expo-status-bar';
 import { UnistylesRuntime } from 'react-native-unistyles';
 
 import type { Theme } from '@/theme';
@@ -10,7 +9,6 @@ import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
 import { resolveStatusBarStyleForThemePreference } from '@/components/ui/layout/statusBarStyle';
 import {
     runThemePreferenceChange as defaultRunThemePreferenceChange,
-    type ThemePreferenceChangeInput,
     type ThemeTransitionPlatform,
 } from '@/components/settings/appearance/themePreferenceTransition';
 import {
@@ -91,9 +89,21 @@ type ActivateThemeProfileInput = Readonly<{
     platform?: ThemeTransitionPlatform;
     loadLocalSettings?: () => Pick<LocalSettings, 'themePreference' | 'themeProfiles'>;
     saveLocalSettings?: (settings: LocalSettings) => void;
-    runThemePreferenceChange?: (input: ThemePreferenceChangeInput) => Promise<void>;
-    applySelection?: (input: ApplyThemeRuntimeSelectionInput) => void;
-    setStatusBarStyle?: (style: StatusBarStyle, animated?: boolean) => void;
+}>;
+
+type ThemeSelection = Pick<LocalSettings, 'themePreference' | 'themeProfiles'>;
+
+type CommitThemeSelectionInput = Readonly<{
+    currentPreference: ThemePreference;
+    nextPreference: ThemePreference;
+    nextThemeProfiles: ThemeProfilesLocalStateV1;
+    reduceMotion: boolean;
+    writeLocal: (delta: ThemeSelection) => void;
+    /** Rebase profile activation on the settings present when the transition actually commits. */
+    resolveSelection?: () => ThemeSelection;
+    forceAnimate?: boolean;
+    systemTheme?: AppThemeName | null;
+    platform?: ThemeTransitionPlatform;
 }>;
 
 const canonicalBaseThemes: ThemeRuntimeThemes = Object.freeze({
@@ -314,6 +324,43 @@ export const applyThemeRuntimeSelection = (input: ApplyThemeRuntimeSelectionInpu
     }
 };
 
+const applyResolvedThemeRuntimeSelection = (
+    selection: ThemeSelection,
+    systemTheme: AppThemeName,
+): void => {
+    applyThemeRuntimeSelection({ ...selection, systemTheme });
+    setStatusBarStyle(resolveStatusBarStyleForThemePreference(selection.themePreference, systemTheme), true);
+};
+
+/** Apply an unconfirmed selection to the running app without storing it. */
+export const previewThemeSelection = (
+    themePreference: ThemePreference,
+    themeProfiles: ThemeProfilesLocalStateV1,
+): void => {
+    applyResolvedThemeRuntimeSelection({ themePreference, themeProfiles }, getSystemTheme());
+};
+
+/** The single selection mutation, transition, runtime and status-bar owner. */
+export const commitThemeSelection = (input: CommitThemeSelectionInput): Promise<void> => {
+    const systemTheme = input.systemTheme ?? getSystemTheme();
+    return defaultRunThemePreferenceChange({
+        currentPreference: input.currentPreference,
+        nextPreference: input.nextPreference,
+        platform: input.platform ?? Platform.OS,
+        reduceMotion: input.reduceMotion,
+        forceAnimate: input.reduceMotion ? false : (input.forceAnimate ?? true),
+        systemTheme,
+        mutation: () => {
+            const selection = input.resolveSelection?.() ?? {
+                themePreference: input.nextPreference,
+                themeProfiles: input.nextThemeProfiles,
+            };
+            input.writeLocal(selection);
+            applyResolvedThemeRuntimeSelection(selection, systemTheme);
+        },
+    });
+};
+
 const resolveActivationModes = (input: Readonly<{
     profileMode?: ThemeProfileMode | 'all';
     themePreference?: ThemePreference;
@@ -334,9 +381,6 @@ const resolveActivationModes = (input: Readonly<{
 export const activateThemeProfile = async (input: ActivateThemeProfileInput): Promise<void> => {
     const loadLocalSettings = input.loadLocalSettings ?? defaultLoadLocalSettings;
     const saveLocalSettings = input.saveLocalSettings ?? defaultSaveLocalSettings;
-    const runThemePreferenceChange = input.runThemePreferenceChange ?? defaultRunThemePreferenceChange;
-    const applySelection = input.applySelection ?? applyThemeRuntimeSelection;
-    const applyStatusBarStyle = input.setStatusBarStyle ?? setStatusBarStyle;
     const currentSettings = loadLocalSettings();
     const resolveNextThemeProfiles = (
         themeProfiles: ThemeProfilesLocalStateV1,
@@ -351,42 +395,21 @@ export const activateThemeProfile = async (input: ActivateThemeProfileInput): Pr
         )
     );
     const nextThemeProfiles = resolveNextThemeProfiles(currentSettings.themeProfiles, currentSettings.themePreference);
-    const currentSettingsForApply = {
-        ...localSettingsDefaults,
-        ...currentSettings,
-    } satisfies LocalSettings;
-    const nextSettings = applyLocalSettings(currentSettingsForApply, {
-        ...(input.themePreference ? { themePreference: input.themePreference } : {}),
-        themeProfiles: nextThemeProfiles,
-    });
-    const systemTheme = input.systemTheme ?? getSystemTheme();
-    const reduceMotion = input.reduceMotion ?? false;
-
-    await runThemePreferenceChange({
+    await commitThemeSelection({
         currentPreference: currentSettings.themePreference,
-        nextPreference: nextSettings.themePreference,
-        platform: input.platform ?? Platform.OS,
-        reduceMotion,
-        forceAnimate: reduceMotion ? false : input.forceAnimate,
-        systemTheme,
-        mutation: () => {
+        nextPreference: input.themePreference ?? currentSettings.themePreference,
+        nextThemeProfiles,
+        reduceMotion: input.reduceMotion ?? false,
+        forceAnimate: input.forceAnimate ?? false,
+        systemTheme: input.systemTheme,
+        platform: input.platform,
+        resolveSelection: () => {
             const latestSettings = loadLocalSettings();
-            const latestSettingsForApply = {
-                ...localSettingsDefaults,
-                ...latestSettings,
-            } satisfies LocalSettings;
-            const latestNextSettings = applyLocalSettings(latestSettingsForApply, {
-                ...(input.themePreference ? { themePreference: input.themePreference } : {}),
+            return {
+                themePreference: input.themePreference ?? latestSettings.themePreference,
                 themeProfiles: resolveNextThemeProfiles(latestSettings.themeProfiles, latestSettings.themePreference),
-            });
-
-            saveLocalSettings(latestNextSettings);
-            applySelection({
-                themePreference: latestNextSettings.themePreference,
-                themeProfiles: latestNextSettings.themeProfiles,
-                systemTheme,
-            });
-            applyStatusBarStyle(resolveStatusBarStyleForThemePreference(latestNextSettings.themePreference, systemTheme), true);
+            };
         },
+        writeLocal: delta => saveLocalSettings(applyLocalSettings({ ...localSettingsDefaults, ...loadLocalSettings() }, delta)),
     });
 };

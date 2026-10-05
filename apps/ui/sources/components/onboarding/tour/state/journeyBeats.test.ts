@@ -153,7 +153,7 @@ describe('journeyBeats', () => {
         }
 
         expect(Object.fromEntries(journeyBeats.map((beat) => [beat.id, beat.configStepId ?? null]))).toMatchObject({
-            A7: 'attention_micro_choice',
+            A7: null,
             S1: 'relay_select',
             S2: 'auth',
             S3: 'setup_this_computer',

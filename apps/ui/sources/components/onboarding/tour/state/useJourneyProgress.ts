@@ -7,23 +7,17 @@ import {
     type JourneyPresentationModel,
 } from './journeyPresentationModel';
 
-export type JourneyAttentionChoice = 'keep_current' | 'promote_attention_and_working';
-
 export type JourneyCompletion = Readonly<{
-    attentionChoice: JourneyAttentionChoice;
     completedBeatId: JourneyBeatId;
 }>;
 
 export type UseJourneyProgressInput = Readonly<{
     surface: JourneySurface;
     initialBeatId?: JourneyBeatId;
-    initialAttentionChoice?: JourneyAttentionChoice;
     onComplete: (completion: JourneyCompletion) => void;
 }>;
 
 export type JourneyProgressController = JourneyPresentationModel & Readonly<{
-    attentionChoice: JourneyAttentionChoice;
-    setAttentionChoice: (choice: JourneyAttentionChoice) => void;
     advance: () => void;
     back: () => void;
     skipToSetup: () => void;
@@ -32,9 +26,6 @@ export type JourneyProgressController = JourneyPresentationModel & Readonly<{
 export function useJourneyProgress(input: UseJourneyProgressInput): JourneyProgressController {
     const [currentBeatId, setCurrentBeatId] = React.useState<JourneyBeatId | undefined>(input.initialBeatId);
     const [history, setHistory] = React.useState<JourneyBeatId[]>([]);
-    const [attentionChoice, setAttentionChoice] = React.useState<JourneyAttentionChoice>(
-        input.initialAttentionChoice ?? 'promote_attention_and_working',
-    );
 
     const model = React.useMemo(
         () => buildJourneyPresentationModel({
@@ -67,11 +58,10 @@ export function useJourneyProgress(input: UseJourneyProgressInput): JourneyProgr
         }
         if (transition.type === 'complete') {
             input.onComplete({
-                attentionChoice,
                 completedBeatId: model.currentBeat.id,
             });
         }
-    }, [attentionChoice, input, model.currentBeat.id, moveToBeat]);
+    }, [input, model.currentBeat.id, moveToBeat]);
 
     const back = React.useCallback(() => {
         if (history.length > 0) {
@@ -106,8 +96,6 @@ export function useJourneyProgress(input: UseJourneyProgressInput): JourneyProgr
 
     return {
         ...model,
-        attentionChoice,
-        setAttentionChoice,
         advance,
         back,
         skipToSetup,

@@ -10,7 +10,7 @@ import { useModalCardDimensions } from '@/modal/components/card/useModalCardDime
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { preloadReactDOM } from '@/utils/web/reactDomCjs';
-import { useLocalSetting } from '@/sync/store/hooks';
+import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
 import { shouldUseWizardFullscreenPresentation } from './wizardPresentation';
 
 export type WizardCardLayoutProps = Readonly<{
@@ -122,7 +122,7 @@ const stylesheet = StyleSheet.create((theme, _runtime) => ({
 export function WizardCardLayout(props: WizardCardLayoutProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
+    const { blurEnabled: materialBlurEnabled } = useGlassBlurSetting();
     const { width: windowWidth } = useWindowDimensions();
     const isFocused = useIsFocused();
     const modalPortalTarget = useModalPortalTarget();
@@ -150,7 +150,7 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
         ? (createBackdropWebStyle({
             backgroundColor: theme.colors.overlay.scrimWizard,
             blurPx: 2,
-            enableBlur: uiBackdropBlurEnabled,
+            enableBlur: materialBlurEnabled,
             fallbackBackgroundColorWhenBlurDisabled: theme.colors.overlay.scrimStrong,
         }) as unknown as ViewStyle)
         : null;

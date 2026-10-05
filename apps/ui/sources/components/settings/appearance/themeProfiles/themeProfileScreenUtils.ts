@@ -70,11 +70,11 @@ export const removeThemeProfile = (
 export const activateThemeProfileFromSettingsScreen = async (input: Readonly<{
     profileId: string | null;
     profileMode?: ThemeProfileMode | 'all';
-    themePreference: ThemePreference;
     nextThemePreference?: ThemePreference;
-    themeProfiles: ThemeProfilesLocalStateV1;
-    setThemePreference?: (themePreference: ThemePreference) => void;
-    setThemeProfiles: (state: ThemeProfilesLocalStateV1) => void;
+    readLocalSettings: () => Pick<LocalSettings, 'themePreference' | 'themeProfiles'>;
+    /** An editor save merges only this draft into the current profile collection. */
+    profile?: ThemeProfileV1;
+    writeLocalSettings: (delta: Pick<LocalSettings, 'themePreference' | 'themeProfiles'>) => void;
     forceAnimate?: boolean;
     reduceMotion?: boolean;
 }>): Promise<void> => {
@@ -84,13 +84,15 @@ export const activateThemeProfileFromSettingsScreen = async (input: Readonly<{
         themePreference: input.nextThemePreference,
         forceAnimate: input.forceAnimate,
         reduceMotion: input.reduceMotion,
-        loadLocalSettings: () => ({
-            themePreference: input.themePreference,
-            themeProfiles: input.themeProfiles,
-        }),
+        loadLocalSettings: () => {
+            const latest = input.readLocalSettings();
+            return {
+                ...latest,
+                themeProfiles: input.profile ? upsertThemeProfile(latest.themeProfiles, input.profile) : latest.themeProfiles,
+            };
+        },
         saveLocalSettings: (settings: LocalSettings) => {
-            input.setThemePreference?.(settings.themePreference);
-            input.setThemeProfiles(settings.themeProfiles);
+            input.writeLocalSettings({ themePreference: settings.themePreference, themeProfiles: settings.themeProfiles });
         },
     });
 };
