@@ -7,7 +7,7 @@ import { createDeferred, createSessionFixture, createSessionAccessFixture } from
 import { encodeBase64 } from '@/encryption/base64';
 import { Encryption } from '@/sync/encryption/encryption';
 import { storage } from '@/sync/domains/state/storageStore';
-import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { buildSessionListRenderableFromSession, type SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { fetchAndApplySessionById } from './sessionById';
@@ -74,6 +74,26 @@ afterEach(() => {
 });
 
 describe('Session hydration publication', () => {
+    it('excludes a plaintext wire title from parsed HTTP hydration and list publication', async () => {
+        const { row, params } = await createHydrationContext();
+        const wireTitle = 'Untrusted plaintext wire title';
+        const published: Array<Parameters<typeof params.applySessions>[0][number]> = [];
+        storage.setState({ sessions: {} });
+        await fetchAndApplySessions({
+            ...params,
+            awaitSessionListHydration: true,
+            request: async () => jsonResponse({ sessions: [{ ...row, lockedDisplayTitle: wireTitle }], hasNext: false }),
+            applySessions: (sessions) => {
+                published.push(...sessions);
+                params.applySessions(sessions);
+            },
+        });
+        expect(published).toHaveLength(1);
+        expect(published[0]).not.toHaveProperty('lockedDisplayTitle');
+        expect(getSessionName(storage.getState().sessions[sessionId])).toBe(sharedMetadata.summary.text);
+        expect(getSessionName(storage.getState().sessionListRowsByServerId[serverId][sessionId])).toBe(sharedMetadata.summary.text);
+    });
+
     it('retains observed presence across durable by-ID hydration', async () => {
         const { row, params } = await createHydrationContext();
         expect(storage.getState().sessions[sessionId].presence).toBe('online');
@@ -239,5 +259,25 @@ describe('Session hydration publication', () => {
         const owner = storage.getState().sessions[sessionId];
         expect(getSessionName(owner)).not.toBe(sharedMetadata.summary.text);
         expect(isUserFacingSession(owner)).toBe(false);
+    });
+
+    it('retains the trusted locked title during a warm HTTP list refresh without accepting a wire title', async () => {
+        const { row, params } = await createHydrationContext();
+        const lockedRow = { ...row, dataEncryptionKey: 'unopenable-envelope', lockedDisplayTitle: 'Untrusted wire title' };
+        await fetchAndApplySessionById({
+            ...params, sessionId, includeTurnsProjection: false,
+            request: async () => jsonResponse({ session: lockedRow }),
+        });
+        const published: SessionListRenderableSession[] = [];
+        await fetchAndApplySessions({
+            ...params, awaitSessionListHydration: true, requiredHydrationSessionIds: [sessionId],
+            request: async () => jsonResponse({ sessions: [lockedRow], hasNext: false }),
+            getCurrentSessionListRenderable: (id) => storage.getState().sessionListRowsByServerId[serverId]?.[id],
+            applySessionListRenderables: (rows) => published.push(...rows),
+        });
+        expect(published).toHaveLength(1);
+        expect(getSessionName(published[0])).toBe(sharedMetadata.summary.text);
+        expect(published[0].metadata).toBeNull();
+        expect(published[0].lockedDisplayTitle).toBe(sharedMetadata.summary.text);
     });
 });

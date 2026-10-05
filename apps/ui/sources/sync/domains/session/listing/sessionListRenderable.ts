@@ -61,6 +61,7 @@ import {
     resolveSessionRuntimePresenceFields,
 } from '../attention/runtimePresentation';
 import { readSessionOwnerMetadataView } from '../readSessionOwnerMetadataView';
+import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 
 export { derivePendingRequestFlagsFromAgentState } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
@@ -104,6 +105,8 @@ export interface SessionListRenderableSession {
     workflowHeadline?: SessionWorkflowActivityHeadlineV1 | null;
     encryptionMode?: Session["encryptionMode"];
     encryptedContentAvailability?: Session['encryptedContentAvailability'];
+    /** Store-produced recipient-safe title; memory only, never metadata or a wire/cache field. */
+    lockedDisplayTitle?: Session['lockedDisplayTitle'];
     id: string;
     seq: number;
     createdAt: number;
@@ -493,6 +496,8 @@ export function buildSessionListRenderableFromSession(
         && renderableSourceMetadata == null;
     const preserveMetadata =
         !layout1OwnerMetadataUnavailable
+        // A settled layout-1 lock retains only the store's safe title, not old metadata fields.
+        && (readSessionMetadataLayoutVersion(session.metadataLayoutVersion) !== 1 || metadataUndecided)
         && renderableSourceMetadata == null
         && previous?.metadata != null
         && readSessionMetadataLayoutVersion(session.metadataLayoutVersion)
@@ -531,15 +536,12 @@ export function buildSessionListRenderableFromSession(
         ? (aggregate.firstUserTextMessage ? [aggregate.firstUserTextMessage] : [])
         : messages;
     const lockedDisplayTitle = session.metadataLayoutVersion === 1
+        && session.metadata === null
         && isSessionAccessRecipient(session.access, session.accessLevel)
-        ? normalizeTransientTitleText(session.lockedDisplayTitle)
+        ? readSessionDisplayTitleField({ lockedDisplayTitle: session.lockedDisplayTitle }).value
         : null;
     const projectedMetadata = applyTransientUserMessageTitleFallback(
-        nextMetadata ?? (
-            lockedDisplayTitle && previousMetadata
-                ? { ...previousMetadata, summaryText: lockedDisplayTitle }
-                : null
-        ),
+        nextMetadata,
         previousMetadata,
         titleFallbackMessages,
     );
@@ -631,6 +633,7 @@ export function buildSessionListRenderableFromSession(
             : session.metadataLayoutVersion,
         metadataVersion: preserveMetadata && previous ? previous.metadataVersion : session.metadataVersion,
         agentStateVersion: preservePendingFlags && previous ? previous.agentStateVersion : session.agentStateVersion,
+        lockedDisplayTitle,
         metadata: previous && areSessionListRenderableMetadataComparisonsEqual(previousMetadata, projectedMetadata)
             ? previous.metadata
             : projectedMetadata,
@@ -868,6 +871,7 @@ export function areSessionListRenderablesEqual(
     if (previous.viewer !== next.viewer && JSON.stringify(previous.viewer ?? null) !== JSON.stringify(next.viewer ?? null)) return false;
     if (previous.encryptionMode !== next.encryptionMode) return false;
     if (previous.encryptedContentAvailability !== next.encryptedContentAvailability) return false;
+    if ((previous.lockedDisplayTitle ?? null) !== (next.lockedDisplayTitle ?? null)) return false;
     if (JSON.stringify(previous.forkV1 ?? null) !== JSON.stringify(next.forkV1 ?? null)) return false;
     if (previous.workState !== next.workState && JSON.stringify(previous.workState ?? null) !== JSON.stringify(next.workState ?? null)) return false;
     if (previous.workflowHeadline !== next.workflowHeadline && JSON.stringify(previous.workflowHeadline ?? null) !== JSON.stringify(next.workflowHeadline ?? null)) return false;
@@ -935,10 +939,18 @@ export function applySessionListRenderablePatch(
     renderable: SessionListRenderableSession,
     patch: SessionListRenderablePatchFields,
 ): SessionListRenderableSession {
-    return {
+    const next = {
         ...renderable,
         ...patch,
         id: renderable.id,
+    };
+    return {
+        ...next,
+        lockedDisplayTitle: readSessionMetadataLayoutVersion(next.metadataLayoutVersion) === 1
+            && next.metadata === null
+            && isSessionAccessRecipient(next.access, next.accessLevel)
+            ? readSessionDisplayTitleField({ lockedDisplayTitle: next.lockedDisplayTitle }).value
+            : null,
     };
 }
 
@@ -1127,6 +1139,7 @@ export function isSessionListRenderableWarmCacheProgressOnlyChange(
     if ((previous.metadataUnavailable === true) !== (next.metadataUnavailable === true)) return false;
     if (previous.encryptionMode !== next.encryptionMode) return false;
     if (previous.encryptedContentAvailability !== next.encryptedContentAvailability) return false;
+    if ((previous.lockedDisplayTitle ?? null) !== (next.lockedDisplayTitle ?? null)) return false;
     if (JSON.stringify(previous.agentActivityHeadline ?? null) !== JSON.stringify(next.agentActivityHeadline ?? null)) return false;
     if (JSON.stringify(previous.forkV1 ?? null) !== JSON.stringify(next.forkV1 ?? null)) return false;
     if (previous.workState !== next.workState) return false;

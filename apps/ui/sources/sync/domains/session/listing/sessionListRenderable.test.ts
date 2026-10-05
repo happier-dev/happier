@@ -530,6 +530,7 @@ describe('buildSessionListRenderableFromSession', () => {
             externalAgentObservationV1: null,
             readStateV1: null,
             hiddenSystemSession: false,
+            sessionDirectoryV1: null,
             terminalControlServiceabilityV1: null,
         });
         expect(renderable.metadataUnavailable).not.toBe(true);

@@ -1,8 +1,9 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
-import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
+import { isSessionAccessOwner, isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { classifySessionTupleApplyCurrentness } from '@/sync/store/domains/sessionTupleApplyCurrentness';
+import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 
 import type { SessionListRenderableSession } from './sessionListRenderable';
 
@@ -155,6 +156,12 @@ export function buildSessionFromListRenderable(
         workDepth: renderable.workDepth ?? options.baseSession?.workDepth,
         reports: renderable.reports ?? options.baseSession?.reports ?? null,
         metadata: mergeRenderableMetadata(options.baseSession?.metadata, renderable.metadata),
+        // The row owns this ephemeral projection; a stale base must not revive a retired title.
+        lockedDisplayTitle: metadataLayoutVersion === 1
+            && renderable.metadata === null
+            && isSessionAccessRecipient(renderable.access, renderable.accessLevel)
+            ? readSessionDisplayTitleField({ lockedDisplayTitle: renderable.lockedDisplayTitle }).value
+            : null,
         metadataLayoutVersion: metadataLayoutVersion || undefined,
         ownerMetadataView,
         metadataVersion: renderable.metadataVersion,
