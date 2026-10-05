@@ -84,6 +84,11 @@ describe('registerWorkspaceFileListHandler', () => {
         });
     });
 
+    it('reports unavailable native ripgrep without treating the missing tool as an empty corpus', async () => {
+        runRipgrepMock.mockResolvedValue({ exitCode: 127, stdout: '', stderr: '' });
+        await expect(createHandler()({ rootPath: '/repo' })).resolves.toEqual({ ok: false, errorCode: 'ripgrep_unavailable' });
+    });
+
     it('treats ripgrep no-results exit 1 as a successful empty workspace result', async () => {
         const handler = createHandler();
         runRipgrepMock.mockResolvedValue({ exitCode: 1, stdout: '', stderr: '' });

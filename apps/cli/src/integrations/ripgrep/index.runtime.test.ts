@@ -150,4 +150,25 @@ describe('ripgrep runtime resolution', () => {
     });
     expect(killProcessTreeMock).toHaveBeenCalledWith(child, undefined);
   });
+
+  it('delivers complete UTF-8 records across chunks and stops at the consumer boundary without buffering stdout', async () => {
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(), stderr: new EventEmitter(), pid: 4244,
+    });
+    spawnMock.mockReturnValue(child);
+    const records: string[] = [];
+    const { run } = await import('./index');
+    const pending = run(['--json'], {
+      collectStdout: false,
+      onStdoutLine: (line: string) => { records.push(line); return records.length < 2; },
+    });
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+    const bytes = Buffer.from('é first\nsecond\nignored\n');
+    child.stdout.emit('data', bytes.subarray(0, 1));
+    child.stdout.emit('data', bytes.subarray(1));
+    child.emit('close', 143);
+    await expect(pending).resolves.toMatchObject({ stdout: '', stoppedEarly: true });
+    expect(records).toEqual(['é first', 'second']);
+    expect(killProcessTreeMock).toHaveBeenCalledWith(child, undefined);
+  });
 });

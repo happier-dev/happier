@@ -9,6 +9,7 @@ import {
     type DaemonWorkspaceFileListResponse,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isSafeRelativeWorkspacePath, workspaceFileExclusionArguments } from './workspaceFilePaths';
 
 
 function escapeRipgrepGlob(input: string): string {
@@ -27,10 +28,7 @@ function buildWorkspaceFileListArguments(query: string | undefined, includeHidde
         '--no-config',
         '--files',
         ...(includeHidden ? ['--hidden'] : []),
-        '--glob',
-        '!**/.git/**',
-        '--glob',
-        '!**/node_modules/**',
+        ...workspaceFileExclusionArguments(),
         '--null',
     ];
     const trimmed = query?.trim();
@@ -39,14 +37,6 @@ function buildWorkspaceFileListArguments(query: string | undefined, includeHidde
         args.push('--iglob', `*${needle}*`);
     }
     return args;
-}
-
-function isSafeRelativeWorkspacePath(value: string): boolean {
-    if (!value) return false;
-    if (value.startsWith('/') || value.startsWith('\\')) return false;
-    if (/^[A-Za-z]:[\\/]/u.test(value)) return false;
-    const segments = value.replace(/\\/g, '/').split('/');
-    return !segments.some((segment) => segment === '..');
 }
 
 function selectBoundedPaths(input: Readonly<{
@@ -118,6 +108,7 @@ export function registerWorkspaceFileListHandler(
                     maxStderrBytes: 0,
                     terminateOnStdoutLimit: true,
                 });
+                if (result.exitCode === 127) return { ok: false, errorCode: 'ripgrep_unavailable' };
                 const isEmptyResult = result.exitCode === 1 && result.stdout.length === 0;
                 if (result.exitCode !== 0 && !isEmptyResult && !result.stdoutTruncated) {
                     return { ok: false, errorCode: 'ripgrep_failed', exitCode: result.exitCode };

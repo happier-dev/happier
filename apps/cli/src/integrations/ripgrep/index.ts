@@ -3,6 +3,7 @@
  */
 
 import { spawn } from 'child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { requireJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/requireJavaScriptRuntimeExecutable';
 import { isBun } from '@/utils/runtime';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
@@ -14,6 +15,7 @@ export interface RipgrepResult {
     stderr: string
     stdoutTruncated?: boolean
     stderrTruncated?: boolean
+    stoppedEarly?: boolean
 }
 
 export interface RipgrepOptions {
@@ -22,6 +24,9 @@ export interface RipgrepOptions {
     maxStdoutBytes?: number
     maxStderrBytes?: number
     terminateOnStdoutLimit?: boolean
+    /** Consume newline-delimited records at the process boundary; false stops the process tree. */
+    onStdoutLine?: (line: string) => boolean | void
+    collectStdout?: boolean
 }
 
 function createRipgrepAbortError(): Error {
@@ -95,6 +100,26 @@ export function run(args: string[], options?: RipgrepOptions): Promise<RipgrepRe
             let stdoutTruncated = false;
             let stderrTruncated = false;
             let outputLimitTerminationStarted = false;
+            let stoppedEarly = false;
+            const stdoutDecoder = new StringDecoder('utf8');
+            let pendingLine = '';
+            const stopProcess = () => {
+                if (outputLimitTerminationStarted) return;
+                outputLimitTerminationStarted = true;
+                void killProcessTree(spawned).catch(() => {});
+            };
+            const deliverLine = (line: string) => {
+                if (stoppedEarly || settled) return;
+                try {
+                    if (options?.onStdoutLine?.(line) === false) {
+                        stoppedEarly = true;
+                        stopProcess();
+                    }
+                } catch (error) {
+                    stopProcess();
+                    rejectOnce(error);
+                }
+            };
 
             const appendBounded = (
                 chunks: Buffer[],
@@ -116,12 +141,21 @@ export function run(args: string[], options?: RipgrepOptions): Promise<RipgrepRe
 
             spawned.stdout.on('data', (data) => {
                 const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
-                const appended = appendBounded(stdoutChunks, chunk, stdoutBytes, options?.maxStdoutBytes);
-                stdoutBytes = appended.bytes;
-                stdoutTruncated ||= appended.truncated;
-                if (stdoutTruncated && options?.terminateOnStdoutLimit && !outputLimitTerminationStarted) {
-                    outputLimitTerminationStarted = true;
-                    void killProcessTree(spawned).catch(() => {});
+                if (options?.collectStdout !== false) {
+                    const appended = appendBounded(stdoutChunks, chunk, stdoutBytes, options?.maxStdoutBytes);
+                    stdoutBytes = appended.bytes;
+                    stdoutTruncated ||= appended.truncated;
+                    if (stdoutTruncated && options?.terminateOnStdoutLimit) stopProcess();
+                }
+                if (options?.onStdoutLine && !stoppedEarly && !settled) {
+                    pendingLine += stdoutDecoder.write(chunk);
+                    let newline: number;
+                    while (!stoppedEarly && !settled && (newline = pendingLine.indexOf('\n')) !== -1) {
+                        const line = pendingLine.slice(0, newline);
+                        pendingLine = pendingLine.slice(newline + 1);
+                        deliverLine(line);
+                    }
+                    if (stoppedEarly || settled) pendingLine = '';
                 }
             });
 
@@ -133,12 +167,17 @@ export function run(args: string[], options?: RipgrepOptions): Promise<RipgrepRe
             });
 
             spawned.on('close', (code) => {
+                if (options?.onStdoutLine && !stoppedEarly && !settled) {
+                    pendingLine += stdoutDecoder.end();
+                    if (pendingLine) deliverLine(pendingLine);
+                }
                 resolveOnce({
                     exitCode: typeof code === 'number' ? code : 1,
                     stdout: Buffer.concat(stdoutChunks, stdoutBytes).toString('utf8'),
                     stderr: Buffer.concat(stderrChunks, stderrBytes).toString('utf8'),
                     ...(stdoutTruncated ? { stdoutTruncated: true } : {}),
                     ...(stderrTruncated ? { stderrTruncated: true } : {}),
+                    ...(stoppedEarly ? { stoppedEarly: true } : {}),
                 });
             });
 
