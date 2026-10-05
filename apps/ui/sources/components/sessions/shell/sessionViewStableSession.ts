@@ -111,6 +111,7 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         archivedAt: session.archivedAt ?? null,
         agentStateVersion: session.agentStateVersion ?? null,
         encryptionMode: session.encryptionMode ?? null,
+        encryptedContentAvailability: session.encryptedContentAvailability ?? null,
         currentStorageState: session.currentStorageState ?? null,
         acceptedThroughServerSeq: session.acceptedThroughServerSeq ?? null,
         publishedThroughServerSeq: session.publishedThroughServerSeq ?? null,

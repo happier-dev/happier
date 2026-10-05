@@ -1,10 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { renderHook } from '@/dev/testkit';
+import { createSessionFixture, renderHook } from '@/dev/testkit';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getSessionStatus, shouldShowAbortButtonForSessionState } from '@/utils/sessions/sessionUtils';
+import { removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 
 import {
     buildSessionViewShellSessionSignature,
@@ -13,6 +15,7 @@ import {
     useSessionViewShellSessionSeq,
 } from './sessionViewStableSession';
 import { useSessionRuntimeStatusSource } from './useSessionRuntimeStatusSource';
+import { resolveSessionBlockedSurfaceState } from './sessionBlockedSurfaceState';
 
 const stableContextSnapshot = {
     v: 1 as const,
@@ -26,20 +29,6 @@ const stableContextSnapshot = {
     observedAtMs: 1,
     source: 'provider_turn' as const,
 };
-
-vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
-    return {
-        ...original,
-        areServerProfileIdentifiersEquivalent: (leftRaw: string | null | undefined, rightRaw: string | null | undefined) => {
-            const left = String(leftRaw ?? '').trim();
-            const right = String(rightRaw ?? '').trim();
-            if (!left || !right) return false;
-            if (left === right) return true;
-            return [left, right].sort().join('\u0000') === ['server-actual', 'server-alias'].sort().join('\u0000');
-        },
-    };
-});
 
 function createSession(overrides: Partial<Session> = {}): Session {
     return {
@@ -492,6 +481,46 @@ describe('buildSessionViewShellSessionSignature', () => {
 });
 
 describe('useSessionViewShellSession', () => {
+    it.each([
+        ['ready', 'encrypted_content_unavailable', 'content_blocked'],
+        ['encrypted_content_unavailable', 'ready', null],
+        [null, 'encrypted_content_unavailable', 'content_blocked'],
+    ] as const)('updates the mounted detail gate when content availability changes from %s to %s', async (from, to, expectedKind) => {
+        const previousState = storage.getState();
+        const sessionId = 'session-content-availability';
+        let unmountHook: (() => Promise<void>) | null = null;
+        try {
+            await act(async () => storage.getState().applySessions([createSessionFixture({
+                id: sessionId,
+                serverId: 'home-content-availability',
+                encryptionMode: 'e2ee',
+                encryptedContentAvailability: from,
+            })]));
+            const initialSession = storage.getState().sessions[sessionId];
+            const hook = await renderHook(() => {
+                const session = useSessionViewShellSession(sessionId, 'home-content-availability');
+                return resolveSessionBlockedSurfaceState({
+                    authSurfaceState: null,
+                    sessionPresent: session !== null,
+                    contentAvailability: session ? readSessionContentAvailability(session) : null,
+                });
+            });
+            unmountHook = hook.unmount;
+
+            await act(async () => {
+                storage.getState().applySessions([{ ...initialSession, encryptedContentAvailability: to }]);
+            });
+
+            expect(storage.getState().sessions[sessionId].encryptedContentAvailability).toBe(to);
+            expect(hook.getCurrent()?.kind ?? null).toBe(expectedKind);
+        } finally {
+            await act(async () => {
+                await unmountHook?.();
+                storage.setState(previousState);
+            });
+        }
+    });
+
     it('does not reuse Account A detail after the same Home is cleared and Account B publishes the same session id', () => {
         const accountA = {
             ...createSession({
@@ -708,19 +737,25 @@ describe('useSessionViewShellSession', () => {
         expect(selectSessionViewShellSessionForRouteState(state, 'same-id', 'server-b')).toBeNull();
     });
 
-    it('accepts explicit server routes that alias the resolved local session scope', () => {
-        const scopedSession = {
-            ...createSession({ id: 'session-1' }),
-            serverId: 'server-actual',
-        };
+    it('accepts explicit server routes that alias the resolved local session scope', async () => {
+        const profile = await upsertServerProfile({ serverUrl: 'https://session-shell-alias.example.test' });
+        try {
+            await setServerProfileIdentityForUrl(profile.serverUrl, 'srv_session_shell_alias');
+            const scopedSession = {
+                ...createSession({ id: 'session-1' }),
+                serverId: profile.id,
+            };
 
-        const selected = selectSessionViewShellSessionForRouteState({
-            sessions: { 'session-1': scopedSession },
-            sessionListIndexByServerId: {},
-            sessionListRowsByServerId: {},
-        }, 'session-1', 'server-alias');
+            const selected = selectSessionViewShellSessionForRouteState({
+                sessions: { 'session-1': scopedSession },
+                sessionListIndexByServerId: {},
+                sessionListRowsByServerId: {},
+            }, 'session-1', 'srv_session_shell_alias');
 
-        expect(selected?.serverId).toBe('server-actual');
+            expect(selected?.serverId).toBe(profile.id);
+        } finally {
+            await removeServerProfile(profile.id);
+        }
     });
 
     it('fails closed for explicit server routes when local session scope is unknown', async () => {
