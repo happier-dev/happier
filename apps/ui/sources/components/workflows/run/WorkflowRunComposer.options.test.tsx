@@ -264,10 +264,14 @@ describe('Workflow inputs through real Action option resolution', () => {
         const { ModalProvider } = await import('@/modal');
         const productionPanel = await renderScreen(<ModalProvider>{chip.collapsedContentPopover.renderContent}</ModalProvider>);
         let stage = 'browse';
-        onTestFinished(() => { if (stage !== 'done') console.error('picker diagnostic', stage, JSON.stringify(productionPanel.toJSON())); });
+        let paint = '';
+        onTestFinished(() => { if (stage !== 'done') console.error('picker diagnostic', stage, paint); });
         await flushHookEffects();
-        await waitForHomeGovernance(() => expect(productionPanel.findAllByType('Pressable').find((node) =>
-            (node.props.accessibilityLabel ?? node.props['aria-label']) === 'inputPicker.browseField')?.props.disabled).toBe(false));
+        await waitForHomeGovernance(() => {
+            paint = productionPanel.getTextContent();
+            expect(productionPanel.findAllByType('Pressable').find((node) =>
+                (node.props.accessibilityLabel ?? node.props['aria-label']) === 'inputPicker.browseField')?.props.disabled).toBe(false);
+        });
         const productionBrowse = productionPanel.findAllByType('Pressable').find((node) =>
             (node.props.accessibilityLabel ?? node.props['aria-label']) === 'inputPicker.browseField');
         const { HappierInputPickerProvider } = await import('@happier-dev/plugin-ui/presentation');
@@ -278,7 +282,10 @@ describe('Workflow inputs through real Action option resolution', () => {
         await act(async () => { productionBrowse!.props.onPress(); });
         stage = 'native';
         await Promise.race([
-            waitForHomeGovernance(() => expect(nativeBoundary.context).toBeDefined()),
+            waitForHomeGovernance(() => {
+                paint = productionPanel.getTextContent();
+                expect(nativeBoundary.context).toBeDefined();
+            }),
             pickerAttempt.mock.results[0]!.value.then((result: unknown) => {
                 throw new Error(`Picker settled before native mount: ${JSON.stringify(result)}; aborted=${pickerAttempt.mock.calls[0]![0].signal.aborted}`);
             }),
