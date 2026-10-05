@@ -7,7 +7,9 @@ const loader = vi.hoisted(() => ({ current: null as typeof import('@/sync/sync')
 vi.mock('@/sync/runtime/getSyncSingleton', () => createSyncSingletonLoaderMock());
 
 /** Install explicitly with vi.mock in suites that import consumers before this harness. */
-export function createSyncSingletonLoaderMock() {
+export function createSyncSingletonLoaderMock(): {
+    getSyncSingleton: () => typeof import('@/sync/sync').sync;
+} {
     return {
         getSyncSingleton: () => {
             if (!loader.current) throw new Error('Load the real sync singleton before rendering its consumers');

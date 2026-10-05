@@ -3,7 +3,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps, RPC_METHODS, UiActionDispatchRequestV1Schema } from '@happier-dev/protocol';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createFindSurfaceRegistry } from '@/keyboard/findSurfaceRegistry';
 import { registerFindActionRuntime } from '@/keyboard/findActionRuntime';
@@ -12,21 +13,30 @@ import { registerMountedWorkspaceAction } from '@/components/appShell/workspace/
 import { createWorkspaceState, createWorkspaceEmptyTab } from '@/components/appShell/workspace/workspaceState';
 import { projectWorkspaceTabsList } from '@/components/appShell/workspace/workspaceActions';
 import { createClientActionReverseDispatcher } from '../../../../../cli/src/session/actions/clientActionReverseDispatch';
-import { createMachineFixture, renderScreen } from '@/dev/testkit';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { storage } from '@/sync/domains/state/storage';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 
 installDisconnectedServerSocketBoundary();
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
+await loadSyncSingletonForTests();
 const { createUiClientActionReverseHandler } = await import('./clientActionReverseDispatch');
 const releases: (() => void)[] = [];
 let serverId: string;
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 beforeEach(async () => {
   await homes.reset();
   serverId = await homes.addHome({ name: 'Home', serverUrl: 'https://relay.test', accountId: 'relay-account' });
+  connection = await restoreServerAccountForTest({ serverUrl: 'https://relay.test', accountId: 'relay-account' });
+  installHomeGovernanceBoundaries(homes);
 });
-afterEach(() => { for (const release of releases.splice(0)) release(); standardCleanup(); vi.restoreAllMocks(); });
+afterEach(async () => {
+  for (const release of releases.splice(0)) release();
+  standardCleanup();
+  if (connection) { await connection.dispose(); connection = null; installHomeGovernanceBoundaries(homes); }
+});
 
 describe('admitted daemon-to-app Action continuation', () => {
   it.each(['agent', 'mcp'] as const)('executes Find, Next and workspace list through the real app executor on %s', async surface => {
@@ -98,6 +108,7 @@ describe('admitted daemon-to-app Action continuation', () => {
     });
     // Observe the real registry, not a replacement for its retirement behavior.
     const registered = vi.spyOn(apiSocket, 'registerMachineScopedRpcHandler');
+    releases.push(() => registered.mockRestore());
     const screen = await renderScreen(React.createElement(ClientActionReverseRuntime));
     const initial = registered.mock.calls.find(([id, method]) => id === machine.id && method === RPC_METHODS.UI_ACTION_EXECUTE);
     if (!initial) throw new Error('Mounted client did not register its Action handler');
@@ -113,6 +124,5 @@ describe('admitted daemon-to-app Action continuation', () => {
     await screen.unmount();
     expect(await receive(request, { signal: new AbortController().signal }))
       .toMatchObject({ execution: { ok: false, errorCode: 'target_unavailable' } });
-    registered.mockRestore();
   });
 });

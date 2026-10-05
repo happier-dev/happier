@@ -121,6 +121,7 @@ vi.mock('@/onboarding/showcase', () => ({
 vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
         installBrowserRecordingReverseCapture: reverseCaptureMockState.installBrowserRecordingReverseCapture,
+        registerMachineScopedRpcHandler: () => () => {},
         // Socket status is a transport boundary; keep the mounted presentation runtime real.
         onStatusChange: () => () => {},
     },
