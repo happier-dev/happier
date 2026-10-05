@@ -1,4 +1,5 @@
 export * from './invocationAuthority.js';
+export * from './clientDispatchV1.js';
 export * from './anchoredListOrderV1.js';
 export { ComposerTransactionApplyInputV1Schema, ComposerAttachmentsPickInputV1Schema, ComposerAttachmentsPickResultV1Schema,
   RepositoryUploadPickInputV1Schema, RepositoryUploadPickResultV1Schema,

@@ -3473,6 +3473,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         });
       }
 
+      if (spec.executionPlacement === 'client' && deps.clientActionExecute) {
+        return await deps.clientActionExecute({ actionId, input: admittedInput, context: ctx });
+      }
+
       if (SESSION_TRANSCRIPT_ACTION_ID_SET.has(actionId) && deps.sessionTranscriptAction) {
         const result = await deps.sessionTranscriptAction({
           actionId,

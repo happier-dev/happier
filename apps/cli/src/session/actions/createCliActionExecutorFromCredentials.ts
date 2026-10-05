@@ -12,7 +12,7 @@ import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscrip
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { configuration } from '@/configuration';
-import { getDaemonMachineAdmissionTransport, MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
+import { getDaemonMachineAdmissionTransport, getDaemonClientActionExecutor, MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
 import { resolveCliApiTokenForSdk } from '@/auth/cliApiToken';
 import {
   normalizeServerHttpBaseUrl,
@@ -361,9 +361,6 @@ async function resolvePatActionTransportPlan(params: Readonly<{
   if (spec.executionPlacement === 'session') {
     return { kind: 'settled', result: actionFailure('target_required') };
   }
-  if (spec.executionPlacement === 'client') {
-    return { kind: 'settled', result: actionFailure('placement_unavailable') };
-  }
 
   if (daemonLocalMachineId) {
     if (workflowProjectTarget && workflowProjectTarget.machineId !== daemonLocalMachineId) {
@@ -512,6 +509,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   revalidatePluginActionCallerMaterialization?: RevalidatePluginActionCallerMaterialization;
   revalidatePluginActionCallerOccurrence?: RevalidatePluginActionCallerOccurrence;
   runtimeActionExecute?: RuntimeActionExecute;
+  clientActionExecute?: ActionExecutorDeps['clientActionExecute'];
   workflowAction?: ActionExecutorDeps['workflowAction'];
   workflowAcceptedAuthorizationCurrentness?: Parameters<typeof createCliActionExecutor>[0]['workflowAcceptedAuthorizationCurrentness'];
   sessionActionConfirmation?: ActionExecutorDeps['sessionActionConfirmation'];
@@ -716,6 +714,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
     });
     return createCliActionExecutor({
       ...cryptoContext,
+      clientActionExecute: params.clientActionExecute ?? getDaemonClientActionExecutor(approvalServerId),
       ...(params.scmFilesystemAccessPolicy ? { scmFilesystemAccessPolicy: params.scmFilesystemAccessPolicy } : {}),
       ...(params.resolveExactSessionEncryptionMaterial
         ? { resolveExactSessionEncryptionMaterial: params.resolveExactSessionEncryptionMaterial }

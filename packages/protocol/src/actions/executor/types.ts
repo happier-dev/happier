@@ -1021,6 +1021,12 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<ActionExecuteResult>;
   runtimeActionExecute?: RuntimeActionExecute;
+  /** Client placement continuation, called only after canonical policy/approval admission. */
+  clientActionExecute?: (args: Readonly<{
+    actionId: ActionId;
+    input: unknown;
+    context: ActionExecutorContext;
+  }>) => Promise<ActionExecuteResult>;
   uiCommandPaletteAction?: (args: Readonly<{
     actionId: 'ui.command_palette.list' | 'ui.command_palette.invoke';
     input: unknown;

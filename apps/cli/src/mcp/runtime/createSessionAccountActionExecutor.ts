@@ -26,6 +26,7 @@ export function createSessionAccountActionExecutor(params: Readonly<{
       // Contributed ids remain with the existing plugin catalog/execution owner.
       const builtIn = ActionIdSchema.safeParse(actionId);
       if (!builtIn.success || (getActionSpec(builtIn.data).executionPlacement !== 'account'
+        && getActionSpec(builtIn.data).executionPlacement !== 'client'
         && !(Object.hasOwn(RoleActionInputSchemasV1, builtIn.data) && builtIn.data.startsWith('session.')))) {
         return await params.base.execute(actionId, input, context);
       }

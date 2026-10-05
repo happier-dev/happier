@@ -6,6 +6,7 @@ import { ensureSessionMachineAccessKeyBinding } from '@/api/session/ensureSessio
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { installDaemonMachineAdmissionTransport } from './machineAdmissionTransport';
+import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
 import { TrackedSession } from './types';
 import { MachineMetadata } from '@/api/types';
 import type { DaemonState } from '@/api/types';
@@ -485,6 +486,7 @@ export async function startDaemon(
     const releaseMachineAdmissionTransport = installDaemonMachineAdmissionTransport({
       serverId: configuration.activeServerId,
       transport: machineAdmissionTransport,
+      clientActionExecute: createClientActionReverseDispatcher(() => apiMachineForSessions),
     });
     let apiMachine: ApiMachineClient | null = null;
     let homeTransportReplacementPending = false;

@@ -69,14 +69,6 @@ function targetRequired(): ActionExecuteResult {
   return { ok: false, errorCode: 'target_required', error: 'target_required' };
 }
 
-function placementUnavailable(): ActionExecuteResult {
-  return {
-    ok: false,
-    errorCode: 'placement_unavailable',
-    error: 'placement_unavailable',
-  };
-}
-
 export type ExternalActionTargetReconciliation =
   | Readonly<{
       kind: 'ready';
@@ -126,10 +118,6 @@ export function reconcileExternalActionTarget(input: Readonly<{
     };
   }
 
-  if (spec.executionPlacement === 'client') {
-    return { kind: 'rejected', execution: placementUnavailable() };
-  }
-
   const sessionSelectorIds = readSessionSelectorIds(input.actionId, parsedInput);
   const distinctSessionSelectorIds = [...new Set(sessionSelectorIds)];
   if (distinctSessionSelectorIds.length > 1) {
@@ -141,13 +129,13 @@ export function reconcileExternalActionTarget(input: Readonly<{
   }
 
   const isExecutionRun = input.actionId.startsWith('execution.run.');
-  const canDeriveSessionTarget = spec.executionPlacement === 'session' || isExecutionRun;
+  const canDeriveSessionTarget = spec.executionPlacement === 'session' || spec.executionPlacement === 'client' || isExecutionRun;
   // `action.invoke` is machine-placed so account- and machine-scoped
   // contributions can run without a Session. Its nested plugin input is never
   // a routing selector, but an explicit envelope Session target is already
   // host-owned route metadata and may establish the invocation context.
   const isContributedActionInvocation = input.actionId === 'action.invoke';
-  const bindsEnvelopeSession = isContributedActionInvocation || input.actionId.startsWith('computer.');
+  const bindsEnvelopeSession = isContributedActionInvocation || spec.executionPlacement === 'client' || input.actionId.startsWith('computer.');
   const sessionSelectorId = distinctSessionSelectorIds[0] ?? null;
 
   if (spec.executionPlacement === 'machine') {

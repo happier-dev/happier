@@ -544,9 +544,9 @@ describe('executeExternalAction', () => {
       .toEqual({ ok: false, errorCode: 'internal_error', error: 'internal_error' });
   });
 
-  it('keeps a client-placed public Action discoverable but refuses daemon relocation', async () => {
-    const resolveTarget = vi.fn<ResolveExternalActionTarget>();
-    const execute = vi.fn<ExternalActionExecutor['execute']>();
+  it('admits client placement to the canonical executor for connected app delivery', async () => {
+    const resolveTarget = vi.fn<ResolveExternalActionTarget>(async () => ({ kind: 'machine', machineId: 'machine-1' }));
+    const execute = vi.fn<ExternalActionExecutor['execute']>(async () => ({ ok: false, errorCode: 'unavailable', error: 'noClient' }));
 
     await expect(executeExternalAction({
       actionId: 'ui.current_context.read',
@@ -563,13 +563,13 @@ describe('executeExternalAction', () => {
         requestId: 'request-client-placement',
         execution: {
           ok: false,
-          errorCode: 'placement_unavailable',
-          error: 'placement_unavailable',
+          errorCode: 'unavailable',
+          error: 'noClient',
         },
       },
     });
-    expect(resolveTarget).not.toHaveBeenCalled();
-    expect(execute).not.toHaveBeenCalled();
+    expect(resolveTarget).toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledWith('ui.current_context.read', {}, expect.objectContaining({ authority: 'account_automation' }));
   });
 
   it('projects the exact public Session admission result before returning it', async () => {

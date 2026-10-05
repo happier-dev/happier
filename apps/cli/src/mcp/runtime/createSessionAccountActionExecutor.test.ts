@@ -39,6 +39,9 @@ describe('Session MCP Account routing', () => {
     { actionId: 'notifications.notify_me' as const, input: { message: 'Notify' }, uncertain: true },
     { actionId: 'session.notes.set' as const, input: { sessionId: 'led-child', notes: 'Delegated notes' }, uncertain: false },
     { actionId: 'session.roles.apply_to_reports' as const, input: { sessionId: 'caller-session' }, uncertain: false },
+    { actionId: 'ui.find' as const, input: { op: 'read' }, uncertain: false },
+    { actionId: 'session.pending.next' as const, input: {}, uncertain: false },
+    { actionId: 'workspace.tabs.list' as const, input: {}, uncertain: false },
   ])('routes $actionId with only the host admission witness and its Session capability (uncertain: $uncertain)', async ({ actionId, input, uncertain }) => {
     const command = 'node /runtime/.runner-snapshots/session-account/dist/index.mjs';
     const runner = { pid: process.pid, processStartTimeMs: 23_346,

@@ -167,6 +167,7 @@ export const RPC_METHODS = {
   // desktop UI to capture one reference-only frame over the existing daemon<->UI session RPC channel.
   UI_BROWSER_RECORDING_CAPTURE_FRAME: 'ui.browser.recording.captureFrame',
   UI_CONTRIBUTED_ACTION_EXECUTE: 'ui.actions.contributed.execute',
+  UI_ACTION_EXECUTE: 'ui.actions.execute.v1',
   UI_BROWSER_AUTOMATION_DISPATCH: 'ui.browser.automation.dispatch',
   DAEMON_SIMULATOR_PREVIEW_SNAPSHOT: 'daemon.devices.simulator.preview.snapshot',
   DAEMON_SIMULATOR_PREVIEW_ACTION: 'daemon.devices.simulator.preview.action',

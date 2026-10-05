@@ -39,6 +39,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
   & CliTranscriptActionExecutorOptions
   & Readonly<{
     runtimeActionExecute?: RuntimeActionExecute;
+    clientActionExecute?: ActionExecutorDeps['clientActionExecute'];
     /** Bound by the live Session/Run host; private and deferred operations retain Artifact custody. */
     sessionActionConfirmation?: ActionExecutorDeps['sessionActionConfirmation'];
     /** Current committed contributed Action declarations for catalog discovery. */
@@ -118,6 +119,7 @@ export function createCliActionExecutor(
     },
     {
       ...(params.sessionActionConfirmation ? { sessionActionConfirmation: params.sessionActionConfirmation } : {}),
+      ...(params.clientActionExecute ? { clientActionExecute: params.clientActionExecute } : {}),
       ...(params.runtimeActionExecute
         ? { runtimeActionExecute: params.runtimeActionExecute }
         : {}),
