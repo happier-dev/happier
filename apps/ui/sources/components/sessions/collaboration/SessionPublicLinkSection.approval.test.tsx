@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createPlainSessionOwnerMetadataEnvelopeV1,
     projectSessionSharedMetadataV1,
+    SessionPublicLinkCreateActionResultV1Schema,
     SessionOwnerMetadataV1Schema,
     tryWriteServerEnabledBitInPlace,
 } from '@happier-dev/protocol';
@@ -53,6 +54,7 @@ installHomeGovernanceBoundaries(harness);
 const ACCOUNT_ID = 'account-owner';
 const SESSION_ID = 'session-1';
 const PUBLIC_SHARE_PATH = `/v1/sessions/${SESSION_ID}/public-share`;
+const PUBLIC_SHARE_CREATE_PATH = '/v1/public-shares';
 
 function session(): Session {
     return {
@@ -184,15 +186,19 @@ describe('SessionPublicLinkSection deferred approval', () => {
             actionArgs: { sessionId: SESSION_ID, isConsentRequired: true },
         });
         // Nothing was published before the decision.
-        expect(harness.requestsFor(PUBLIC_SHARE_PATH).filter((request) => request.input !== null)).toHaveLength(0);
+        expect(harness.requestsFor(PUBLIC_SHARE_CREATE_PATH).filter((request) => request.input !== null)).toHaveLength(0);
 
         // The Inbox approves: its replay mints and publishes the link once, and
         // the Home's authoritative read now reports it.
         const committed = {
             id: 'p-approved', expiresAt: null, useCount: 0, maxUses: null,
-            isConsentRequired: true, updatedAt: 3,
+            isConsentRequired: true, updatedAt: 3, keyDerivation: 'fragment_v1',
         };
-        harness.answer(serverId, `POST ${PUBLIC_SHARE_PATH}`, { body: { publicShare: committed } });
+        // The canonical stored-content create transport publishes independent
+        // lookup material; the Session read remains its subject projection.
+        harness.answer(serverId, `POST ${PUBLIC_SHARE_CREATE_PATH}`, {
+            body: { publicShare: committed, isolatedOrigin: 'https://public-viewer.example.test' },
+        });
         harness.answer(serverId, `GET ${PUBLIC_SHARE_PATH}`, { body: { publicShare: committed } });
         const decided = await decideApprovalAsInbox(serverId, rows[0]!.id, 'approve');
         expect(decided, JSON.stringify({
@@ -204,8 +210,24 @@ describe('SessionPublicLinkSection deferred approval', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('session-public-link-status')?.props.children)
             .toBe('On'));
         // Settlement read the authoritative publication; nothing was submitted twice.
-        const publications = harness.requestsFor(PUBLIC_SHARE_PATH).filter((request) => request.input !== null);
+        const publications = harness.requestsFor(PUBLIC_SHARE_CREATE_PATH).filter((request) => request.input !== null);
         expect(publications).toHaveLength(1);
-        expect(publications[0]?.input).toMatchObject({ isConsentRequired: true, token: expect.any(String) });
+        expect(publications[0]?.input).toMatchObject({
+            subject: { kind: 'session', id: SESSION_ID },
+            isConsentRequired: true, lookupId: expect.any(String), keyDerivation: 'fragment_v1',
+        });
+        expect(publications[0]?.input).not.toHaveProperty('token');
+        // The approval caller receives the complete link. This sheet only
+        // reloads the settings projection and cannot reconstruct its secret.
+        expect(screen.findByTestId('session-public-link-url')).toBeNull();
+        expect(screen.findByTestId('session-public-link-hidden')).not.toBeNull();
+        const settled = JSON.parse(harness.artifacts(serverId).readPlainBody(rows[0]!.id)!) as Readonly<{
+            execution?: Readonly<{ result?: unknown }>;
+        }>;
+        const approvedPublication = SessionPublicLinkCreateActionResultV1Schema.parse(settled.execution?.result);
+        const approvedUrl = new URL(approvedPublication.url);
+        const secret = new URLSearchParams(approvedUrl.hash.slice(1)).get('k');
+        expect(secret).toBeTruthy();
+        expect(JSON.stringify(publications[0]?.input)).not.toContain(secret);
     });
 });

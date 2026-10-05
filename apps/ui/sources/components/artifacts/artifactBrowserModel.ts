@@ -1,4 +1,7 @@
 import { deriveArtifactExcerptV1, getArtifactUseTargetV1, isArtifactHtmlHeaderV1 } from '@happier-dev/protocol';
+import { WorkflowDefinitionArtifactBodyV1Schema, WorkflowDefinitionArtifactHeaderV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { workflowDefinitionPreviewStepsV1 } from '@happier-dev/protocol/workflows';
+import type { HappierArtifactPreview } from '@happier-dev/plugin-ui/presentation';
 
 import { readBoardArtifactRoute } from '@/components/boards/boardsRoutes';
 import { promptCollectionItemHref } from '@/components/settings/prompts/collection/promptCollectionModel';
@@ -102,13 +105,7 @@ export function readArtifactProvenance(artifact: Pick<DecryptedArtifact, 'header
 }
 
 /** What a card previews: the body when it is loaded, else the header's excerpt; never a request. */
-export type ArtifactPreview =
-    | Readonly<{ kind: 'markdown'; text: string }>
-    | Readonly<{ kind: 'code'; text: string; language: string }>
-    | Readonly<{ kind: 'image'; name: string }>
-    | Readonly<{ kind: 'html'; name: string }>
-    | Readonly<{ kind: 'file'; name: string; mime: string; sizeBytes: number }>
-    | Readonly<{ kind: 'none' }>;
+export type ArtifactPreview = HappierArtifactPreview;
 
 const CODE_EXTENSIONS: Readonly<Record<string, string>> = {
     ts: 'TypeScript', tsx: 'TypeScript', js: 'JavaScript', jsx: 'JavaScript', mjs: 'JavaScript', cjs: 'JavaScript',
@@ -132,6 +129,21 @@ export function readArtifactCodeLanguage(artifact: Pick<DecryptedArtifact, 'head
 }
 
 export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'header' | 'rawHeader' | 'title' | 'body'>): ArtifactPreview {
+    const header = artifact.rawHeader ?? artifact.header;
+    if (header?.kind === 'workflow-definition.v1') {
+        let labels: readonly string[] | undefined;
+        if (typeof artifact.body === 'string') {
+            try {
+                const parsed = WorkflowDefinitionArtifactBodyV1Schema.safeParse(JSON.parse(artifact.body));
+                if (!parsed.success) return { kind: 'none' };
+                labels = workflowDefinitionPreviewStepsV1(parsed.data.definition.blocks);
+            } catch { return { kind: 'none' }; }
+        } else {
+            const parsed = WorkflowDefinitionArtifactHeaderV1Schema.shape.previewSteps.safeParse(header.previewSteps);
+            if (parsed.success) labels = parsed.data;
+        }
+        return labels ? { kind: 'workflow', steps: labels.map((title) => ({ title })) } : { kind: 'none' };
+    }
     if (isArtifactHtmlHeaderV1(artifact.rawHeader ?? artifact.header)) return { kind: 'html', name: artifact.title ?? '' };
     if (artifact.body !== null && typeof artifact.body === 'object') {
         const reference = artifact.body;
