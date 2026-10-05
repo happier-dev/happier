@@ -5,6 +5,9 @@ export {
     type TransferRouteViabilityCacheKey,
     type TransferRouteViabilityRecord,
 } from './cache/createTransferRouteViabilityCache.js';
+export { uploadInChunks, type ChunkUploadProgress } from './uploadInChunks.js';
+export { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifactUploadFrameV1,
+    decodeArtifactUploadMetadataV1, type ArtifactUploadDestinationV1 } from './artifactUploadFrame.js';
 export {
     createMachineTransferRouteCache,
     DEFAULT_MACHINE_TRANSFER_ROUTE_CACHE_NEGATIVE_TTL_MS,
