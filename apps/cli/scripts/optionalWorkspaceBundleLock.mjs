@@ -75,6 +75,7 @@ export async function withOptionalCliSharedDepsBuildLock(fn, options = {}) {
       pollIntervalMs: options.lockPollIntervalMs ?? options.pollIntervalMs ?? 250,
       staleAfterMs: options.lockStaleAfterMs ?? options.staleAfterMs ?? lockTimeoutMs,
       tryResolveWaiter: options.tryResolveWaiter,
+      onWait: options.onWait,
     });
   }
   if (!lockModulePath || !existsSync(lockModulePath)) {
@@ -94,6 +95,7 @@ export async function withOptionalCliSharedDepsBuildLock(fn, options = {}) {
     pollIntervalMs: options.lockPollIntervalMs ?? options.pollIntervalMs ?? 250,
     staleAfterMs: options.lockStaleAfterMs ?? options.staleAfterMs ?? lockTimeoutMs,
     tryResolveWaiter: options.tryResolveWaiter,
+    onWait: options.onWait,
   });
 }
 
