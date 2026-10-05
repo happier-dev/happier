@@ -1093,6 +1093,8 @@ export {
   MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_ENTRIES,
   PluginAgentExternalSessionLinkDataSchema,
   type PluginAgentExternalSessionLinkData,
+  type PluginAgentExternalSessionLinkDataArray,
+  type PluginAgentExternalSessionLinkDataObject,
   type PluginAgentExternalSessionLinkDataValue,
 } from './plugins/contributions/agentExternalSessions.js';
 export {

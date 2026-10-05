@@ -8,6 +8,13 @@
   "references": [
     { "path": "./tsconfig.source.json" }
   ],
+  "files": [
+    "vitest.config.ts",
+    "vitest.integration.config.ts",
+    "vitest.legend-native.config.ts",
+    "vitest.legend-fabric.config.ts",
+    "sources/dev/testkit/fixtures/pluginWidgetProjectionFixtures.ts"
+  ],
   "include": [
     "**/*.test.ts",
     "**/*.test.tsx",

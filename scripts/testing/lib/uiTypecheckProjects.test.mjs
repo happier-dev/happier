@@ -60,6 +60,36 @@ test('UI projects preserve every original root exactly once, except shared decla
   assertProjectCoverage(uiDir, ['tsconfig.foundation.json', 'tsconfig.core.json', 'tsconfig.source.json']);
 });
 
+test('native UI source emission leaves test-only Protocol and SDK fixtures in the noEmit project', () => {
+  const invocation = resolveTypeScriptCliInvocation({ repoRoot: resolve('.'), workspaceDir: uiDir });
+  const inputs = (name) => {
+    const result = spawnSync(invocation.command, [...invocation.argsPrefix,
+      '--project', join(uiDir, `tsconfig.${name}.json`), '--listFilesOnly'],
+    { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    return result.stdout.trim().split(/\r?\n/u).map((file) => resolve(file.trim()));
+  };
+  const sourceInputs = inputs('source');
+  const protocolDir = resolve('packages/protocol/src') + '/';
+  const authorFixtureDirs = ['packages/plugin-sdk/examples/', 'packages/plugin-sdk/fixtures/']
+    .map((dir) => resolve(dir) + '/');
+  assert.deepEqual(sourceInputs.filter((file) => file.startsWith(protocolDir)), [],
+    'Protocol authored schemas reached only from UI tests/configuration must not be declaration-emitted by UI');
+  assert.deepEqual(sourceInputs.filter((file) => authorFixtureDirs.some((dir) => file.startsWith(dir))), [],
+    'authoring examples and test fixtures belong to semantic checking, not app declaration publication');
+  const testOnlyRoots = [
+    'vitest.config.ts', 'vitest.integration.config.ts',
+    'vitest.legend-native.config.ts', 'vitest.legend-fabric.config.ts',
+    'sources/dev/testkit/fixtures/pluginWidgetProjectionFixtures.ts',
+  ].map((file) => join(uiDir, file));
+  assert.ok(testOnlyRoots.every((file) => !sourceInputs.includes(file)));
+  const testInputs = inputs('test');
+  assert.ok(testOnlyRoots.every((file) => testInputs.includes(file)),
+    'each original test/configuration root must still be checked');
+  assert.ok(testInputs.some((file) => file.startsWith(protocolDir)));
+  assert.ok(testInputs.some((file) => authorFixtureDirs.some((dir) => file.startsWith(dir))));
+});
+
 for (const name of ['foundation', 'core']) {
   test(`native UI ${name} partition loads shared theme and breakpoint augmentation`, () => {
     const fixtureDir = mkdtempSync(join(tmpdir(), 'happier-ui-theme-types-'));
