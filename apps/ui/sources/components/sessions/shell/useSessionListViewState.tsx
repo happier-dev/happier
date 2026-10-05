@@ -34,6 +34,7 @@ import { useSessionListRenderModels } from './useSessionListRenderModels';
 import { useSessionListSearchTextByKey } from './useSessionListSearchTextByKey';
 import { useSessionListNavigationActions } from './useSessionListNavigationActions';
 import { useSessionListRowInteractions } from './useSessionListRowInteractions';
+import { useSessionListOrganizationWriters } from './useSessionListOrganizationWriters';
 import { useSessionListRowMoveActionHandlers } from './useSessionListRowMoveActionHandlers';
 import { useSessionListWorkspaceHeaderActions } from './useSessionListWorkspaceHeaderActions';
 import { useSessionListWorkspaceLabelMigration } from './useSessionListWorkspaceLabelMigration';
@@ -825,68 +826,11 @@ export function useSessionListViewStateFromPaneState(
         orderItemAddressByItemKey: organizationListViewState.orderItemAddressByItemKey,
         memberHomes: searchCorpus.homes,
     }), [organizationListViewState.orderItemAddressByItemKey, searchCorpus]);
-    const setSessionListGroupOrderV1 = React.useCallback((nextOrder: Record<string, readonly string[] | undefined>) => {
-        runOrganizationMutation(async () => {
-            const nextByServerId = partitionSessionOrganizationGroupOrderByServerId({
-                next: nextOrder,
-                orderItemAddressByItemKey,
-            });
-            const writes = Object.entries(nextByServerId);
-            const scopedWrites = await Promise.all(writes.map(async ([serverId, next]) => ({
-                next,
-                scope: await getAvailableOrganizationMutationScope(serverId),
-            })));
-            await Promise.all(scopedWrites.map(({ scope, next }) => runSessionOrganizationWriteForHome(
-                scope.serverId,
-                () => writeSessionOrganizationGroupOrder({ scope, next, orderItemAddressByItemKey }),
-            )));
-        });
-    }, [getAvailableOrganizationMutationScope, orderItemAddressByItemKey, runOrganizationMutation]);
-    const setSessionWorkspaceOrderV1 = React.useCallback((nextOrder: Record<string, readonly string[] | undefined>) => {
-        runOrganizationMutation(async () => {
-            const nextByServerId = partitionSessionWorkspaceOrderByServerId({
-                next: nextOrder,
-                fallbackServerId: activeOrganizationServerId,
-            });
-            const writes = Object.entries(nextByServerId);
-            const scopedWrites = await Promise.all(writes.map(async ([serverId, next]) => ({
-                next,
-                scope: await getAvailableOrganizationMutationScope(serverId),
-            })));
-            await Promise.all(scopedWrites.map(({ scope, next }) => runSessionOrganizationWriteForHome(
-                scope.serverId,
-                () => writeSessionOrganizationWorkspaceOrder({ scope, next }),
-            )));
-        });
-    }, [activeOrganizationServerId, getAvailableOrganizationMutationScope, runOrganizationMutation]);
-    const setSessionFoldersV1 = React.useCallback((nextFolders: SessionFoldersV1) => {
-        runOrganizationMutation(async () => {
-            // The edited tree is the merged multi-Home tree. Each Home receives only the folders
-            // it actually stores, so editing one Home's folder never recreates or deletes another
-            // Home's same-id folder through the focused Home.
-            const writesByServerId = partitionSessionFolderWritesByServerId({
-                current: availableSessionFoldersV1,
-                next: nextFolders,
-                orderItemAddressByItemKey,
-                fallbackServerId: activeOrganizationServerId,
-            });
-            const writes = Object.entries(writesByServerId);
-            const scopedWrites = await Promise.all(writes.map(async ([serverId, write]) => ({
-                write,
-                scope: await getAvailableOrganizationMutationScope(serverId),
-            })));
-            await Promise.all(scopedWrites.map(({ scope, write }) => runSessionOrganizationWriteForHome(
-                scope.serverId,
-                () => writeSessionOrganizationFolders({ scope, current: write.current, next: write.next }),
-            )));
-        });
-    }, [
+    const { setSessionListGroupOrderV1, setSessionWorkspaceOrderV1, setSessionFoldersV1 } = useSessionListOrganizationWriters({
         activeOrganizationServerId,
         availableSessionFoldersV1,
-        getAvailableOrganizationMutationScope,
         orderItemAddressByItemKey,
-        runOrganizationMutation,
-    ]);
+    });
     // The transcript provider request is bound to one exact Home. Passing the admitted
     // ids lets the canonical adapter filter before limiting, and an unselected Home
     // resolves to an explicit empty eligibility rather than an unrestricted search.
