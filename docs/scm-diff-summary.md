@@ -32,6 +32,9 @@ model. Opening a Walkthrough destination does not start generation; Start does.
 - [`SessionScmReviewDetailsView.tsx`](../apps/ui/sources/components/sessions/files/views/SessionScmReviewDetailsView.tsx)
   projects Files, Walkthrough and pending-only Commits through `scmReview`.
   The shared comparison binding restores saved results without generation.
+- [`walkthroughReading.ts`](../apps/ui/sources/components/sessions/files/walkthrough/walkthroughReading.ts)
+  projects each stop's first Explain occurrence per file once per reading.
+  Hunk annotations look up those notes directly; they do not rebuild the reading.
 
 The existing Action catalog and machine/Session RPC dispatcher remain the public
 entry points. See [Actions](actions.md) and the generated
@@ -80,6 +83,9 @@ controls. Its missing-content and freshness notices retain the original evidence
 The Triage PR-detail Walk entrance reads a source-owned PR comparison locator
 from the transient `get` result, not from the persisted entry snapshot. It opens
 the canonical comparison destination through typed `session.open` navigation.
+The same unreleased `scmReview` destination accepts `explain: true|false` for
+Files. UI toggles and Action callers update that shared pane target; the choice
+only displays saved walkthrough notes and does not generate another output.
 A linked Session is reused only when its Account-scoped Home and machine have
 a reachable placement in the existing project registry;
 otherwise the incumbent New Session placement and entry-session flow create/link
@@ -227,6 +233,11 @@ Run; failed or unknown admission is not silently retried by prefetch. Explicit
 Regenerate bypasses that reuse. Summary model and Start share the offered model catalog and
 structured-output capability admission. Unknown/unsupported capability cannot be
 made supported by a default model name; continuation is a separate capability.
+The Summary model and Prepare after each turn declarations use domain admission
+before the Account settings CAS write. UI and `settings.set` use that same owner:
+unsupported or unavailable model choices and preparation without a supported
+selection are refused. Turning preparation off remains possible when the
+previous model is unavailable. The existing scalar preference codec is unchanged.
 Seven-day cost uses reported execution records and exposes partial/unavailable
 coverage rather than inventing prices. The current reader counts retained
 `scm_diff_summary` records in the interval and may see only a Run's latest turn;

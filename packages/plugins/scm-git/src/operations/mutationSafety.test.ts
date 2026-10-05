@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,7 +17,7 @@ function git(cwd: string, args: string[]): string {
 }
 
 function createWorkspace(initialCommit = true) {
-    const cwd = mkdtempSync(join(tmpdir(), 'happier-git-safety-'));
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'happier-git-safety-')));
     git(cwd, ['init', '-q']);
     git(cwd, ['config', 'user.email', 'test@example.com']);
     git(cwd, ['config', 'user.name', 'Happier Test']);
@@ -32,7 +32,9 @@ function createWorkspace(initialCommit = true) {
     return { cwd, context };
 }
 
-describe('Git mutation safety', () => {
+// Loaded mac-host measured a real-Git case at 7.957s. Allow twice that, rounded
+// to 20s, at the runner boundary; individual Git command deadlines stay intact.
+describe('Git mutation safety', { timeout: 20_000 }, () => {
     it.skipIf(process.platform === 'win32').each(['staged', 'scoped', 'amend'] as const)('matches native post-publication hook index reads and staging writes (%s)', async (kind) => {
         const owner = createWorkspace();
         const native = createWorkspace();
