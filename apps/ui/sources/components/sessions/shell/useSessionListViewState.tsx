@@ -98,11 +98,8 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import {
     requireSessionOrganizationMutationScope,
     writeSessionOrganizationFolderAssignment,
-    writeSessionOrganizationFolders,
-    writeSessionOrganizationGroupOrder,
     writeSessionOrganizationPin,
     writeSessionOrganizationTagLabels,
-    writeSessionOrganizationWorkspaceOrder,
     type SessionOrganizationMutationScope,
 } from '@/sync/ops/sessionOrganization';
 import {
@@ -130,9 +127,6 @@ import {
 import {
     buildSessionOrganizationListViewStateForServers,
     completeSessionOrganizationOrderItemAddresses,
-    partitionSessionFolderWritesByServerId,
-    partitionSessionOrganizationGroupOrderByServerId,
-    partitionSessionWorkspaceOrderByServerId,
 } from '@/sync/domains/session/organization/viewState';
 import { resolveSessionListOrganizationServerIds } from '@/sync/domains/session/organization/sessionListOrganizationServerIds';
 import {
@@ -145,7 +139,6 @@ import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/tree
 import { hasActiveSessionListHeaderFilters } from './sessionListFilters';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { HappyError } from '@/utils/errors/errors';
-import { shouldRetryError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import {
     useActiveServerAccountScope,
     useOrdinarySessionListMembershipByServerId,
@@ -392,23 +385,6 @@ function buildSessionFoldersSignature(value: SessionFoldersV1): string {
             buildSessionFolderWorkspaceSignature(folder.workspace),
             folder.sortKey ?? '',
         ]));
-}
-
-async function runSessionOrganizationWriteForHome(
-    serverId: string,
-    write: () => Promise<void>,
-): Promise<void> {
-    try {
-        await write();
-    } catch (error) {
-        const message = error instanceof HappyError ? error.message : t('errors.unknownError');
-        const canTryAgain = shouldRetryError(error);
-        throw new HappyError(
-            `${t('teams.homeLabel')} ${serverId}: ${message}${canTryAgain ? ` ${t('common.retry')}` : ''}`,
-            canTryAgain,
-            { code: error instanceof HappyError ? error.code : 'session_organization_write_failed' },
-        );
-    }
 }
 
 /** A stable empty Home selection: not searching follows no Home's rows. */
@@ -827,7 +803,6 @@ export function useSessionListViewStateFromPaneState(
         memberHomes: searchCorpus.homes,
     }), [organizationListViewState.orderItemAddressByItemKey, searchCorpus]);
     const { setSessionListGroupOrderV1, setSessionWorkspaceOrderV1, setSessionFoldersV1 } = useSessionListOrganizationWriters({
-        activeOrganizationServerId,
         availableSessionFoldersV1,
         orderItemAddressByItemKey,
     });
@@ -1764,8 +1739,8 @@ export function useSessionListViewStateFromPaneState(
             name,
             now: Date.now(),
         });
-        setSessionFoldersV1(created.next);
-    }, [availableSessionFoldersV1, setSessionFoldersV1]);
+        runOrganizationMutation(async () => setSessionFoldersV1(created.next, await getAvailableOrganizationMutationScope(workspace.serverId)));
+    }, [availableSessionFoldersV1, getAvailableOrganizationMutationScope, runOrganizationMutation, setSessionFoldersV1]);
 
     const handleFocusSessionFolder = React.useCallback((item: Extract<SessionListIndexItem, { type: 'header' }>) => {
         if (!item.folderId || !item.workspace) return;
@@ -1808,8 +1783,8 @@ export function useSessionListViewStateFromPaneState(
             name,
             now: Date.now(),
         });
-        setSessionFoldersV1(created.next);
-    }, [availableSessionFoldersV1, setSessionFoldersV1]);
+        runOrganizationMutation(async () => setSessionFoldersV1(created.next, await getAvailableOrganizationMutationScope(item.serverId ?? item.workspace?.serverId)));
+    }, [availableSessionFoldersV1, getAvailableOrganizationMutationScope, runOrganizationMutation, setSessionFoldersV1]);
 
     const handleRenameFolder = React.useCallback(async (item: Extract<SessionListIndexItem, { type: 'header' }>) => {
         if (!item.folderId) return;
@@ -1829,8 +1804,8 @@ export function useSessionListViewStateFromPaneState(
             name,
             now: Date.now(),
         });
-        setSessionFoldersV1(renamed.next);
-    }, [availableSessionFoldersV1, setSessionFoldersV1]);
+        runOrganizationMutation(async () => setSessionFoldersV1(renamed.next, await getAvailableOrganizationMutationScope(item.serverId ?? item.workspace?.serverId)));
+    }, [availableSessionFoldersV1, getAvailableOrganizationMutationScope, runOrganizationMutation, setSessionFoldersV1]);
 
     const handleDeleteFolder = React.useCallback(async (item: Extract<SessionListIndexItem, { type: 'header' }>) => {
         if (!item.folderId || !(item.serverId ?? item.workspace?.serverId)) return;
@@ -1850,7 +1825,7 @@ export function useSessionListViewStateFromPaneState(
             folderId: item.folderId,
         });
         if (deleted.deletedFolderIds.length === 0) return;
-        setSessionFoldersV1(deleted.next);
+        runOrganizationMutation(async () => setSessionFoldersV1(deleted.next, await getAvailableOrganizationMutationScope(item.serverId ?? item.workspace?.serverId)));
         if (
             sessionListFocusedFolderV1
             && sessionListFocusedFolderV1.serverId === (item.serverId ?? item.workspace?.serverId ?? null)
@@ -1858,7 +1833,7 @@ export function useSessionListViewStateFromPaneState(
         ) {
             setSessionListFocusedFolderV1(null);
         }
-    }, [availableSessionFoldersV1, sessionListFocusedFolderV1, setSessionFoldersV1, setSessionListFocusedFolderV1]);
+    }, [availableSessionFoldersV1, getAvailableOrganizationMutationScope, runOrganizationMutation, sessionListFocusedFolderV1, setSessionFoldersV1, setSessionListFocusedFolderV1]);
 
     const sessionFoldersSignature = React.useMemo(
         () => buildSessionFoldersSignature(availableSessionFoldersV1),

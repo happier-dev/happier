@@ -41,7 +41,6 @@ describe('mounted Session list organization writer bridge', () => {
         boundary.reorder.mockImplementation(() => { requestReached.resolve(); return response.promise; });
         const itemKey = `${scope.serverId}:session-a`;
         const hook = await renderHook(() => useSessionListOrganizationWriters({
-            activeOrganizationServerId: scope.serverId,
             availableSessionFoldersV1: { v: 1, folders: [] },
             orderItemAddressByItemKey: { [itemKey]: { itemKind: 'session', serverId: scope.serverId, sessionId: 'session-a' } },
         }));
@@ -58,7 +57,7 @@ describe('mounted Session list organization writer bridge', () => {
         response.reject(new Error('Network acknowledgement lost'));
         expect(await outcome).toMatchObject({ code: 'session_organization_write_failed' });
         expect(boundary.alert).not.toHaveBeenCalled();
-        expect(Object.keys(getStorage().getState().sessionOrganizationOrderEntriesByKey)).toHaveLength(0);
+        expect(Object.keys(getStorage().getState().sessionOrganizationOrderEntriesByScopeKey)).toHaveLength(0);
         expect(boundary.credentials).not.toHaveBeenCalled();
     });
 });
