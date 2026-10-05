@@ -205,6 +205,25 @@ describe("parseAutomationUpsertInput", () => {
         ).toThrow(/encrypted.*existing_session|plain account/i);
     });
 
+    it("rejects an unbound encrypted existing-session template on a plain Account", () => {
+        expect(() => parseAutomationUpsertInput({
+            name: "Opaque encrypted template",
+            enabled: false,
+            schedule: { kind: "manual" },
+            targetType: "existing_session",
+            templateCiphertext: JSON.stringify({
+                kind: "happier_automation_template_encrypted_v1",
+                payloadCiphertext: "ciphertext",
+            }),
+        }, { accountMode: "plain", allowLegacyEncryptedExistingSessionTemplate: true }))
+            .toThrow(AutomationValidationError);
+        expect(() => assertAutomationTemplateEnvelopeForAccountMode(
+            JSON.stringify({ kind: "happier_automation_template_encrypted_v1", payloadCiphertext: "ciphertext" }),
+            "plain", "existing_session",
+            { kind: "legacy-encrypted-existing-session-v1", existingSessionId: "session-e2ee" },
+        )).toThrow(AutomationValidationError);
+    });
+
     it("rejects a predecessor encrypted outer session identifier outside the legacy request adapter", () => {
         const encrypted = JSON.stringify({
             kind: "happier_automation_template_encrypted_v1",

@@ -9,7 +9,15 @@ import {
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     sealAutomationConversationReplyContextStoredEnvelopeV1,
     sealAutomationRunFailureDetailStoredEnvelopeV1,
-    sealAccountScopedBlobCiphertext,
+    WorkflowAcceptedSnapshotStoredBindingV1Schema,
+    WorkflowAcceptedSnapshotV1Schema,
+    WorkflowCheckpointStoredBindingV1Schema,
+    WorkflowCheckpointEnvelopeV1Schema,
+    WorkflowFinalResultStoredBindingV1Schema,
+    WorkflowFinalResultV1Schema,
+    sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
+    sealWorkflowCheckpointStoredEnvelopeV1,
+    sealWorkflowFinalResultStoredEnvelopeV1,
     serializeAutomationRunExecutionRecipeV1,
     type PluginJsonValueV2,
 } from "@happier-dev/protocol";
@@ -149,7 +157,7 @@ function strictRunTarget() {
                 serverId: "server-account-encryption-migration",
                 machineId: "machine-account-encryption-migration",
             },
-            directory: "/tmp/account-encryption-migration",
+            directory: { kind: "path" as const, path: "/tmp/account-encryption-migration" },
             agentTarget: {
                 kind: "agent" as const,
                 identity: {
@@ -240,6 +248,7 @@ const WORKFLOW_TRANSITION_MATERIAL = {
 };
 const workflowTransitionRandomBytes = (length: number) =>
     new Uint8Array(length).fill(29);
+const WORKFLOW_TRANSITION_RUN_DATA_KEY = new Uint8Array(32).fill(31);
 const workflowTransitionDefinition = {
     version: 1 as const,
     inputs: [],
@@ -272,18 +281,28 @@ function buildWorkflowStoredEnvelope(params: Readonly<{
     binding: Readonly<Record<string, unknown>>;
     content: unknown;
 }>): string {
-    const payload = { v: 1, binding: params.binding, content: params.content };
-    return params.mode === "plain"
-        ? JSON.stringify({ t: "plain", v: payload })
-        : JSON.stringify({
-            t: "encrypted",
-            c: sealAccountScopedBlobCiphertext({
-                kind: params.kind,
-                material: WORKFLOW_TRANSITION_MATERIAL,
-                payload,
-                randomBytes: workflowTransitionRandomBytes,
-            }),
-        });
+    const mode = params.mode === "plain" ? { mode: params.mode } as const : {
+        mode: params.mode,
+        runDataKey: WORKFLOW_TRANSITION_RUN_DATA_KEY,
+        randomBytes: workflowTransitionRandomBytes,
+    } as const;
+    switch (params.kind) {
+        case "workflow_accepted_snapshot": return JSON.stringify(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+            ...mode,
+            binding: WorkflowAcceptedSnapshotStoredBindingV1Schema.parse(params.binding),
+            acceptedSnapshot: WorkflowAcceptedSnapshotV1Schema.parse(params.content),
+        }));
+        case "workflow_checkpoint": return JSON.stringify(sealWorkflowCheckpointStoredEnvelopeV1({
+            ...mode,
+            binding: WorkflowCheckpointStoredBindingV1Schema.parse(params.binding),
+            checkpoint: WorkflowCheckpointEnvelopeV1Schema.parse(params.content),
+        }));
+        case "workflow_final_result": return JSON.stringify(sealWorkflowFinalResultStoredEnvelopeV1({
+            ...mode,
+            binding: WorkflowFinalResultStoredBindingV1Schema.parse(params.binding),
+            finalResult: WorkflowFinalResultV1Schema.parse(params.content),
+        }));
+    }
 }
 
 function buildWorkflowAcceptedSnapshotEnvelope(params: Readonly<{
@@ -305,6 +324,12 @@ function buildWorkflowAcceptedSnapshotEnvelope(params: Readonly<{
         binding,
         content: {
                 definition: workflowTransitionDefinition,
+                authoredDefinition: workflowTransitionDefinition,
+                metadata: null,
+                startedBy: params.origin.kind === "automation" ? "trigger" : "user",
+                workDepth: 0,
+                materializedLeaves: [],
+                frozenChildren: {},
                 source: params.origin.kind === "automation"
                     ? { kind: "automation", automationId: params.origin.automationId }
                     : { kind: "inline" },
@@ -378,7 +403,8 @@ function buildWorkflowFinalResultEnvelope(params: Readonly<{
 
 function buildWorkflowDefinitionEnvelope(mode: "plain" | "e2ee"): string {
     return mode === "plain"
-        ? JSON.stringify({ t: "plain", v: { definition: workflowTransitionDefinition } })
+        ? JSON.stringify({ t: "plain", v: { inlineDefinition: workflowTransitionDefinition,
+            workspace: { directory: "/repo" }, executionTarget: { kind: "session" } } })
         : JSON.stringify({ t: "encrypted", c: "workflow-definition-ciphertext" });
 }
 
