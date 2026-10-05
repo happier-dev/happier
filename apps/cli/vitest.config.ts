@@ -7,10 +7,12 @@ import { fileURLToPath } from 'node:url'
 
 import dotenv from 'dotenv'
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers'
 import {
     workspacePackageOptimizationExcludes,
     workspacePackageSourcesPlugin,
 } from './scripts/vitestWorkspacePackageResolution'
+import uiVitestConfig from '../ui/vitest.config'
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url))
 const resolve = (...paths: string[]) => resolvePath(packageRoot, ...paths)
@@ -41,11 +43,16 @@ mergedTestEnv.CLAUDE_CONFIG_DIR = '';
 
 const cliSourceRoot = resolve('./src')
 const uiSourceRoot = resolve('../ui/sources')
+const serverSourceRoot = resolve('../server/sources')
+// Cross-package Voice tests keep the real UI Account and Sync owners. Reuse the
+// UI harness's platform boundaries, including duplicated UI native dependencies
+// whose CommonJS loaders otherwise bypass test-local mocks.
+const uiPlatformAliases = Array.isArray(uiVitestConfig.resolve?.alias)
+    ? uiVitestConfig.resolve.alias.filter((alias) => alias.find !== '@')
+    : []
 
-// `@/…` is a package-relative source alias that the CLI and the UI both declare. A few CLI tests
-// compose real UI source across an explicit package seam (the Agent-realtime Voice service), and
-// that source resolves `@/…` against the UI package. Pick the root from the importing file so a
-// single alias stays correct for both sides instead of giving either package a second alias.
+// Cross-package tests compose real UI owners (Voice) and server routes (stored
+// shares). Resolve their package-relative source alias from the importing file.
 const packageSourceAlias: Alias = {
     find: /^@\//u,
     replacement: '@/',
@@ -53,6 +60,8 @@ const packageSourceAlias: Alias = {
         const importerPath = importer?.split('?')[0];
         const root = importerPath?.startsWith(`${uiSourceRoot}${sep}`)
             ? uiSourceRoot
+            : importerPath?.startsWith(`${serverSourceRoot}${sep}`)
+                ? serverSourceRoot
             : cliSourceRoot;
         const target = join(root, id.slice('@/'.length));
         const resolved = await this.resolve(target, importer, { skipSelf: true, ...options });
@@ -61,16 +70,23 @@ const packageSourceAlias: Alias = {
 }
 
 export default defineConfig({
+    ...uiVitestConfig,
+    // Cross-program UI leaves share their owning package's JSX runtime.
+    esbuild: uiVitestConfig.esbuild,
     test: {
+        ...uiVitestConfig.test,
         // Keep per-file module isolation so cross-file mocks/env mutations cannot leak.
         // This matches our integration suite configuration and prevents order-dependent failures.
         isolate: true,
         // Multiple CLI unit tests mutate `process.env.HAPPIER_HOME_DIR` / config at runtime.
         // Running them in isolated forked processes prevents cross-file env races.
         pool: 'forks',
-        maxWorkers: 6,
+        ...resolveVitestWorkers(),
         globals: false,
         environment: 'node',
+        // UI native dependencies need Vite's platform aliases below the real
+        // Account/Sync graph, just as they do in the owning UI harness.
+        server: { deps: uiVitestConfig.test?.server?.deps },
         // CLI "unit" tests include real filesystem/process work; 5s default is too tight under fork pools.
         testTimeout: 30_000,
         hookTimeout: 30_000,
@@ -106,6 +122,7 @@ export default defineConfig({
     },
     resolve: {
         alias: [
+            ...uiPlatformAliases,
             packageSourceAlias,
             { find: /^react$/u, replacement: resolve('../ui/node_modules/react/index.js') },
             { find: /^react\/jsx-runtime$/u, replacement: resolve('../ui/node_modules/react/jsx-runtime.js') },
@@ -121,5 +138,5 @@ export default defineConfig({
             allow: [resolve('../..'), realpathSync(tmpdir())],
         },
     },
-    plugins: [workspacePackageSourcesPlugin],
+    plugins: [workspacePackageSourcesPlugin, uiVitestConfig.plugins],
 })

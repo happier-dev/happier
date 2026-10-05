@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { configDefaults, defineConfig } from 'vitest/config';
 import { resolve } from 'node:path';
 
@@ -10,9 +11,9 @@ const testEnv = dotenv.config({
 
 export default defineConfig({
   test: {
+    ...resolveVitestWorkers(),
     globals: false,
     environment: 'node',
-    maxWorkers: 6,
     testTimeout: 30_000,
     hookTimeout: 30_000,
     include: ['src/**/*.slow.test.ts'],
