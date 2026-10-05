@@ -1,3 +1,4 @@
+import { defineTranslations } from '../_types';
 import { promptPickerTranslations } from './promptPickerTranslations';
 import { pendingNavigationTranslations } from './pendingNavigationTranslations';
 import { fileContentSearchTranslations } from './fileContentSearchTranslations';
@@ -805,7 +806,7 @@ function plural({
   return count === 1 ? singular : plural;
 }
 
-export const zhHans = {
+const zhHansValues = {
     homeDeviceApproval: homeDeviceApprovalTranslations['zh-Hans'],
     settingsOverview: settingsOverviewTranslations['zh-Hans'],
     homeSetup: homeSetupTranslations['zh-Hans'],
@@ -14529,6 +14530,8 @@ settingsSession: {
             skipToContent: "跳转到内容",
         },
   },} as const;
+
+export const zhHans = defineTranslations(zhHansValues);
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
 import { accountEncryptionRecoveryTranslations } from './accountEncryptionRecoveryTranslations';
 import { glassAppearanceTranslations } from './glassAppearanceTranslations';

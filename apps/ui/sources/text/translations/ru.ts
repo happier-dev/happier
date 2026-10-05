@@ -1,3 +1,4 @@
+import { defineTranslations } from '../_types';
 import { promptPickerTranslations } from './promptPickerTranslations';
 import { pendingNavigationTranslations } from './pendingNavigationTranslations';
 import { fileContentSearchTranslations } from './fileContentSearchTranslations';
@@ -822,7 +823,7 @@ function plural({
  * Russian translations for the Happier app
  * Must match the exact structure of the English translations
  */
-export const ru = {
+const ruValues = {
     homeDeviceApproval: homeDeviceApprovalTranslations.ru,
     settingsOverview: settingsOverviewTranslations.ru,
     homeSetup: homeSetupTranslations.ru,
@@ -14874,6 +14875,8 @@ settingsSession: {
             skipToContent: "Перейти к содержимому",
         },
   },} as const;
+
+export const ru = defineTranslations(ruValues);
 
 export type TranslationsRu = typeof ru;
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';

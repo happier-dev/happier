@@ -1,3 +1,4 @@
+import { defineTranslations } from '../_types';
 import { promptPickerTranslations } from './promptPickerTranslations';
 import { pendingNavigationTranslations } from './pendingNavigationTranslations';
 import { fileContentSearchTranslations } from './fileContentSearchTranslations';
@@ -790,7 +791,7 @@ const settingsSessionHandoffTranslationExtensions = {
   },
 } as const;
 
-export const ja = {
+const jaValues = {
     homeDeviceApproval: homeDeviceApprovalTranslations.ja,
     settingsOverview: settingsOverviewTranslations.ja,
     homeSetup: homeSetupTranslations.ja,
@@ -14847,6 +14848,8 @@ settingsSession: {
             skipToContent: "コンテンツに移動",
         },
   },} as const;
+
+export const ja = defineTranslations(jaValues);
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
 import { accountEncryptionRecoveryTranslations } from './accountEncryptionRecoveryTranslations';
 import { glassAppearanceTranslations } from './glassAppearanceTranslations';
