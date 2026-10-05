@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import test from 'node:test';
 
 import { ROOT_TYPECHECK_COMMANDS, runRootTypecheck } from '../runTypecheck.ts';
@@ -102,8 +103,12 @@ test('compiler-only typecheck executes compilers after preparation and reports c
   };
   assert.equal(uiPackage.scripts.typecheck, '../stack/bin/hstack-exec --script=typecheck:local');
   assert.equal(uiPackage.scripts['typecheck:local'], 'yarn -s typecheck:source:finite');
-  assert.equal(uiPackage.scripts['typecheck:source:finite'],
-    'node ../../scripts/workspaces/runTypeScriptCli.mjs --project tsconfig.foundation.json --project tsconfig.core.json --project tsconfig.source.json --project tsconfig.test.json');
+  const [executable, owner, ...compilerArgs] = uiPackage.scripts['typecheck:source:finite'].trim().split(/\s+/u);
+  assert.equal(executable, 'node');
+  assert.equal(resolve('apps/ui', owner), resolve('scripts/workspaces/runTypeScriptCli.mjs'));
+  assert.deepEqual(compilerArgs.filter((_, index) => compilerArgs[index - 1] === '--project'), [
+    'tsconfig.foundation.json', 'tsconfig.core.json', 'tsconfig.source.json', 'tsconfig.test.json',
+  ]);
   for (const args of executed.slice(2)) {
     if (!uiCommands.includes(args) && !cliCommands.includes(args)) {
       assert.equal(args[0], 'tsc');

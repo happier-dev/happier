@@ -325,13 +325,59 @@ test('native UI projects redirect direct and transitive imports across the compl
     assert.notEqual(testRed.status, 0);
     assert.match(testRed.stdout + testRed.stderr, /entry\.test\.ts.*TS2322/u);
     write('entry.test.ts', "import { value } from './entry'; import { left } from './left'; import { label } from './foundation'; const result: string = value + left() + label;\n");
-    const serial = spawnSync(process.execPath, [resolve('scripts/workspaces/runTypeScriptCli.mjs'),
-      ...names.flatMap((name) => ['--project', join(fixtureDir, `tsconfig.${name}.json`)]),
-      '--pretty', 'false', '--listFiles'], {
-      cwd: fixtureDir, encoding: 'utf8',
-      env: { ...process.env, CI: 'true', HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: '1' },
+    const uiPackage = JSON.parse(readFileSync(join(uiDir, 'package.json'), 'utf8'));
+    const [command, owner, ...compilerArgs] = uiPackage.scripts['typecheck:source:finite'].trim().split(/\s+/u);
+    assert.equal(command, 'node');
+    assert.equal(resolve(uiDir, owner), resolve('scripts/workspaces/runTypeScriptCli.mjs'));
+    const projects = [];
+    const fixtureArgs = compilerArgs.map((arg, index) => {
+      if (compilerArgs[index - 1] !== '--project') return arg;
+      projects.push(arg);
+      return join(fixtureDir, arg);
     });
+    assert.deepEqual(projects, names.map((name) => `tsconfig.${name}.json`));
+    const spawnLog = join(fixtureDir, 'compiler-spawns.jsonl');
+    const preload = join(fixtureDir, 'record-compiler-spawns.cjs');
+    // Observe only the genuine OS spawn boundary; execute the native compiler
+    // unchanged, including the measured Linux adapter's compiler invocation.
+    write('record-compiler-spawns.cjs', `
+      const cp = require('node:child_process');
+      const spawn = cp.spawn;
+      cp.spawn = function(command, args, options) {
+        const compilerArgs = command === process.execPath && args[0] === ${JSON.stringify(invocation.argsPrefix[0])}
+          ? args.slice(1)
+          : command === 'python3' && args[3] === ${JSON.stringify(invocation.argsPrefix[0])}
+            ? args.slice(4) : null;
+        if (compilerArgs) require('node:fs').appendFileSync(${JSON.stringify(spawnLog)}, JSON.stringify(compilerArgs) + '\\n');
+        return spawn(command, args, options);
+      };
+      require('node:module').syncBuiltinESMExports();
+    `);
+    const runPublicCommand = () => spawnSync(process.execPath, [resolve(uiDir, owner), ...fixtureArgs], {
+      cwd: fixtureDir, encoding: 'utf8',
+      env: { ...process.env, CI: 'true', HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: '1',
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require=${JSON.stringify(preload)}` },
+    });
+    write('right.ts', "import { left } from './left'; export const right: number = 'bad'; export const invoke = () => left();\n");
+    write('entry.test.ts', "import { value } from './entry'; import { left } from './left'; import { label } from './foundation'; const result: number = value + left() + label;\n");
+    const publicRed = runPublicCommand();
+    assert.notEqual(publicRed.status, 0);
+    assert.match(publicRed.stdout + publicRed.stderr, /right\.ts.*TS2322/u);
+    assert.match(publicRed.stdout + publicRed.stderr, /entry\.test\.ts.*TS2322/u);
+    write('right.ts', "import { left } from './left'; export const right: string = 'ok'; export const invoke = () => left();\n");
+    write('entry.test.ts', "import { value } from './entry'; import { left } from './left'; import { label } from './foundation'; const result: string = value + left() + label;\n");
+    write('compiler-spawns.jsonl', '');
+    const serial = runPublicCommand();
     assert.equal(serial.status, 0, serial.stdout + serial.stderr);
+    const nativeCalls = readFileSync(spawnLog, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepEqual(nativeCalls.map((args) => args[args.indexOf('--project') + 1]),
+      projects.map((project) => join(fixtureDir, project)));
+    for (const args of nativeCalls) {
+      const checkerOption = args.indexOf('--singleThreaded');
+      assert.equal(args.filter((arg) => arg === '--singleThreaded').length, 1);
+      assert.ok(checkerOption >= 0 && args[checkerOption + 1] !== 'false',
+        'each UI project must execute the native compiler with one checker');
+    }
     const testGreen = run('test', ['--listFiles']);
     assert.equal(testGreen.status, 0, testGreen.stdout + testGreen.stderr);
     const inputs = testGreen.stdout.split(/\r?\n/u).map((file) => resolve(file.trim()));
