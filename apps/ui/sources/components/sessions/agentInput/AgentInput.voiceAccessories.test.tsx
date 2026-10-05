@@ -1,7 +1,7 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
 import {
     readReanimatedFrameCallbacks,
@@ -78,37 +78,8 @@ installAgentInputCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSetting: (key: string) => {
-                if (key === 'voice') return voiceSettingState.current;
-                if (key === 'profiles') return [];
-                if (key === 'agentInputEnterToSend') return true;
-                if (key === 'agentInputActionBarLayout') return 'wrap';
-                if (key === 'agentInputChipDensity') return 'labels';
-                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-                return null;
-            },
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionMessagesById: () => ({}),
-            useSessionMessagesVersion: () => 0,
-            useSessionMessagesReducerState: () => null,
-        });
-    },
-    storageStore: async () => {
-        const state = { sessionMessages: {}, localSettings: { uiFontScale: 1, uiContentWidthMode: null } };
-        const store = Object.assign(
-            (selector: any) => selector(state),
-            {
-                getState: () => state,
-                getInitialState: () => state,
-                subscribe: () => () => {},
-            },
-        );
-        return { getStorage: () => store };
-    },
+    storage: async (importOriginal) => importOriginal(),
+    storageStore: async () => vi.importActual('@/sync/domains/state/storageStore'),
 });
 
 vi.mock('expo-image', () => ({
@@ -138,37 +109,6 @@ vi.mock('@/voice/dictation/useVoiceDictation', () => ({
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'voice',
-}));
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    getAgentIconSvgXml: () => null,
-    getAgentIconSource: () => null,
-    getAgentIconTintColor: () => undefined,
-    AGENT_IDS: ['codex', 'claude'],
-    DEFAULT_AGENT_ID: 'codex',
-    resolveAgentIdFromFlavor: () => null,
-    getAgentCore: () => ({ displayNameKey: 'agents.codex', toolRendering: { hideUnknownToolsByDefault: false } }),
-}));
-
-vi.mock('@/sync/domains/models/modelOptions', () => ({
-    findModelOptionForEffectiveModelId: () => null,
-    getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
-    supportsFreeformModelSelectionForSession: () => false,
-}));
-
-vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
-    describeEffectiveModelMode: () => ({ selectedModelId: 'default', appliedModelId: null, effectiveModelId: 'default' }),
-}));
-
-vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
-    getPermissionModeBadgeLabelForAgentType: () => 'Default',
-    getPermissionModeLabelForAgentType: () => 'Default',
-    getPermissionModeOptionsForSession: () => [{ value: 'default', label: 'Default' }],
-    getPermissionModeTitleForAgentType: () => 'Permissions',
-}));
-
-vi.mock('@/sync/domains/permissions/describeEffectivePermissionMode', () => ({
-    describeEffectivePermissionMode: () => ({ effectiveMode: 'default' }),
 }));
 
 vi.mock('@/components/ui/forms/MultiTextInput', () => ({
@@ -299,6 +239,7 @@ function readSlotOrder(container: ReactTestInstance, ...testIDs: readonly string
 }
 
 async function renderComposer(overrides: Record<string, unknown> = {}): Promise<RenderScreenResult> {
+    seedComposerSettings();
     const { AgentInput } = await import('./AgentInput');
     return renderScreen(<AgentInput
         sessionId="session-1"
@@ -346,6 +287,7 @@ const NEW_SESSION_HANDLERS = {
 async function renderComposerWithPlanet(
     overrides: Record<string, unknown> = {},
 ): Promise<RenderScreenResult> {
+    seedComposerSettings();
     const { AgentInput } = await import('./AgentInput');
     const { VoiceComposerPlanet } = await import('@/components/voice/composer/VoiceComposerPlanet');
     const { VoiceEnergyProvider } = await import('@/components/voice/light/useVoiceEnergy');
@@ -365,9 +307,8 @@ async function renderComposerWithPlanet(
                 submitDictation={false}
                 trailingAccessory={(
                     <VoiceComposerPlanet
-                        live
+                        pose="ready"
                         muted={false}
-                        stop="cool"
                         accessibilityLabel="End the conversation"
                         accessibilityHint="Stops the spoken conversation"
                         onPress={() => {}}
@@ -379,7 +320,63 @@ async function renderComposerWithPlanet(
     );
 }
 
+// Resolve the real composer graph during collection, before a behavior test's clock starts.
+// Cold source-module loading is harness setup rather than a composer operation.
+await import('./AgentInput');
+const { getStorage } = await import('@/sync/domains/state/storage');
+const { voiceSettingsParse } = await import('@/sync/domains/settings/voiceSettings');
+const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+const initialStorageState = getStorage().getState();
+beforeEach(() => {
+    getStorage().setState(initialStorageState, true);
+});
+afterEach(() => {
+    getStorage().setState(initialStorageState, true);
+    setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+});
+
+function seedComposerSettings(): void {
+    getStorage().setState((state) => ({ settings: {
+        ...state.settings,
+        voice: voiceSettingsParse(voiceSettingState.current ?? { providerId: 'off' }),
+        agentInputEnterToSend: true,
+        agentInputActionBarLayout: 'wrap',
+        agentInputChipDensity: 'labels',
+        sessionPermissionModeApplyTiming: 'immediate',
+    } }));
+}
+
 describe('AgentInput voice accessory slots', () => {
+    it.each(['web', 'ios'] as const)('reserves a distinct library target beside dictation on %s and keeps it with dictation disabled', async (os) => {
+        platformState.os = os;
+        const screen = await renderComposer();
+        const library = screen.findByTestId('agent-input-prompt-library');
+        expect(library).not.toBeNull();
+        const microphone = screen.findByTestId('agent-input-dictation');
+        expect(microphone).not.toBeNull();
+        const cluster = screen.findByTestId('agent-input-field-accessories');
+        const target = readEffectiveTargetSize(library!);
+        expect(target.width).toBeGreaterThanOrEqual(44);
+        expect(Number(flattenStyle(cluster?.props.style).width)).toBeGreaterThanOrEqual(target.width * 2);
+        const field = screen.root.findByType('MultiTextInput');
+        expect(field.props.paddingRight).toBeGreaterThanOrEqual(target.width * 2);
+        await screen.unmount();
+
+        const quiet = await renderComposer({ submitDictation: false });
+        expect(quiet.findByTestId('agent-input-prompt-library')).not.toBeNull();
+        expect(quiet.findByTestId('agent-input-dictation')).toBeNull();
+        await quiet.unmount();
+    });
+
+    it('does not offer the library on a locked composer and preserves custom accessories', async () => {
+        const locked = await renderComposer({ disabled: true });
+        expect(locked.findByTestId('agent-input-prompt-library')).toBeNull();
+        await locked.unmount();
+        const custom = await renderComposer({ fieldAccessory: <FieldAccessoryFixture /> });
+        expect(custom.findByTestId(FIELD_TEST_ID)).not.toBeNull();
+        expect(custom.findByTestId('agent-input-dictation')).toBeNull();
+        await custom.unmount();
+    });
     afterEach(() => {
         platformState.os = 'web';
         dictationState.status = 'idle';
@@ -485,13 +482,12 @@ describe('AgentInput voice accessory slots', () => {
         });
 
         expect(screen.findByTestId('agent-input-expand-toggle')).toBeNull();
-        expect(flattenStyle(findSlotContainer(screen, FIELD_TEST_ID).props.style)).toMatchObject({
+        expect(flattenStyle(screen.findByTestId('agent-input-field-accessories')!.props.style)).toMatchObject({
             position: 'absolute',
             top: 2,
             right: -4,
-            width: 44,
+            width: 88,
             height: 44,
-            paddingTop: 4,
         });
 
         const input = screen.root.findByType('MultiTextInput' as any);
@@ -502,14 +498,13 @@ describe('AgentInput voice accessory slots', () => {
         const toggle = screen.findByTestId('agent-input-expand-toggle');
         expect(toggle).not.toBeNull();
         expect(readEffectiveTargetSize(toggle!)).toEqual({ width: 44, height: 44 });
-        const fieldTargetStyle = flattenStyle(findSlotContainer(screen, FIELD_TEST_ID).props.style);
+        const fieldTargetStyle = flattenStyle(screen.findByTestId('agent-input-field-accessories')!.props.style);
         expect(fieldTargetStyle).toMatchObject({
             position: 'absolute',
             top: 30,
             right: -4,
-            width: 44,
+            width: 88,
             height: 44,
-            paddingTop: 4,
         });
         const toggleStyle = flattenStyle(toggle!.props.style);
         const toggleTargetBottom = Number(toggleStyle.top)
@@ -632,15 +627,13 @@ describe('AgentInput two-row trailing cluster', () => {
         ));
         expect(planets).toHaveLength(1);
         const planet = planets[0]!;
-        const discs = planet.findAllByType('Svg' as never);
-        expect(discs).toHaveLength(1);
-        expect({ width: discs[0]!.props.width, height: discs[0]!.props.height }).toEqual({
-            width: VOICE_COMPOSER_PLANET_SLOT,
-            height: VOICE_COMPOSER_PLANET_SLOT,
-        });
+        const { IconButton } = await import('@/components/ui/buttons/IconButton');
+        // The Voice control is drawn at the submit button's own 32pt weight.
+        expect(screen.root.findAllByType(IconButton).find((button) => button.props.testID === PLANET_TEST_ID)?.props.size)
+            .toBe(VOICE_COMPOSER_PLANET_SLOT);
 
-        // Nothing between the planet and the cluster may clip: a 12% inhale
-        // overshoots ~2pt per edge and the row's 8pt gap is what absorbs it.
+        // Nothing between the mark and the cluster may clip: the live planet's atmosphere bleeds
+        // past its box and the row's gap is what absorbs it.
         const cluster = findSlotContainer(screen, PLANET_TEST_ID, SEND_TEST_ID);
         for (let node: ReactTestInstance | null = planet; node && node !== cluster; node = node.parent) {
             expect(flattenStyle(node.props?.style).overflow).not.toBe('hidden');
@@ -653,8 +646,7 @@ describe('AgentInput two-row trailing cluster', () => {
 
 /**
  * A provider whose settings projection is `ready`, so `useVoiceAttemptControl`
- * reports a startable attempt. Same shape `VoiceSurface.test.tsx` drives the real
- * surface with — nothing about the provider registry is mocked.
+ * reports a startable attempt. The provider registry and settings parser run for real.
  */
 const READY_VOICE_SETTING = {
     providerId: 'local_conversation',
@@ -715,6 +707,7 @@ async function sessionComposerScene(
         >
             <AgentInput
                 sessionId="session-1"
+                sessionAddress={{ serverId: 'server-a', sessionId: 'session-1' }}
                 value=""
                 placeholder="Type"
                 onChangeText={() => {}}
@@ -731,6 +724,7 @@ async function renderSessionComposer(
     overrides: Record<string, unknown> = {},
     energyActive = false,
 ): Promise<RenderScreenResult> {
+    seedComposerSettings();
     await registerLocalConversationAdapter();
     return renderScreen(await sessionComposerScene(overrides, energyActive));
 }
@@ -777,14 +771,10 @@ describe('AgentInput mounts the Voice composer', () => {
         expect(mic).not.toBeNull();
         expect(mic!.props.accessibilityLabel).toBe('voiceAssistant.startDictation');
         expect(readEffectiveTargetSize(mic!)).toEqual({ width: 44, height: 44 });
-        const icons = mic!.findAll((node) => (
-            typeof node.type === 'string' && (node.type as string) === 'Ionicons'
-        ));
+        const { Icon } = await import('@/components/ui/icons/Icon');
+        const icons = mic!.findAllByType(Icon);
         expect(icons).toHaveLength(1);
-        expect(icons[0]!.props.name).toBe('mic-outline');
-        expect(flattenStyle(findSlotContainer(screen, DICTATION_TEST_ID).props.style))
-            .toMatchObject({ position: 'absolute', top: 2, right: -4, paddingTop: 4 });
-
+        expect(icons[0]!.props.name).toBe('microphone');
         const send = screen.findByTestId(SEND_TEST_ID);
         expect(send!.props.accessibilityLabel).toBe('common.send');
 
@@ -860,11 +850,10 @@ describe('AgentInput mounts the Voice composer', () => {
         const mic = screen.findByTestId(DICTATION_TEST_ID);
         expect(mic).not.toBeNull();
         expect(mic!.props.accessibilityLabel).toBe('voiceAssistant.endDictation');
-        const icons = mic!.findAll((node) => (
-            typeof node.type === 'string' && (node.type as string) === 'Ionicons'
-        ));
+        const { Icon } = await import('@/components/ui/icons/Icon');
+        const icons = mic!.findAllByType(Icon);
         expect(icons).toHaveLength(1);
-        expect(icons[0]!.props.name).toBe('mic-off-outline');
+        expect(icons[0]!.props.name).toBe('microphone-slash');
 
         await screen.unmount();
     });
@@ -889,14 +878,14 @@ describe('AgentInput mounts the Voice composer', () => {
         await screen.unmount();
     });
 
-    it('renders no planet while Voice has no usable provider, and still moves dictation', async () => {
+    it('offers Voice setup while no provider is usable, and still moves dictation', async () => {
         voiceSettingState.current = null;
 
         const screen = await renderSessionComposer();
 
         // Placement must not flicker with provider readiness: the field mic is where
         // dictation lives, whether or not a conversation could start right now.
-        expect(screen.findByTestId(PLANET_TEST_ID)).toBeNull();
+        expect(screen.findByTestId(PLANET_TEST_ID)?.props.accessibilityLabel).toBe('voicePresence.setUp');
         expect(screen.findByTestId(DICTATION_TEST_ID)).not.toBeNull();
 
         await screen.unmount();
@@ -905,8 +894,12 @@ describe('AgentInput mounts the Voice composer', () => {
     it('unmounts the composer Voice leaf while a retained Session is hidden, then restores it when presented', async () => {
         voiceSettingState.current = READY_VOICE_SETTING;
         resetReanimatedFrameCallbacks();
+        const { voiceRuntimeLevelStore } = await import('@/voice/runtime/levels/voiceRuntimeLevelStore');
+        const source = voiceRuntimeLevelStore.open({ channel: 'input', sourceId: 'composer-presence-test' });
+        setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'session-1', status: 'connected', mode: 'listening', canStop: true });
 
         const screen = await renderSessionComposer({ surfacePresented: true }, true);
+        await act(async () => { source.write(0.4); });
         const activations = () => {
             const callbacks = readReanimatedFrameCallbacks();
             expect(callbacks).toHaveLength(1);
@@ -928,6 +921,7 @@ describe('AgentInput mounts the Voice composer', () => {
         expect(dictationState.presentedCalls.at(-1)).toBe(true);
 
         await screen.unmount();
+        source.close();
     });
 });
 
@@ -967,6 +961,7 @@ describe('AgentInput states the Voice planet’s target', () => {
     async function renderNewSessionComposer(
         overrides: Record<string, unknown> = {},
     ): Promise<RenderScreenResult> {
+        seedComposerSettings();
         const { AgentInput } = await import('./AgentInput');
         const { VoiceEnergyProvider } = await import('@/components/voice/light/useVoiceEnergy');
         await registerLocalConversationAdapter();

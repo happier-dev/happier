@@ -1,13 +1,11 @@
 import {
   PromptDocBodyV1Schema,
   updatePromptDocInLibrary,
-  type PromptDocBodyV1,
+  createPromptDocInLibrary,
 } from '@happier-dev/protocol';
 
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
-import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
-import { normalizePromptTags } from './promptFolders';
 import { uiPromptLibraryArtifactStore } from './promptLibraryArtifactStore';
 export {
   findPromptExternalLink,
@@ -21,28 +19,12 @@ export async function createPromptDoc(params: Readonly<{
   folderId?: string | null;
   tags?: readonly string[];
   origin?: 'built_in' | 'user' | 'imported';
+  favorite?: boolean;
+  signal?: AbortSignal;
 }>): Promise<string> {
-  const now = Date.now();
-  const body: PromptDocBodyV1 = {
-    v: 1,
-    markdown: params.markdown,
-    createdAtMs: now,
-    updatedAtMs: now,
-  };
-
-  const header: ArtifactHeader = {
-    v: 1,
-    kind: 'prompt_doc.v2',
-    title: params.title,
-    folderId: params.folderId ?? null,
-    tags: normalizePromptTags(params.tags ?? []),
-    origin: params.origin ?? 'user',
-    locked: false,
-  };
-
-  PromptDocBodyV1Schema.parse(body);
-
-  return await sync.createArtifactWithHeader(header, JSON.stringify(body));
+  const { signal, ...request } = params;
+  const result = await createPromptDocInLibrary({ store: uiPromptLibraryArtifactStore, request, ...(signal ? { signal } : {}) });
+  return result.artifactId;
 }
 
 export async function updatePromptDoc(params: Readonly<{

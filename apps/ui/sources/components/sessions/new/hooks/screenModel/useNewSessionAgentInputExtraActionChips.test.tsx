@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { renderScreen } from '@/dev/testkit';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { SessionInitialTriggerV1Schema, type SessionInitialTriggerV1 } from '@happier-dev/protocol';
+import { act } from 'react-test-renderer';
 
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 
@@ -19,19 +21,80 @@ installNewSessionScreenModelCommonModuleMocks({
     }),
 });
 
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
-    return {
-        ...actual,
-        getNewSessionAgentInputExtraActionChips: () => [] as AgentInputExtraActionChip[],
-    };
+// Overlay portals are a platform boundary; the shared editor and draft state remain real.
+vi.mock('@/components/ui/popover', async (importOriginal) => {
+    const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
+    return createInlinePopoverModuleMock(importOriginal, { maxHeight: 640, maxWidth: 380, placement: 'bottom' });
 });
 
-vi.mock('@/components/sessions/agentInput/sessionActions/buildNewSessionActionShortcutChips', () => ({
-    buildNewSessionActionShortcutChips: () => [],
-}));
-
 describe('useNewSessionAgentInputExtraActionChips', () => {
+    it('shows a saved-workflow prerequisite when the session targets another Home while still allowing an inline trigger', async () => {
+        const { createNewSessionTriggersActionChip } = await import('../../components/NewSessionTriggersActionChip');
+        let draft: SessionInitialTriggerV1[] = [];
+        function Probe() {
+            const [initialTriggers, setInitialTriggers] = React.useState<SessionInitialTriggerV1[]>([]);
+            draft = initialTriggers;
+            const chip = createNewSessionTriggersActionChip({ initialTriggers, onInitialTriggersChange: setInitialTriggers,
+                machineId: 'machine-other', serverId: 'other-home' });
+            return chip.renderCollapsedPopover?.({ anchorRef: React.createRef(), onRequestClose: vi.fn() }) ?? null;
+        }
+        const screen = await renderScreen(<Probe />);
+        expect(screen.findByTestId('new-session-triggers-library-unavailable')).not.toBeNull();
+        await act(async () => screen.changeTextByTestId('new-session-trigger-popover-prompt', 'Prepare workspace'));
+        await screen.pressByTestIdAsync('new-session-trigger-popover-submit');
+        expect(draft).toMatchObject([{ target: { kind: 'inline' }, trigger: { events: ['sessionStarted'] } }]);
+    });
+    it('edits a trigger locally through the shared popover without losing its policy or execution context', async () => {
+        const { createNewSessionTriggersActionChip } = await import('../../components/NewSessionTriggersActionChip');
+        const { buildTriggerTarget } = await import('@/components/workflows/triggers/sessionTriggerForm');
+        let draft: SessionInitialTriggerV1[] = [];
+        const initial = SessionInitialTriggerV1Schema.array().parse([{
+            trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'firstMatch' } },
+            target: buildTriggerTarget({ kind: 'sendPrompt', prompt: 'Prepare workspace' }), executionTarget: { kind: 'session' },
+        }]);
+        function Probe() {
+            const [initialTriggers, setInitialTriggers] = React.useState(initial);
+            draft = initialTriggers;
+            const chip = createNewSessionTriggersActionChip({ initialTriggers, onInitialTriggersChange: setInitialTriggers,
+                machineId: 'machine-a', serverId: null });
+            return chip.renderCollapsedPopover?.({ anchorRef: React.createRef(), onRequestClose: vi.fn() }) ?? null;
+        }
+        const screen = await renderScreen(<Probe />);
+        await screen.pressByTestIdAsync('new-session-trigger-draft:0');
+        await act(async () => screen.changeTextByTestId('new-session-trigger-popover-prompt', 'Review workspace'));
+        await screen.pressByTestIdAsync('new-session-trigger-popover-submit');
+        expect(draft).toMatchObject([{
+            executionTarget: { kind: 'session' }, trigger: { policy: { kind: 'firstMatch' }, events: ['sessionStarted'] },
+            target: { kind: 'inline', definition: { defaults: { conversation: { kind: 'origin_session' } },
+                blocks: [{ document: { text: 'Review workspace' } }] } },
+        }]);
+        expect(draft[0]?.trigger).not.toHaveProperty('sourceSessionId');
+    });
+    it('offers a Triggers chip beside the New Session controls without loading its closed popover', async () => {
+        const { useNewSessionAgentInputExtraActionChips } = await import('./useNewSessionAgentInputExtraActionChips');
+        let chips: ReadonlyArray<AgentInputExtraActionChip> = [];
+        function Probe() {
+            chips = useNewSessionAgentInputExtraActionChips({
+                agentId: 'claude', agentOptionState: null, setAgentOptionState: vi.fn(),
+                selectedMachineId: 'machine-a', showAutomationActionChips: false,
+                automationLabel: 'Automate', onOpenAutomationEditor: vi.fn(),
+                showInitialTriggers: true, initialTriggers: [], onInitialTriggersChange: vi.fn(),
+                showServerPickerChip: false, targetServerId: null, targetServerName: 'Server A',
+                externalSessionsFeatureEnabled: false, supportsDirectTranscriptStorage: false,
+                transcriptStorage: 'persisted', onTranscriptStorageChange: vi.fn(),
+                selectedMachineIsWindows: false, windowsRemoteSessionLaunchMode: null, windowsTerminalAvailable: false,
+                onWindowsRemoteSessionLaunchModeChange: vi.fn(), onActionShortcutPress: vi.fn(),
+            });
+            const triggers = chips.find((chip) => chip.key === 'new-session-triggers');
+            return triggers?.render({ chipStyle: () => ({}), showLabel: true, iconColor: '#000',
+                textStyle: {}, countTextStyle: {}, popoverAnchorRef: React.createRef(),
+                toggleCollapsedPopover: vi.fn() }) ?? null;
+        }
+        const screen = await renderScreen(<Probe />);
+        expect(screen.findByTestId('new-session-triggers-chip')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('workflows.triggers.section.title');
+        expect(screen.findByTestId('new-session-trigger-popover')).toBeNull();
+    });
     it('places organization controls after checkout and before Automation controls', async () => {
         const { useNewSessionAgentInputExtraActionChips } = await import('./useNewSessionAgentInputExtraActionChips');
         let chips: ReadonlyArray<AgentInputExtraActionChip> = [];

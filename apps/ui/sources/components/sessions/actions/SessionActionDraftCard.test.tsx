@@ -118,30 +118,12 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 }));
 
 /**
- * The resolver the card's own `useSessionActionFieldOptions` produces under this file's mocks
- * (`useEnabledAgentIds` -> `['claude']`, no capabilities snapshot, `t` returning the key). Built
- * through the SAME `buildSessionActionFieldOptionLists` / `buildSessionActionFieldOptionsResolver`
- * the hook uses, so the guards below compare the descriptor against the paint rather than against a
- * hand-written option list.
+ * Card-only tests consume a resolved reply through the shared paint projection.
+ * Source decisions are tested at the real Action and Workflow boundaries.
  */
 async function buildMockedFieldOptionsResolver() {
-  const {
-    buildSessionActionFieldOptionLists,
-    buildSessionActionFieldOptionsResolver,
-  } = await import('./sessionActionFieldOptions');
-  const { getAgentCore } = await import('@/agents/catalog/catalog');
-  const { t } = await import('@/text');
-  // `t`'s overloads require a params argument for parameterised keys; an agent display name key
-  // never is one, so this narrows to the single-argument form the hook actually calls.
-  const translate = t as unknown as (key: string) => string;
-  return buildSessionActionFieldOptionsResolver(buildSessionActionFieldOptionLists({
-    enabledAgentIds: ['claude'],
-    executionRunsBackends: null,
-    resolveAgentLabel: (agentId) => {
-      const displayNameKey = getAgentCore(agentId as never)?.displayNameKey;
-      return displayNameKey ? translate(String(displayNameKey)) : String(agentId);
-    },
-  }));
+  const { buildSessionActionFieldOptionsResolver } = await import('./sessionActionFieldOptions');
+  return buildSessionActionFieldOptionsResolver({});
 }
 
 describe('SessionActionDraftCard', () => {
@@ -180,27 +162,6 @@ describe('SessionActionDraftCard', () => {
       resolveServerIdForSessionId: (sessionId: string) => string | null;
     };
     expect(executorConfig.resolveServerIdForSessionId('s1')).toBe('server-explicit');
-  });
-
-  it('renders discovered compat review backends without requiring a canonical UI agent core', async () => {
-    useExecutionRunsBackendsForSessionMock.mockImplementationOnce(() => ({
-      claude: { available: true, intents: ['review'] },
-      customAcp: { available: true, intents: ['review'] },
-    }));
-    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
-
-    const draft = {
-      id: 'd1',
-      sessionId: 's1',
-      actionId: 'review.start',
-      createdAt: 1,
-      status: 'editing',
-      input: { engineIds: ['customAcp'], instructions: 'Review this repository.', changeType: 'all', base: { kind: 'none' } },
-    } as const;
-
-    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { draft: { ...draft, address: { serverId: 'server-explicit', sessionId: 's1' }, accountId: 'account-a' } as any }));
-    const texts = screen.tree.findAllByType('Text');
-    expect(texts.some((node: any) => node.props?.children === 'customAcp')).toBe(true);
   });
 
   it('keeps a captured draft on its exact Home when ambient preferred-server focus changes', async () => {
@@ -288,30 +249,6 @@ describe('SessionActionDraftCard', () => {
       { sessionId: 's1', backendTargetKeys: ['agent:opencode'], instructions: 'Plan this.' },
       { defaultSessionId: 's1', surface: 'ui', placement: 'session_action_menu' },
     );
-  });
-
-  it('stores canonical backend target keys as a single plan target when editing backend chips', async () => {
-    useEnabledAgentIdsMock.mockImplementation(() => ['claude', 'opencode']);
-
-    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
-
-    const draft = {
-      id: 'd1',
-      sessionId: 's1',
-      actionId: 'subagents.plan.start',
-      createdAt: 1,
-      status: 'editing',
-      input: { backendTargetKeys: ['agent:claude'], instructions: 'Plan this.' },
-    } as const;
-
-    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { draft: { ...draft, address: { serverId: 'server-explicit', sessionId: 's1' }, accountId: 'account-a' } as any }));
-    const opencode = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'agent.opencode');
-    expect(opencode).toBeTruthy();
-
-    await pressTestInstanceAsync(opencode!, 'agent.opencode');
-
-    expect(updateSessionActionDraftInput).toHaveBeenCalledWith(draftScope, draftAddress, 'd1', { backendTargetKeys: ['agent:opencode'] });
-    expect(setSessionActionDraftStatus).toHaveBeenCalledWith(draftScope, draftAddress, 'd1', 'editing', null);
   });
 
   it('keeps the draft editable when the action execution fails', async () => {
@@ -472,7 +409,7 @@ describe('SessionActionDraftCard', () => {
     } as const;
 
     const screen = await renderScreen(React.createElement(SessionActionDraftCard, { draft: { ...draft, address: { serverId: 'server-explicit', sessionId: 's1' }, accountId: 'account-a' } as any }));
-    const input = screen.tree.findAllByType('TextInput')[0]!;
+    const input = screen.tree.findAllByType('TextInput').find(node => node.props.multiline === true)!;
     await act(async () => {
       changeTextTestInstance(input, 'Review this.');
     });
@@ -505,9 +442,11 @@ describe('SessionActionDraftCard', () => {
 
     const screen = await renderScreen(React.createElement(SessionActionDraftCard, { draft: { ...draft, address: { serverId: 'server-explicit', sessionId: 's1' }, accountId: 'account-a' } as any }));
 
-    // Only the instructions field should render a TextInput when base.kind=none.
-    const inputs = screen.tree.findAllByType('TextInput');
-    expect(inputs.length).toBe(1);
+    const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
+    const paintedPaths = screen.tree.findAllByType(HappierInputField).map(node => node.props.field.path);
+    expect(paintedPaths).toContain('instructions');
+    expect(paintedPaths).not.toContain('base.baseBranch');
+    expect(paintedPaths).not.toContain('base.commitSha');
   });
 
   it('parses text_list input into a string array patch', async () => {
@@ -572,11 +511,10 @@ describe('SessionActionDraftCard', () => {
       .map((entry) => entry.textBox)
       .filter((box): box is NonNullable<typeof box> => box !== null);
 
-    // The conditional base-branch field is open here, so this is the textarea plus that text field.
-    expect(textBoxes.map((box) => box.text)).toEqual(['Review\nthis carefully.', 'release/2026-08-11']);
-    // `instructions` is a textarea and grows; `base.baseBranch` is a one-line field whose height
-    // cannot move with its value.
-    expect(textBoxes.map((box) => box.maxLines)).toEqual([null, 1]);
+    expect(paint.fields.find(entry => entry.field.path === 'instructions')?.textBox)
+      .toMatchObject({ text: 'Review\nthis carefully.', maxLines: null });
+    expect(paint.fields.find(entry => entry.field.path === 'base.baseBranch')?.textBox)
+      .toMatchObject({ text: 'release/2026-08-11', maxLines: 1 });
 
     const inputs = screen.tree.findAllByType('TextInput');
     expect(inputs.map((node: any) => node.props.value)).toEqual(textBoxes.map((box) => box.text));

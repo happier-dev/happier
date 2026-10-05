@@ -1,6 +1,6 @@
 import { parseSessionSlashCommand } from './parseSessionSlashCommand';
 import type { ActionId, PromptInvocationBehaviorV1, PromptInvocationsV1 } from '@happier-dev/protocol';
-import { normalizePromptInvocationTokenV1 } from '@happier-dev/protocol';
+import { isPromptInvocationAvailable, normalizePromptInvocationTokenV1 } from '@happier-dev/protocol';
 import { findBuiltInPrompt } from './builtInPrompts';
 import { renderPromptTemplateTextV1 } from './renderPromptTemplateTextV1';
 
@@ -59,6 +59,7 @@ export function resolveSessionComposerSend(args: {
     executionRunsEnabled: boolean;
     goalControlsAvailable?: boolean;
     promptInvocationsV1?: PromptInvocationsV1 | null;
+    sessionId?: string | null;
 }): SessionComposerSendResolution {
     const trimmedStart = args.input.trimStart();
 
@@ -109,7 +110,7 @@ export function resolveSessionComposerSend(args: {
                         text: renderPromptTemplateTextV1({
                             templateMarkdown: builtIn.body,
                             argsText: rest,
-                        }),
+                        }).text,
                     };
                 }
             }
@@ -129,24 +130,20 @@ export function resolveSessionComposerSend(args: {
                 const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace).trim();
                 for (const entry of invocations) {
                     if (!entry || typeof entry !== 'object') continue;
-                    const token = typeof (entry as any).token === 'string' ? String((entry as any).token) : '';
+                    if (!isPromptInvocationAvailable(entry, { sessionId: args.sessionId ?? null })) continue;
+                    const token = entry.token;
                     if (!token) continue;
                     if (normalizePromptInvocationTokenV1(token) !== normalizedToken) continue;
 
-                    const allowArgs = (entry as any).allowArgs === true;
+                    const allowArgs = entry.allowArgs;
                     if (!allowArgs && rest.trim().length > 0) {
                         return { kind: 'send', text: args.input };
                     }
 
-                    const invocationId = typeof (entry as any).id === 'string' ? String((entry as any).id) : '';
-                    const title = typeof (entry as any).title === 'string' ? String((entry as any).title) : token;
-                    const rawBehavior = typeof (entry as any).behavior === 'string' ? String((entry as any).behavior) : '';
-                    const behavior = rawBehavior === 'insert_and_send' || rawBehavior === 'insert_on_send'
-                        ? rawBehavior
-                        : 'insert';
-                    const targetArtifactId = typeof (entry as any).target?.artifactId === 'string'
-                        ? String((entry as any).target.artifactId)
-                        : '';
+                    const invocationId = entry.id;
+                    const title = entry.title;
+                    const behavior = entry.behavior;
+                    const targetArtifactId = entry.target.artifactId;
 
                     if (!invocationId || !targetArtifactId) return { kind: 'send', text: args.input };
 

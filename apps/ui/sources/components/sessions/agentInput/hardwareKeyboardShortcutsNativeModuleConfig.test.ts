@@ -41,6 +41,24 @@ function findIosProjectFiles(): string[] {
 }
 
 describe('happier hardware keyboard shortcuts local Expo module config', () => {
+    it('maps picker arrows on both native bridges and admits configured plain Enter on Android', () => {
+        // Static native ABI proof; actual OS key delivery requires the native runtime check.
+        const swift = readFileSync(join(moduleRoot, 'ios/HappierHardwareKeyboardShortcutsModule.swift'), 'utf8');
+        const android = readFileSync(join(moduleRoot, 'android/src/main/java/dev/happier/hardwarekeyboardshortcuts/HappierHardwareKeyboardShortcutsBridge.kt'), 'utf8');
+        expect(swift).toMatch(/UIKeyboardHIDUsage.keyboardUpArrow:[\s\S]*?return "ArrowUp"/);
+        expect(swift).toMatch(/UIKeyboardHIDUsage.keyboardDownArrow:[\s\S]*?return "ArrowDown"/);
+        expect(android).toContain('KeyEvent.KEYCODE_DPAD_UP -> "ArrowUp"');
+        expect(android).toContain('KeyEvent.KEYCODE_DPAD_DOWN -> "ArrowDown"');
+        expect(android).toMatch(/!shouldEmit\(key, modifiers\) && !module.shouldConsumeHardwareKey\(payload\)/);
+    });
+    it('leaves marked iOS text to the original responder before emitting or consuming any shortcut', () => {
+        const source = readFileSync(join(moduleRoot, 'ios/HappierHardwareKeyboardShortcutsModule.swift'), 'utf8');
+        const handler = source.match(/private func handlePresses\(receiver: AnyObject, presses: NSSet\) -> Bool \{[\s\S]*?\n  \}/)?.[0] ?? '';
+        // Static native-boundary proof; UIKit IME delivery still needs the hardware release check.
+        expect(handler).toMatch(/receiver as\? UITextInput[\s\S]*?markedTextRange != nil[\s\S]*?return false/);
+        expect(handler.indexOf('markedTextRange')).toBeLessThan(handler.indexOf('makePayload'));
+        expect(handler.indexOf('markedTextRange')).toBeLessThan(handler.indexOf('onHardwareKey(payload)'));
+    });
     it('declares an iOS and Android app-local module package for autolinking', () => {
         const packageJson = readJson(join(moduleRoot, 'package.json'));
         const config = readJson(join(moduleRoot, 'expo-module.config.json'));
@@ -61,13 +79,14 @@ describe('happier hardware keyboard shortcuts local Expo module config', () => {
         });
     });
 
-    it('emits generic iOS hardware key events from the focused text view instead of React Native dev key commands', () => {
+    it('intercepts both single-line and multiline iOS text inputs through the shared hardware command table', () => {
         const swiftSource = readFileSync(
             join(moduleRoot, 'ios/HappierHardwareKeyboardShortcutsModule.swift'),
             'utf8',
         );
 
         expect(swiftSource).toContain('RCTUITextView');
+        expect(swiftSource).toContain('RCTUITextField');
         expect(swiftSource).toContain('pressesBegan');
         expect(swiftSource).toContain('UIKeyboardHIDUsage.keyboardReturnOrEnter');
         expect(swiftSource).toContain('UIKeyboardHIDUsage.keypadEnter');
@@ -165,7 +184,7 @@ describe('happier hardware keyboard shortcuts local Expo module config', () => {
         expect(androidBridgeSource).toContain('!module.canReceiveHardwareKeyEvents()');
         expect(androidBridgeSource).toContain('val module = moduleRef?.get() ?: return false');
         expect(androidBridgeSource.indexOf('val module = moduleRef?.get() ?: return false'))
-            .toBeLessThan(androidBridgeSource.indexOf('val payload = payloadFromEvent(event, focusedView) ?: return false'));
+            .toBeLessThan(androidBridgeSource.indexOf('val payload = payloadFromEvent(event, focusedView, module) ?: return false'));
         expect(androidBridgeSource).toContain('module.emitHardwareKey(payload)');
         expect(androidBridgeSource).toContain('module.shouldConsumeHardwareKey(payload)');
         expect(androidBridgeSource).not.toContain('if (key == "Escape") return true');

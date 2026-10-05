@@ -15,7 +15,6 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
 import {
     resolveRecipientFromOptionId,
-    resolveRecipientControlLabel,
     resolveRecipientLabel,
     resolveRecipientPopoverSelectedOptionId,
 } from './recipientOptions';
@@ -36,16 +35,17 @@ export type RecipientChipProps = Readonly<{
     recipient: ParticipantRecipientV1 | null;
     onRecipientChange: (next: ParticipantRecipientV1 | null) => void;
     ctx: AgentInputExtraActionChipRenderContext;
+    pendingLabel?: string;
 }>;
 
 export const RecipientChip = React.memo(function RecipientChip(props: RecipientChipProps) {
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const styles = stylesheet;
-    const selectedLabel = resolveRecipientLabel(props.targets, props.recipient);
+    const selectedLabel = props.pendingLabel ?? resolveRecipientLabel(props.targets, props.recipient);
     const selectedOptionId = React.useMemo(
-        () => resolveRecipientPopoverSelectedOptionId(props.targets, props.recipient),
-        [props.targets, props.recipient],
+        () => props.pendingLabel ? 'pending-scm-discussion' : resolveRecipientPopoverSelectedOptionId(props.targets, props.recipient),
+        [props.targets, props.recipient, props.pendingLabel],
     );
     // Reuse the shared root-step builder from the chip-definition factory so
     // the inline chip and the collapsed action-menu route declare the same
@@ -55,14 +55,16 @@ export const RecipientChip = React.memo(function RecipientChip(props: RecipientC
     const rootStep = React.useMemo<SelectionListStep>(
         () => buildRecipientRootStep({
             targets: props.targets,
+            pendingLabel: props.pendingLabel,
+            includeLead: props.recipient !== null,
             onSelect: (selectedId) => {
                 props.onRecipientChange(resolveRecipientFromOptionId(props.targets, selectedId));
             },
         }),
-        [props.targets, props.onRecipientChange],
+        [props.targets, props.onRecipientChange, props.pendingLabel, props.recipient],
     );
 
-    if (props.targets.length === 0) return null;
+    if (props.targets.length === 0 && !props.pendingLabel && !props.recipient) return null;
 
     return (
         <>
@@ -72,7 +74,7 @@ export const RecipientChip = React.memo(function RecipientChip(props: RecipientC
                     onPress={() => setOpen((v) => !v)}
                     style={({ pressed }) => props.ctx.chipStyle(Boolean(pressed))}
                     accessibilityRole="button"
-                    accessibilityLabel={resolveRecipientControlLabel(props.targets, props.recipient)}
+                    accessibilityLabel={t('session.participants.cardTo', { label: selectedLabel })}
                 >
                     <View style={styles.chipRow}>
                         <Icon name="navigation-arrow" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={props.ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />

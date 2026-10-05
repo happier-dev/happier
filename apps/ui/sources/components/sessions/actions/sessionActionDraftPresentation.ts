@@ -5,6 +5,7 @@ import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionAc
 
 import { resolveActionFieldPresentationForInput } from './ActionInputFields';
 import type { ResolveSessionActionFieldOptions } from './sessionActionFieldOptions';
+import { t } from '@/text';
 
 /** A painted text box: exactly the string it displays, and how many lines it can paint. */
 export type SessionActionDraftTextBoxPaint = Readonly<{
@@ -159,7 +160,7 @@ export function resolveSessionActionDraftHeightBearingPaint(
         fields: form.fields.map((field) => ({
             field,
             textBox: resolveFieldTextBoxPaint(field, input),
-            options: resolveFieldOptionPaints(field, input, params.resolveFieldOptions),
+            options: resolveFieldOptionPaints(field, input, params.resolveFieldOptions, params.draft.actionId),
         })),
         validationError,
         errorLine: validationError ?? draftError,
@@ -182,6 +183,7 @@ function resolveFieldOptionPaints(
     field: EffectiveActionInputField,
     input: Record<string, unknown>,
     resolveFieldOptions: ResolveSessionActionFieldOptions,
+    actionId: string,
 ): readonly SessionActionDraftOptionPaint[] | null {
     // `presentation.kind === 'select'` is exactly the branch that renders a `HappierSelect` from
     // `resolveFieldOptions`, read from the same resolution the field renders from rather than from
@@ -190,10 +192,13 @@ function resolveFieldOptionPaints(
     // Same defensive posture as `resolveVisibleForm`: this runs on the per-row-per-render size-key
     // path, where a throwing resolver would take the whole transcript down.
     try {
-        return resolveFieldOptions(field).map((option) => ({
+        const context = { actionId, draftInput: input };
+        const options = resolveFieldOptions(field, context).map((option) => ({
             label: option.label,
             ...(option.description ? { description: option.description } : {}),
         }));
+        return resolveFieldOptions.state?.(field, context).status === 'failed'
+            ? [...options, { label: t('common.error') }] : options;
     } catch {
         return null;
     }

@@ -7,10 +7,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
   return createStorageModuleStub({ storage: { getState: () => state.current } });
 });
 
-vi.mock('@/sync/domains/input/slashCommands/expandPromptTemplateInvocation', () => ({
-  expandPromptTemplateInvocation: vi.fn(),
-}));
-
 import {
   listPromptInvocationsForActions,
   resolvePromptInvocationForActions,

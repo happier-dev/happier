@@ -1,4 +1,5 @@
 import type { PromptFolderEntryV1, PromptFoldersV1 } from '@happier-dev/protocol';
+import { normalizePromptTags as normalizeLibraryTags } from '@happier-dev/protocol';
 
 import { randomUUID } from '@/platform/randomUUID';
 
@@ -11,18 +12,7 @@ export function normalizePromptFolderName(value: string): string {
 }
 
 export function normalizePromptTags(value: string | readonly string[] | null | undefined): string[] {
-  const rawValues = Array.isArray(value) ? value : String(value ?? '').split(',');
-  const seen = new Set<string>();
-  const tags: string[] = [];
-  for (const raw of rawValues) {
-    const normalized = normalizeWhitespace(String(raw ?? ''));
-    if (!normalized) continue;
-    const dedupeKey = normalized.toLocaleLowerCase();
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-    tags.push(normalized);
-  }
-  return tags;
+  return normalizeLibraryTags(typeof value === 'string' ? value.split(',') : value);
 }
 
 export function formatPromptTags(tags: readonly string[] | null | undefined): string {

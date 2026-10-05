@@ -196,13 +196,6 @@ function mockCommonDeps() {
         describeEffectiveModelMode: () => ({ selectedModelId: 'default', appliedModelId: null, effectiveModelId: 'default' }),
     }));
 
-    vi.doMock('@/sync/domains/permissions/permissionModeOptions', () => ({
-        getPermissionModeBadgeLabelForAgentType: () => 'Default',
-        getPermissionModeLabelForAgentType: () => 'Default',
-        getPermissionModeOptionsForSession: () => [{ value: 'default', label: 'Default' }],
-        getPermissionModeTitleForAgentType: () => 'Permissions',
-    }));
-
     vi.doMock('@/sync/domains/permissions/describeEffectivePermissionMode', () => ({
         describeEffectivePermissionMode: () => ({ effectiveMode: 'default' }),
     }));

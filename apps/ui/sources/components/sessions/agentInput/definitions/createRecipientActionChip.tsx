@@ -12,7 +12,7 @@ import { t } from '@/text';
 
 import { RecipientChip } from '../routing/RecipientChip';
 import { Icon } from '@/components/ui/icons/Icon';
-import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
+import { AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
 import {
     buildRecipientPopoverOptions,
     resolveRecipientControlLabel,
@@ -33,8 +33,10 @@ import {
 export function buildRecipientRootStep(params: Readonly<{
     targets: readonly SessionParticipantTarget[];
     onSelect?: (selectedId: string) => void;
+    pendingLabel?: string;
+    includeLead?: boolean;
 }>): SelectionListStep {
-    const options = buildRecipientPopoverOptions(params.targets);
+    const options = buildRecipientPopoverOptions(params.targets, params.includeLead === true || Boolean(params.pendingLabel));
     return {
         id: 'recipient-root',
         title: t('session.participants.sendToTitle'),
@@ -42,12 +44,15 @@ export function buildRecipientRootStep(params: Readonly<{
             {
                 kind: 'static',
                 id: 'recipients',
-                options: options.map((option) => ({
-                    id: option.id,
-                    label: option.label,
-                    subtitle: option.subtitle,
-                    onSelect: params.onSelect ? () => params.onSelect!(option.id) : undefined,
-                })),
+                options: [
+                    ...(params.pendingLabel ? [{ id: 'pending-scm-discussion', label: params.pendingLabel }] : []),
+                    ...options.map((option) => ({
+                        id: option.id,
+                        label: option.label,
+                        subtitle: option.subtitle,
+                        onSelect: params.onSelect ? () => params.onSelect!(option.id) : undefined,
+                    })),
+                ],
             },
         ],
     };
@@ -58,15 +63,18 @@ export function createRecipientActionChip(params: Readonly<{
     participantTargets: readonly SessionParticipantTarget[];
     recipient: ParticipantRecipientV1 | null;
     onRecipientChange: (next: ParticipantRecipientV1 | null) => void;
+    pendingLabel?: string;
 }>): AgentInputExtraActionChip | undefined {
     if (params.isReadOnly) return undefined;
-    if (params.participantTargets.length === 0) return undefined;
+    if (params.participantTargets.length === 0 && !params.pendingLabel && !params.recipient) return undefined;
 
-    const label = resolveRecipientControlLabel(params.participantTargets, params.recipient)
+    const label = params.pendingLabel ? t('session.participants.cardTo', { label: params.pendingLabel }) : resolveRecipientControlLabel(params.participantTargets, params.recipient)
         ?? t('session.participants.sendToTitle');
-    const selectedOptionId = resolveRecipientPopoverSelectedOptionId(params.participantTargets, params.recipient);
+    const selectedOptionId = params.pendingLabel ? 'pending-scm-discussion' : resolveRecipientPopoverSelectedOptionId(params.participantTargets, params.recipient);
     const rootStep = buildRecipientRootStep({
         targets: params.participantTargets,
+        pendingLabel: params.pendingLabel,
+        includeLead: params.recipient !== null,
         onSelect: (selectedId) => {
             params.onRecipientChange(resolveRecipientFromOptionId(params.participantTargets, selectedId));
         },
@@ -96,6 +104,7 @@ export function createRecipientActionChip(params: Readonly<{
                 targets={params.participantTargets}
                 recipient={params.recipient}
                 onRecipientChange={params.onRecipientChange}
+                pendingLabel={params.pendingLabel}
                 ctx={ctx}
             />
         ),

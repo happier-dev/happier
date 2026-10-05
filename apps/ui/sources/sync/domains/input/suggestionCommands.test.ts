@@ -3,6 +3,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { storage } from '../state/storage';
 
 describe('suggestionCommands', () => {
+    it('offers session-only prompts only when the addressed session exists', async () => {
+        const settings = { ...storage.getState().settings, promptInvocationsV1: { v: 1 as const, entries: [{ id: 'local', token: '/local', title: 'Local', target: { kind: 'doc' as const, artifactId: 'doc' }, behavior: 'insert' as const, allowArgs: false, availableIn: 'session_only' as const }] } };
+        storage.setState({ settings });
+        const { getAllCommands } = await import('./suggestionCommands');
+        expect(getAllCommands(null).some((c) => c.command === 'local')).toBe(false);
+        expect(getAllCommands('missing').some((c) => c.command === 'local')).toBe(false);
+        storage.setState({ sessions: { s1: { metadata: undefined } } } as any);
+        expect(getAllCommands('s1').some((c) => c.command === 'local')).toBe(true);
+    });
     afterEach(() => {
         // Keep tests isolated; reset to an empty-ish state.
         storage.setState({ sessions: {} } as any);

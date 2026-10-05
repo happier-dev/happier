@@ -49,8 +49,9 @@ export function resolveRecipientPopoverSelectedOptionId(
 
 export function buildRecipientPopoverOptions(
     targets: readonly SessionParticipantTarget[],
+    includeLead = false,
 ): ReadonlyArray<AgentInputChipPickerOption> {
-    if (targets.length === 0) return [];
+    if (targets.length === 0 && !includeLead) return [];
     return [
         {
             id: RECIPIENT_LEAD_OPTION_ID,
