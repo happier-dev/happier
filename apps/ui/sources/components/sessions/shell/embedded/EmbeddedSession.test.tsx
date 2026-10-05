@@ -51,10 +51,6 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock().module;
 });
-vi.mock('@/sync/runtime/getSyncSingleton', async () => {
-    const { createSyncSingletonLoaderMock } = await import('@/dev/testkit/harness/syncSingletonLoader');
-    return createSyncSingletonLoaderMock();
-});
 
 const CHAT = Object.freeze({ kind: 'embedded', composer: 'auto' } as const);
 let previous: ReturnType<typeof storage.getState>;
@@ -62,10 +58,12 @@ let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 
 installDisconnectedServerSocketBoundary();
 
-// React's renderer exposes memo's underlying component, unlike the public exported wrapper.
+// React's renderer can expose both memo's public wrapper and its underlying component.
+// Count the rendered component once, rather than both nodes for one mounted owner.
 function matchesComponent(component: unknown) {
-    return (node: ReactTestInstance) => node.type === component
-        || (typeof component === 'object' && component !== null && 'type' in component && node.type === component.type);
+    const renderedType = typeof component === 'object' && component !== null && 'type' in component
+        ? component.type : component;
+    return (node: ReactTestInstance) => node.type === renderedType;
 }
 
 function embedded(presentation: SessionViewEmbeddedPresentation = CHAT, children?: React.ReactNode) {

@@ -32,7 +32,6 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 
 const { sessionRpcTransport } = vi.hoisted(() => ({ sessionRpcTransport: vi.fn() }));
 // Metro's lazy import is the loader boundary; keep the singleton and operations real.
-vi.mock('@/sync/runtime/getSyncSingleton', async () => (await import('@/dev/testkit/harness/syncSingletonLoader')).createSyncSingletonLoaderMock());
 // Replace only the canonical socket transport boundary. The app source,
 // permission behavior, operation and preferred-Session scope resolver stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', async (importOriginal) => {

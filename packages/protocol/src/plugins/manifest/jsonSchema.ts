@@ -29,6 +29,14 @@ export function createPluginManifestJsonSchemaV2(): Readonly<core.JSONSchema.JSO
       io: 'input',
       target: 'draft-2020-12',
       unrepresentable: 'any',
+      override: ({ zodSchema, jsonSchema }) => {
+        // Zod can extract an array's parent into $defs and leave its bounds
+        // beside $ref. Strict validators need the applicable type locally;
+        // restore it from the canonical array owner, not from keyword guesses.
+        if (zodSchema._zod.def.type === 'array' && jsonSchema.type === undefined) {
+          jsonSchema.type = 'array';
+        }
+      },
     }),
     $id: PLUGIN_MANIFEST_JSON_SCHEMA_V2_ID,
     title: 'Happier Plugin Manifest v2',

@@ -1,0 +1,31 @@
+/** Canonical settings, model-policy and native JSONL projections used by the Claude plugin. */
+export {
+    RawJSONLinesSchema,
+    CLAUDE_SETTING_SOURCES_V2,
+    CLAUDE_REMOTE_DEBUG_CATEGORIES,
+    CLAUDE_UNIFIED_TERMINAL_HOSTS,
+    CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
+    CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES,
+    DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE,
+    DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY,
+    MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS,
+    normalizeClaudeRemoteAdvancedOptionsJson,
+    normalizeClaudeUnifiedTerminalHost,
+    normalizeClaudeUnifiedTerminalResumeChoice,
+    normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy,
+    isValidClaudeRemoteAdvancedOptionsJson,
+    ANTHROPIC_EFFORT_LEVELS,
+    buildAnthropicModelOptions,
+    normalizeAnthropicModelDisplayName,
+    formatAnthropicEffortLevelLabel,
+} from './projections.js';
+export type {
+    RawJSONLines,
+    ClaudeRawUsage,
+    ClaudeSettingSourceV2,
+    ClaudeRemoteDebugCategory,
+    ClaudeUnifiedTerminalHost,
+    ClaudeUnifiedTerminalResumeChoice,
+    ClaudeUnifiedTerminalWorkspaceTrustPolicy,
+    AnthropicEffortLevel,
+} from './projections.js';

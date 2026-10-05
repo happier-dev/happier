@@ -40,6 +40,31 @@ function isCanonicalExternalSessionTranscriptWireTypeImport(
     && node.moduleSpecifier.text === '@happier-dev/protocol';
 }
 
+function isCanonicalBuildTimePredecessorBridgeImport(
+  path: string,
+  sourceFile: ts.SourceFile,
+  node: ts.ImportDeclaration,
+): boolean {
+  // generateBundledPluginEntries.ts#loadPluginAgentPredecessorMessageMetaWriter
+  // reads defaults here and emits the Protocol writer, not a plugin runtime import.
+  const specifier = '@happier-dev/protocol/agents/claude/predecessor-message-meta';
+  const bindings = node.importClause?.namedBindings;
+  return path === join(SOURCE_ROOT, 'ui', 'predecessorMessageMeta.ts')
+    && ts.isStringLiteral(node.moduleSpecifier)
+    && node.moduleSpecifier.text === specifier
+    && sourceFile.statements.filter((statement) => (
+      (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement))
+      && statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)
+      && statement.moduleSpecifier.text === specifier
+    )).length === 1
+    && node.importClause?.isTypeOnly === false
+    && node.importClause.name === undefined
+    && bindings !== undefined && ts.isNamedImports(bindings)
+    && bindings.elements.length === 1
+    && (bindings.elements[0]?.propertyName ?? bindings.elements[0]?.name)?.text
+      === 'buildClaudePredecessorMessageMeta';
+}
+
 function listProductionTypeScriptFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
@@ -105,6 +130,7 @@ describe('Claude plugin ESM imports', () => {
           && ts.isStringLiteral(node.moduleSpecifier)
           && isDisallowedFirstPartyRuntimeImport(node.moduleSpecifier.text)
           && !isCanonicalExternalSessionTranscriptWireTypeImport(node)
+          && !isCanonicalBuildTimePredecessorBridgeImport(path, sourceFile, node)
         ) {
           importViolations.push(`${relative(SOURCE_ROOT, path)} -> ${node.moduleSpecifier.text}`);
         }

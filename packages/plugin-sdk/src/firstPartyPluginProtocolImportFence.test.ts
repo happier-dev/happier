@@ -528,6 +528,33 @@ async function readPluginRuntimeSourcePaths(directory: string): Promise<readonly
   return paths.flat();
 }
 
+function isCanonicalBuildTimeClaudePredecessorBridgeImport(
+  path: string,
+  source: string,
+  specifier: string,
+): boolean {
+  // generateBundledPluginEntries.ts#loadPluginAgentPredecessorMessageMetaWriter
+  // projects JSON defaults and the Protocol writer; it never emits this plugin import.
+  if (path !== join(pluginSourceRoot, 'claude', 'src', 'ui', 'predecessorMessageMeta.ts')
+    || specifier !== '@happier-dev/protocol/agents/claude/predecessor-message-meta') return false;
+  if (ts.preProcessFile(source, true, false).importedFiles.filter(
+    (entry) => entry.fileName === specifier,
+  ).length !== 1) return false;
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  const declaration = sourceFile.statements.find((statement) => (
+    ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)
+      && statement.moduleSpecifier.text === specifier
+  ));
+  if (!declaration || !ts.isImportDeclaration(declaration)) return false;
+  const bindings = declaration.importClause?.namedBindings;
+  return declaration.importClause?.isTypeOnly === false
+    && declaration.importClause.name === undefined
+    && bindings !== undefined && ts.isNamedImports(bindings)
+    && bindings.elements.length === 1
+    && (bindings.elements[0]?.propertyName ?? bindings.elements[0]?.name)?.text
+      === 'buildClaudePredecessorMessageMeta';
+}
+
 /**
  * Every host workspace package specifier reached from a first-party plugin's
  * shipped sources. Module specifiers come from the TypeScript pre-processor, so
@@ -552,11 +579,12 @@ async function measurePluginRuntimeHostPackageReaches(
       path,
       source: await readFile(path, 'utf8'),
     })));
-    for (const { source } of sources) {
+    for (const { path, source } of sources) {
       if (!source.includes('@happier-dev/')) continue;
       for (const imported of ts.preProcessFile(source, true, false).importedFiles) {
         const owner = imported.fileName.split('/').slice(0, 2).join('/');
         if (!hostPackageSet.has(owner)) continue;
+        if (isCanonicalBuildTimeClaudePredecessorBridgeImport(path, source, imported.fileName)) continue;
         (reaches[entry.name] ??= new Set()).add(imported.fileName);
       }
     }
@@ -634,7 +662,43 @@ describe('first-party plugin public SDK import fence', () => {
     }
   });
 
-  it('projects Happier provider facts through the focused first-party Connected Accounts owner', async () => {
+  it('projects Happier provider facts through focused first-party owners', async () => {
+    const claudeValues = [
+      'RawJSONLinesSchema',
+      'CLAUDE_SETTING_SOURCES_V2',
+      'CLAUDE_REMOTE_DEBUG_CATEGORIES',
+      'CLAUDE_UNIFIED_TERMINAL_HOSTS',
+      'CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES',
+      'CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES',
+      'DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE',
+      'DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY',
+      'MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS',
+      'normalizeClaudeRemoteAdvancedOptionsJson',
+      'normalizeClaudeUnifiedTerminalHost',
+      'normalizeClaudeUnifiedTerminalResumeChoice',
+      'normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy',
+      'isValidClaudeRemoteAdvancedOptionsJson',
+      'ANTHROPIC_EFFORT_LEVELS',
+      'buildAnthropicModelOptions',
+      'normalizeAnthropicModelDisplayName',
+      'formatAnthropicEffortLevelLabel',
+    ];
+    const claudeTypes = [
+      'RawJSONLines',
+      'ClaudeRawUsage',
+      'ClaudeSettingSourceV2',
+      'ClaudeRemoteDebugCategory',
+      'ClaudeUnifiedTerminalHost',
+      'ClaudeUnifiedTerminalResumeChoice',
+      'ClaudeUnifiedTerminalWorkspaceTrustPolicy',
+      'AnthropicEffortLevel',
+    ];
+    expect(await readPublicSdkValueOwners(claudeValues)).toEqual(Object.fromEntries(
+      claudeValues.map((name) => [name, './first-party/claude']),
+    ));
+    expect(await readPublicSdkOwners(claudeTypes)).toEqual(Object.fromEntries(
+      claudeTypes.map((name) => [name, './first-party/claude']),
+    ));
     const symbols = [
       'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
       'CLAUDE_SUBSCRIPTION_OAUTH_PROFILE',

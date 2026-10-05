@@ -52,10 +52,6 @@ import { useSessionTriggers } from '@/components/workflows/triggers/useSessionTr
 import { publishActivePluginCollectionChanges } from '@/sync/api/plugins/data/pluginCollectionChangeWatch';
 
 installDisconnectedServerSocketBoundary();
-vi.mock('@/sync/runtime/getSyncSingleton', async () => {
-    const { createSyncSingletonLoaderMock } = await import('@/dev/testkit/harness/syncSingletonLoader');
-    return createSyncSingletonLoaderMock();
-});
 
 // HTTP, native Machine transport, credentials and rendering adapters are boundaries;
 // Account composition, feature decisions, content codecs and Action execution stay real.

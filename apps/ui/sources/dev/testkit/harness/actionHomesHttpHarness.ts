@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
+import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 
 // A generated third-party WebView asset is not part of an HTTP Action journey. Its multi-MB
 // source otherwise enters the default executor's presentation import graph during collection.
@@ -45,19 +45,10 @@ export async function serveActionHomes(params: Readonly<{
     homes: readonly HomeSpec[];
     route: (request: ServedHomeRequest) => Response | Promise<Response> | undefined;
 }>) {
-    // Metro's call-time require must resolve to the SAME real executor module as Vitest's imports.
-    // Node's loader otherwise bypasses the workspace aliases and transport fixtures (vitestRnShim).
-    // This bridges module loading only; no Action logic or front-door result is substituted.
-    const executor = await import('@/sync/ops/actions/defaultActionExecutor');
-    type Loader = (request: string, parent?: { filename?: string }, isMain?: boolean) => unknown;
-    const { createRequire } = getVitestNodeBuiltin<{ createRequire(filename: string | URL): (id: string) => unknown }>('node:module');
-    const module = createRequire(import.meta.url)('node:module') as { _load: Loader };
-    const previousLoad = module._load;
-    const load: Loader = function (request, parent, isMain) {
-        if (request === './defaultActionExecutor' && parent?.filename?.replaceAll('\\', '/').endsWith('/sync/ops/actions/frontDoorRuntimeActionExecutor.ts')) return executor;
-        return previousLoad.call(module, request, parent, isMain);
-    };
-    module._load = load;
+    const executorBridge = await loadVitestModuleForNodeRequire(
+        new URL('../../../sync/ops/actions/defaultActionExecutor.ts', import.meta.url),
+        () => import('@/sync/ops/actions/defaultActionExecutor'),
+    );
     const [{ upsertAndActivateServer }, { TokenStorage }, { setRuntimeFetch, resetRuntimeFetch }, { getStorage }] = await Promise.all([
         import('@/sync/domains/server/serverRuntime'),
         import('@/auth/storage/tokenStorage'),
@@ -108,7 +99,7 @@ export async function serveActionHomes(params: Readonly<{
             accounts.set(key, accountId);
         },
         dispose() {
-            if (module._load === load) module._load = previousLoad;
+            executorBridge.dispose();
             resetRuntimeFetch();
             credentials.mockRestore();
         },

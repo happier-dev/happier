@@ -1,22 +1,16 @@
-import { vi } from 'vitest';
+import { afterAll } from 'vitest';
+import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 
-const loader = vi.hoisted(() => ({ current: null as typeof import('@/sync/sync').sync | null }));
-
-// Metro's lazy require escapes Vitest's module graph. Replace only that loader;
-// the singleton, its state, and all operations remain the production instances.
-vi.mock('@/sync/runtime/getSyncSingleton', () => createSyncSingletonLoaderMock());
-
-/** Install explicitly with vi.mock in suites that import consumers before this harness. */
-export function createSyncSingletonLoaderMock() {
-    return {
-        getSyncSingleton: () => {
-            if (!loader.current) throw new Error('Load the real sync singleton before rendering its consumers');
-            return loader.current;
-        },
-    };
-}
+let dispose: (() => void) | undefined;
+afterAll(() => { dispose?.(); });
 
 /** Import directly, after installing transport boundaries, and call in setup. */
 export async function loadSyncSingletonForTests(): Promise<void> {
-    loader.current = (await import('@/sync/sync')).sync;
+    dispose?.();
+    dispose = undefined;
+    const bridge = await loadVitestModuleForNodeRequire(
+        new URL('../../../sync/sync.ts', import.meta.url),
+        () => import('@/sync/sync'),
+    );
+    dispose = bridge.dispose;
 }

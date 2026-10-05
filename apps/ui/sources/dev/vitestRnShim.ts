@@ -14,8 +14,15 @@ type NodeModuleWithLoader = {
 };
 
 type NodeBuiltinModule = Readonly<{
-    createRequire: (filename: string | URL) => (id: string) => unknown;
+    createRequire: (filename: string | URL) => NodeRequireWithCache;
 }>;
+
+type NodeCachedModule = { exports: unknown; loaded: boolean };
+type NodeRequireWithCache = {
+    (id: string): unknown;
+    resolve: (id: string) => string;
+    cache: Record<string, NodeCachedModule | undefined>;
+};
 
 type NodeBuiltinPath = Readonly<{
     dirname: (path: string) => string;
@@ -63,6 +70,34 @@ function isPathInsideDirectory(filePath: string, directoryPath: string): boolean
 function readParentModuleFilename(parent: unknown): string | null {
     const filename = (parent as { filename?: unknown } | null | undefined)?.filename;
     return typeof filename === 'string' && filename.length > 0 ? filename : null;
+}
+
+/** Bridge Metro's call-time require to a successfully imported real Vitest module. */
+export async function loadVitestModuleForNodeRequire<T>(
+    moduleUrl: URL,
+    load: () => Promise<T>,
+): Promise<Readonly<{ module: T; dispose: () => void }>> {
+    // Never inspect Vitest's evaluated flag: it is also set for rejected modules.
+    // Awaiting the actual import proves that no partial namespace is exposed.
+    const namespace = await load();
+    const { createRequire } = getVitestNodeBuiltin<NodeBuiltinModule>('node:module');
+    const { fileURLToPath } = getVitestNodeBuiltin<NodeBuiltinUrl>('node:url');
+    const nodeRequire = createRequire(moduleUrl);
+    const filename = nodeRequire.resolve(fileURLToPath(moduleUrl));
+    const Module = nodeRequire('node:module') as { new(filename: string): NodeCachedModule };
+    const previous = nodeRequire.cache[filename];
+    const cached = new Module(filename);
+    cached.exports = namespace;
+    cached.loaded = true;
+    nodeRequire.cache[filename] = cached;
+    return {
+        module: namespace,
+        dispose: () => {
+            if (nodeRequire.cache[filename] !== cached) return;
+            if (previous) nodeRequire.cache[filename] = previous;
+            else delete nodeRequire.cache[filename];
+        },
+    };
 }
 
 export function installVitestRnShim(options: VitestRnShimOptions = {}): void {
@@ -170,6 +205,13 @@ export function installVitestRnShim(options: VitestRnShimOptions = {}): void {
 
                 const firstPartyRequire = resolveFirstPartySourceRequire(request, args[1]);
                 if (firstPartyRequire) {
+                    // Metro resolves extensionless TypeScript requests, while Node only searches
+                    // its registered CJS extensions. Reuse only an already-loaded cache entry;
+                    // this never evaluates another source module or exposes partial exports.
+                    for (const filename of [firstPartyRequire.target, `${firstPartyRequire.target}.ts`, `${firstPartyRequire.target}.tsx`]) {
+                        const cached = nodeRequire.cache[filename];
+                        if (cached?.loaded) return cached.exports;
+                    }
                     try {
                         return originalLoad.apply(this, args as []);
                     } catch (cause) {
