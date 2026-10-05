@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef } from 'react';
 
 import {
   useOptionalPluginUiPresentationHost,
@@ -83,4 +83,49 @@ export function usePluginUiFocusTargetBindingInternal(
 
   useLayoutEffect(() => clear, [clear]);
   return targetBindingRef === undefined ? undefined : bind;
+}
+
+type DetailHeadingFocus = Readonly<{
+  bindHeading(owner: object, node: HappierFocusable | null): void;
+  focus(): void;
+}>;
+
+/** Collection's semantic heading scope. The public target and mounted host still own the transfer/announcement. */
+export const CollectionDetailHeadingFocusContext = createContext<DetailHeadingFocus | null>(null);
+
+export function useCollectionDetailHeadingFocusInternal(openKey: string | null): DetailHeadingFocus | null {
+  const target = usePluginUiFocusTarget();
+  const binding = usePluginUiFocusTargetBindingInternal(target);
+  const state = useMemo<{ owner: object | null; pending: boolean }>(() => ({ owner: null, pending: true }), [openKey]);
+  const scope = useMemo<DetailHeadingFocus | null>(() => {
+    if (openKey === null) return null;
+    const focus = () => { if (state.pending && target.focus()) state.pending = false; };
+    return {
+      focus,
+      bindHeading(candidate, node) {
+        if (node === null) {
+          if (state.owner === candidate) { state.owner = null; binding?.(null); }
+          return;
+        }
+        // The entry heading is first in semantic reading order, not a later subsection title.
+        if (state.owner !== null && state.owner !== candidate) return;
+        state.owner = candidate;
+        binding?.(node);
+        focus();
+      },
+    };
+  }, [binding, openKey, state, target]);
+  useLayoutEffect(() => { scope?.focus(); }, [scope]);
+  return scope;
+}
+
+export function useCollectionDetailHeadingBindingInternal(explicitTarget?: PluginUiFocusTarget) {
+  const explicitBinding = usePluginUiFocusTargetBindingInternal(explicitTarget);
+  const scope = useContext(CollectionDetailHeadingFocusContext);
+  const owner = useMemo(() => ({}), []);
+  const bind = useCallback((node: HappierFocusable | null) => {
+    explicitBinding?.(node);
+    scope?.bindHeading(owner, node);
+  }, [explicitBinding, owner, scope]);
+  return explicitBinding === undefined && scope === null ? undefined : bind;
 }

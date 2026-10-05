@@ -1,3 +1,5 @@
+import { readInputPath, writeInputPath, type InputFieldHint } from '@happier-dev/plugin-sdk/actions';
+
 type InputRecord = Readonly<Record<string, unknown>>;
 
 /**
@@ -7,38 +9,19 @@ type InputRecord = Readonly<Record<string, unknown>>;
  * passes it through structurally. Keeping this narrow contract here preserves
  * the dependency direction: presentation never imports host/SDK transport.
  */
-export type HappierActionInputField = Readonly<{
-  widget: 'boolean' | 'select' | 'multiselect' | 'json' | 'text_list' | 'secret'
-    | 'textarea' | 'url' | 'number' | 'integer' | string;
-  listSeparator?: 'comma' | 'newline';
-}>;
+export type HappierActionInputField = Pick<InputFieldHint, 'widget'> & Partial<Pick<InputFieldHint, 'listSeparator'>>;
 
 export function readHappierActionInputPath(input: InputRecord, path: string): unknown {
-  return path.split('.').filter(Boolean).reduce<unknown>((cursor, segment) => (
-    cursor && typeof cursor === 'object' && !Array.isArray(cursor)
-      ? (cursor as InputRecord)[segment]
-      : undefined
-  ), input);
+  return readInputPath(input, path);
 }
 
 export function writeHappierActionInputPath(input: InputRecord, path: string, value: unknown): Record<string, unknown> {
-  const segments = path.split('.').filter(Boolean);
-  const write = (source: InputRecord, index: number): Record<string, unknown> => {
-    const segment = segments[index];
-    if (!segment) return { ...source };
-    if (index === segments.length - 1) return { ...source, [segment]: value };
-    const current = source[segment];
-    const child = current && typeof current === 'object' && !Array.isArray(current)
-      ? current as InputRecord
-      : {};
-    return { ...source, [segment]: write(child, index + 1) };
-  };
-  return write(input, 0);
+  return writeInputPath(input, path, value);
 }
 
 /** Patch shape consumed by the existing core Action editor. */
 export function patchHappierActionInputPath(input: InputRecord, path: string, value: unknown): Record<string, unknown> {
-  const top = path.split('.').filter(Boolean)[0];
+  const top = path.split('.').map((segment) => segment.trim()).filter(Boolean)[0];
   if (!top) return {};
   return { [top]: writeHappierActionInputPath(input, path, value)[top] };
 }

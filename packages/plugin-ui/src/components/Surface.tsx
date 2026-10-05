@@ -2,6 +2,7 @@ import type { ReactElement, ReactNode } from 'react';
 
 import { HappierSurface } from '../presentation/layout/Surface.js';
 import type { HappierPortableStyle } from '../presentation/portableTypes.js';
+import type { HappierMaterialRole } from '../presentation/layout/material.js';
 import { usePluginTheme } from './PluginUiProvider.js';
 
 export type SurfaceTone = 'surface' | 'muted';
@@ -11,6 +12,8 @@ export type SurfaceProps = Readonly<{
   children?: ReactNode;
   tone?: SurfaceTone;
   padding?: SurfacePadding;
+  /** The host's material group. Defaults to the working content surface. */
+  materialRole?: HappierMaterialRole;
   testID?: string;
   onPress?: () => unknown;
   disabled?: boolean;
@@ -38,6 +41,7 @@ function SurfaceChrome({
   onPress,
   disabled,
   accessibilityLabel,
+  materialRole = 'content',
 }: SurfaceProps): ReactElement {
   const theme = usePluginTheme();
   const inset = PADDING_BY_SIZE[padding];
@@ -58,6 +62,7 @@ function SurfaceChrome({
       onPress={onPress}
       disabled={disabled}
       accessibilityLabel={accessibilityLabel}
+      materialRole={materialRole}
       style={contentStyle}
       pressableStyle={{ width: '100%', borderRadius: theme.radii.panel }}
       pressedStyle={{ opacity: 0.985 }}

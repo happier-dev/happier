@@ -157,14 +157,19 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
         contributor: {
           pluginId: contributorPluginId,
           contributionId,
-          immutableGenerationId: contributorGeneration,
+          occurrenceId: contributorGeneration,
+          sourceCustody: { kind: 'development', registeredRootId: 'contributor-root' },
         },
         role: 'detail',
         presentation: 'content',
       } as const;
       return createSurfaceContext({
         targetedContributions: {
-          target: { pluginId: targetPluginId, immutableGenerationId: targetGeneration },
+          target: {
+            pluginId: targetPluginId,
+            occurrenceId: targetGeneration,
+            sourceCustody: { kind: 'development', registeredRootId: 'target-root' },
+          },
           points: surface === undefined ? [] : [{
             pointId,
             protocols: [{
@@ -183,12 +188,17 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
     };
     const admittedMount = (targetGeneration: string, contributorGeneration: string) => ({
       kind: 'targetedSurface',
-      target: { pluginId: targetPluginId, immutableGenerationId: targetGeneration },
+      target: {
+        pluginId: targetPluginId,
+        occurrenceId: targetGeneration,
+        sourceCustody: { kind: 'development', registeredRootId: 'target-root' },
+      },
       point: { pointId, protocol },
       contributor: {
         pluginId: contributorPluginId,
         contributionId,
-        immutableGenerationId: contributorGeneration,
+        occurrenceId: contributorGeneration,
+        sourceCustody: { kind: 'development', registeredRootId: 'contributor-root' },
       },
       role: 'detail',
       presentation: 'content',
@@ -206,7 +216,7 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
               pluginId: contributorPluginId,
               localId: rendererId,
               qualifiedId: `${contributorPluginId}/${rendererId}`,
-              generation: contributorGeneration,
+              occurrenceId: contributorGeneration,
             },
             visible: true,
             requiredHostMethods: [],
@@ -238,7 +248,8 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
       contributorTargetedContributions: {
         target: {
           pluginId: contributorPluginId,
-          immutableGenerationId: contributorGeneration,
+          occurrenceId: contributorGeneration,
+          sourceCustody: { kind: 'development', registeredRootId: 'contributor-root' },
         },
         points: [],
       },

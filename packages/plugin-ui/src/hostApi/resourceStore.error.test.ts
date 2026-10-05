@@ -6,6 +6,91 @@ import {
 } from './resourceStore.js';
 
 describe('plugin UI Resource store read failures', () => {
+  it('retains an already requested read for the first static subscriber without queuing another baseline', async () => {
+    const value = { contentType: 'text/plain', digest: 'requested', bytes: new TextEncoder().encode('requested') };
+    const reads: Array<{ resolve: (content: typeof value) => void; signal?: AbortSignal }> = [];
+    const store = createPluginUiResourceStore({ pluginId: 'acme.preview', client: {
+      readResource: (_resource, options) => new Promise(resolve => { reads.push({ resolve, signal: options?.signal }); }),
+    } });
+    const entry = store.getEntry('live-activity');
+    const refresh = entry.refresh();
+    const releaseAction = entry.subscribe(() => undefined, false);
+    const releaseMount = entry.subscribe(() => undefined, false);
+    // The Action's static retention must survive the last physical mount.
+    releaseMount();
+    expect(reads[0]!.signal?.aborted).toBe(false);
+    reads[0]!.resolve(value);
+    await expect(refresh).resolves.toMatchObject({ digest: 'requested', freshness: 'fresh', pending: 'idle' });
+    await Promise.resolve();
+    expect(reads).toHaveLength(1);
+    expect(entry.getSnapshot()).toMatchObject({ digest: 'requested', freshness: 'fresh', pending: 'idle' });
+    releaseAction();
+    store.dispose();
+  });
+
+  it('acknowledges the requested reread only after its shared snapshot settles', async () => {
+    const makeValue = (digest: string) => ({ contentType: 'text/plain', digest, bytes: new TextEncoder().encode(digest) });
+    const reads: Array<{
+      resolve: (value: ReturnType<typeof makeValue>) => void;
+      reject: (error: Error) => void;
+    }> = [];
+    // The daemon read is the genuine asynchronous boundary; the store and its
+    // shared entry/queued-read lifecycle remain real.
+    const client: PluginUiResourceClient = {
+      readResource: () => new Promise((resolve, reject) => { reads.push({ resolve, reject }); }),
+    };
+    const store = createPluginUiResourceStore({ client, pluginId: 'acme.preview' });
+    const first = store.getEntry('live-activity');
+    const second = store.getEntry({ pluginId: 'acme.preview', localId: 'live-activity' });
+    const releaseFirst = first.subscribe(() => undefined, false);
+    const releaseSecond = second.subscribe(() => undefined, false);
+    let acknowledged = false;
+    const refresh = first.refresh();
+    expect(refresh).toBeInstanceOf(Promise);
+    void Promise.resolve(refresh).then(() => { acknowledged = true; });
+    reads[0]!.resolve(makeValue('baseline'));
+    await vi.waitFor(() => { expect(reads).toHaveLength(2); });
+    expect(acknowledged).toBe(false);
+    reads[1]!.resolve(makeValue('refreshed'));
+    await expect(refresh).resolves.toMatchObject({ digest: 'refreshed', freshness: 'fresh', pending: 'idle' });
+    expect(second.getSnapshot()).toBe(first.getSnapshot());
+
+    const failedRefresh = second.refresh();
+    reads[2]!.reject(Object.assign(new Error('Resource unavailable'), { code: 'unavailable' }));
+    await expect(failedRefresh).resolves.toMatchObject({
+      digest: 'refreshed', freshness: 'stale', pending: 'idle', error: { code: 'unavailable' },
+    });
+    releaseFirst();
+    releaseSecond();
+    store.dispose();
+  });
+
+  it('settles outstanding acknowledgements without publishing retired or unobserved reads', async () => {
+    const reads: Array<{ resolve: (value: { contentType: string; digest: string; bytes: Uint8Array }) => void; signal?: AbortSignal }> = [];
+    const store = createPluginUiResourceStore({ pluginId: 'acme.preview', client: {
+      readResource: (_resource, options) => new Promise(resolve => { reads.push({ resolve, signal: options?.signal }); }),
+    } });
+    const entry = store.getEntry('live-activity');
+    const release = entry.subscribe(() => undefined, false);
+    const queuedRefresh = entry.refresh();
+    release();
+    await expect(queuedRefresh).resolves.toMatchObject({ pending: 'idle', error: { code: 'plugin_resource_aborted' } });
+    expect(reads[0]!.signal?.aborted).toBe(true);
+    reads[0]!.resolve({ contentType: 'text/plain', digest: 'late-unobserved', bytes: new Uint8Array() });
+    await Promise.resolve();
+    expect(entry.getSnapshot().digest).toBeUndefined();
+
+    const releaseAgain = entry.subscribe(() => undefined, false);
+    const retiredRefresh = entry.refresh();
+    store.dispose();
+    await expect(retiredRefresh).resolves.toMatchObject({ pending: 'idle', error: { code: 'plugin_surface_retired' } });
+    expect(reads[1]!.signal?.aborted).toBe(true);
+    reads[1]!.resolve({ contentType: 'text/plain', digest: 'late-retired', bytes: new Uint8Array() });
+    await Promise.resolve();
+    expect(entry.getSnapshot().digest).toBeUndefined();
+    releaseAgain();
+  });
+
   it('preserves the mounted Resource failure discriminator instead of collapsing unavailable branches', async () => {
     const readResource = vi.fn()
       .mockRejectedValueOnce(Object.assign(new Error('Resource is not declared for this plugin'), {

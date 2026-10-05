@@ -36,6 +36,8 @@ export type HappierRovingCollectionItem = Readonly<{
    * the second argument is unaffected.
    */
   onKeyDown: (key: string, event: unknown) => boolean;
+  /** Observes physical focus without selecting or opening the item. */
+  onFocus?: () => void;
   register: (target: HappierFocusable | null) => void;
 }>;
 

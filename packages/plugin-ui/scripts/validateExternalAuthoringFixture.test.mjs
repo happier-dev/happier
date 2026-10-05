@@ -16,6 +16,23 @@ const repositoryRoot = resolve(packageRoot, '../..');
 const requireFromPluginUi = createRequire(resolve(packageRoot, 'package.json'));
 const requireFromPluginSdk = createRequire(resolve(repositoryRoot, 'packages/plugin-sdk/package.json'));
 
+test('public presentation admission follows declaration reexports and rejects raw image exports', async () => {
+  await fixtureHarness.withTemporaryExternalAuthoringRoot(async (root) => {
+    const packageRoot = join(root, 'node_modules', '@happier-dev', 'plugin-ui');
+    const declarationsRoot = join(packageRoot, 'dist', 'presentation');
+    await mkdir(declarationsRoot, { recursive: true });
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@happier-dev/plugin-ui', type: 'module',
+      exports: { './presentation': { types: './dist/presentation/index.d.ts' } },
+    }));
+    await writeFile(join(declarationsRoot, 'index.d.ts'), "export * from './index.public.js';\n");
+    await writeFile(join(declarationsRoot, 'index.public.d.ts'), 'export declare function HappierBrandMark(): unknown;\n');
+    await fixtureHarness.assertPublicPresentationContract(root);
+    await writeFile(join(declarationsRoot, 'index.public.d.ts'), 'export declare function HappierBrandMark(): unknown;\nexport declare function HappierImage(): unknown;\n');
+    await assert.rejects(fixtureHarness.assertPublicPresentationContract(root), /Raw renderer export leaked/);
+  });
+});
+
 async function installPackedExternalAuthoringSemanticSurfaceStub(consumerRoot) {
   const packageRoot = join(
     consumerRoot,

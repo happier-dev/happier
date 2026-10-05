@@ -1,15 +1,64 @@
 import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
+  createPluginTestkit,
 } from '@happier-dev/plugin-sdk/testing';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { invokeInputTypePicker, readInputTypeOptions, type InputTypePickerHostV1, type ResolvedInputTypeV1 } from '@happier-dev/protocol/inputs/runtime';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderSurface } from '../../../plugin-sdk/examples/public-authoring/ui/reviewPanel.native.tsx';
+import { publicAuthoringDefinition } from '../../../plugin-sdk/examples/public-authoring/definition.ts';
+import { repositoryInputTypes, repositoryResources, repositoryInputTypeRef } from '../../../plugin-sdk/examples/public-authoring/inputTypes.ts';
 
 const REVIEW_STATUS_DIGEST = `sha256:${'a'.repeat(64)}`;
 
 describe('public authoring Project Companion activity surface', () => {
+  it('invokes the declared native picker through the real UI host settlement boundary and cancels without a value', async () => {
+    const renderer = publicAuthoringDefinition.ui?.renderers?.find(renderer => renderer.id === 'review-native');
+    if (!renderer) throw new Error('Expected the declared native picker renderer');
+    const plugin = definePlugin({ id: repositoryInputTypeRef.pluginId, version: '1.0.0',
+      inputTypes: repositoryInputTypes, resources: repositoryResources,
+      ui: { renderers: [renderer] },
+    });
+    const testkit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+    const resource = testkit.registration('resources', 'review-repositories');
+    if (!resource) throw new Error('Expected registered options Resource');
+    const type: ResolvedInputTypeV1 = { identity: repositoryInputTypeRef, occurrenceId: 'picker-fixture',
+      definition: { id: 'repository', ...repositoryInputTypes.repository } };
+    let selection = 'Review assistant';
+    const host: InputTypePickerHostV1 = {
+      resolveType: async () => type,
+      resolveOptions: async () => {
+        const content = await resource.read({ signal: new AbortController().signal, context: { kind: 'global' } });
+        return readInputTypeOptions(type, JSON.parse(typeof content === 'string' ? content : new TextDecoder().decode(content)))
+          ?? { errorCode: 'input_type_options_invalid' };
+      },
+      openPicker: async request => {
+        expect(request.picker).toEqual({ pluginId: repositoryInputTypeRef.pluginId, localId: 'review-native' });
+        let answer: unknown;
+        const fixture = await createPluginUiTestkit({
+          identity: { instanceId: 'repository-picker', mountNonce: 'repository-picker-mount' },
+          authorPlugin: { id: repositoryInputTypeRef.pluginId, version: '1.0.0' }, surface: renderSurface,
+          surfaceContext: createSurfaceContextFixture({ mount: { kind: 'embedded', role: 'ephemeralInput', presentation: 'content' },
+            target: { kind: 'app' } }), launchInput: request.launchInput,
+          adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+          handlers: { settleEphemeralInput: async ({ settlement }) => { answer = settlement; } },
+        });
+        try { await fixture.press(await fixture.findByRole('button', { name: selection })); return answer; }
+        finally { await fixture.dispose(); }
+      },
+    };
+    const request = { field: { path: 'repository', title: 'Repository', widget: 'select' as const, inputType: repositoryInputTypeRef },
+      host, signal: new AbortController().signal };
+    try {
+      expect(await invokeInputTypePicker(request)).toEqual({ status: 'selected', value: { repositoryId: 'example/review-assistant' } });
+      selection = 'Cancel';
+      expect(await invokeInputTypePicker(request)).toEqual({ status: 'cancelled' });
+    } finally { await testkit.dispose(); }
+  });
+
   it('routes an opaque openable reference only through its declared openable view', async () => {
     const statOpenableContent = vi.fn(async () => ({
       status: 'ready' as const,

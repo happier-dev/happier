@@ -72,6 +72,7 @@ function createHostApiStub(overrides: Partial<PluginUiHostApi> = {}) {
   const api: PluginUiHostApi = {
     version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: [] }),
     context: vi.fn(async () => surfaceContextFixture),
+    widgetArea: async () => { throw new Error('unsupported_host_method'); },
     watchContext: vi.fn(async (): Promise<Disposable> => ({ dispose: vi.fn() })),
     executeAction: vi.fn(async () => null),
     readResource: vi.fn(async () => resource),
@@ -127,6 +128,34 @@ function deferred<T>() {
 }
 
 describe('plugin host API hooks', () => {
+  it('shares an injected Resource owner across mounts without disposing it on one unmount', async () => {
+    const host = createHostApiStub();
+    let digest = `sha256:${'a'.repeat(64)}`;
+    const store = createPluginUiResourceStore({ pluginId: resourceRef.pluginId, client: {
+      readResource: async () => ({ contentType: 'text/plain', digest, bytes: new TextEncoder().encode(digest) }),
+    } });
+    const observed: Record<string, PluginUiResourceSnapshot> = {};
+    function Probe({ id }: { id: string }) {
+      observed[id] = usePluginResource(resourceRef).resource;
+      return null;
+    }
+    let first: renderer.ReactTestRenderer;
+    let second: renderer.ReactTestRenderer;
+    await act(async () => {
+      first = createRenderer(<PluginHostApiProviderInternal hostApi={host.api} resourceStore={store}><Probe id="first" /></PluginHostApiProviderInternal>);
+      second = createRenderer(<PluginHostApiProviderInternal hostApi={host.api} resourceStore={store}><Probe id="second" /></PluginHostApiProviderInternal>);
+    });
+    expect(observed.first?.digest).toBe(digest);
+    expect(observed.second?.digest).toBe(digest);
+    expect(host.api.readResource).not.toHaveBeenCalled();
+    await act(async () => { first!.unmount(); });
+    digest = `sha256:${'b'.repeat(64)}`;
+    await act(async () => { await store.getEntry(resourceRef).refresh(); });
+    expect(observed.second?.digest).toBe(digest);
+    await act(async () => { second!.unmount(); });
+    store.dispose();
+  });
+
   it('exposes only the host-injected ephemeral shared scope and has no artifact-local fallback', () => {
     const scope: PluginUiEphemeralSharedScope = {
       acquire: vi.fn(() => null),
