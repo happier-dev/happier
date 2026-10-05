@@ -69,7 +69,7 @@
     "ota:production": "cross-env EXPO_UNSTABLE_WEB_MODAL=1 npx eas-cli@latest workflow:run ota.yaml",
     "typecheck": "../stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "yarn -s typecheck:source:finite",
-    "typecheck:source:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --project tsconfig.source.json --project tsconfig.test.json",
+    "typecheck:source:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --project tsconfig.foundation.json --project tsconfig.core.json --project tsconfig.source.json --project tsconfig.test.json",
     "typecheck:activity-surfaces": "../stack/bin/hstack-exec --script=typecheck:activity-surfaces:local",
     "typecheck:activity-surfaces:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.activity-surfaces-rollout.json --noEmit --pretty false",
     "certify:activity-surfaces": "node ./scripts/runActivitySurfacesCertification.mjs",

@@ -60,9 +60,11 @@ const ROOT_COMPILER_TYPECHECK_COMMANDS: readonly CommandSuiteEntry[] = [
     'packages/tests/tsconfig.json',
   ].map((project) => ({
     id: project,
-    // UI owns its declaration-producing project order and public host dispatch.
+    // Host packages own their declaration-producing project order and dispatch.
     args: project === 'apps/ui/tsconfig.json'
       ? ['--cwd', 'apps/ui', '-s', 'typecheck']
+      : project === 'apps/cli/tsconfig.json'
+        ? ['--cwd', 'apps/cli', '-s', 'typecheck']
       : ['tsc', '-p', project, '--noEmit'],
   })),
 ];

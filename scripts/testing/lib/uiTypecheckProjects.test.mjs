@@ -9,63 +9,76 @@ import ts from 'typescript';
 import { resolveTypeScriptCliInvocation } from '../../workspaces/resolveTypeScriptCliInvocation.mjs';
 
 const uiDir = resolve('apps/ui');
-function readProject(name) {
-  const configPath = join(uiDir, name);
+function readProject(name, packageDir = uiDir) {
+  const configPath = join(packageDir, name);
   const config = ts.readConfigFile(configPath, ts.sys.readFile);
   assert.equal(config.error && ts.flattenDiagnosticMessageText(config.error.messageText, '\n'),
     undefined, `${name} must exist and parse`);
-  const project = ts.parseJsonConfigFileContent(config.config, ts.sys, uiDir, undefined, configPath);
+  const project = ts.parseJsonConfigFileContent(config.config, ts.sys, packageDir, undefined, configPath);
   assert.deepEqual(project.errors, []);
   return project;
 }
 
-test('UI projects preserve every original root exactly once, except shared declarations', () => {
-  const original = readProject('tsconfig.json');
-  const source = readProject('tsconfig.source.json');
-  const tests = readProject('tsconfig.test.json');
+function assertProjectCoverage(packageDir, sourceNames) {
+  const original = readProject('tsconfig.json', packageDir);
+  const sources = sourceNames.map((name) => readProject(name, packageDir));
+  const tests = readProject('tsconfig.test.json', packageDir);
   const originalRoots = new Set(original.fileNames);
-  const sourceRoots = new Set(source.fileNames.filter((file) => originalRoots.has(file)));
-  const testRoots = new Set(tests.fileNames.filter((file) => originalRoots.has(file)));
-  assert.deepEqual([...new Set([...sourceRoots, ...testRoots])].sort(), [...originalRoots].sort());
-  assert.deepEqual([...sourceRoots].filter((file) => testRoots.has(file)).sort(),
-    original.fileNames.filter((file) => file.endsWith('.d.ts')).sort());
-  for (const project of [source, tests]) {
-    for (const key of ['strict', 'skipLibCheck', 'target', 'module', 'moduleResolution', 'jsx',
-      'isolatedModules', 'resolveJsonModule', 'allowJs', 'customConditions', 'lib', 'paths']) {
-      assert.deepEqual(project.options[key], original.options[key], `preserve ${key}`);
+  const projects = [...sources, tests];
+  const counts = new Map();
+  for (const project of projects) {
+    for (const file of project.fileNames.filter((file) => originalRoots.has(file))) {
+      counts.set(file, (counts.get(file) ?? 0) + 1);
     }
+    const plumbing = new Set(['configFilePath', 'composite', 'noEmit', 'emitDeclarationOnly',
+      'rootDir', 'outDir', 'tsBuildInfoFile', 'disableSourceOfProjectReferenceRedirect']);
+    const strictOptions = (options) => Object.fromEntries(Object.entries(options)
+      .filter(([key]) => !plumbing.has(key)));
+    assert.deepEqual(strictOptions(project.options), strictOptions(original.options));
   }
-  assert.equal(source.options.composite, true);
-  assert.equal(source.options.emitDeclarationOnly, true);
-  assert.equal(source.options.noEmit, false);
+  assert.deepEqual([...counts.keys()].sort(), [...originalRoots].sort());
+  for (const [file, count] of counts) assert.equal(count, file.endsWith('.d.ts') ? projects.length : 1, file);
+  for (const source of sources) {
+    assert.equal(source.options.composite, true);
+    assert.equal(source.options.emitDeclarationOnly, true);
+    assert.equal(source.options.noEmit, false);
+  }
   assert.equal(tests.options.noEmit, true);
   assert.equal(tests.options.disableSourceOfProjectReferenceRedirect, true);
-  assert.deepEqual(tests.projectReferences.map(({ path }) => path), [join(uiDir, 'tsconfig.source.json')]);
+  assert.deepEqual(tests.projectReferences.map(({ path }) => path), [join(packageDir, 'tsconfig.source.json')]);
+}
+
+test('UI projects preserve every original root exactly once, except shared declarations', () => {
+  assertProjectCoverage(uiDir, ['tsconfig.foundation.json', 'tsconfig.core.json', 'tsconfig.source.json']);
 });
 
-test('native UI project boundary checks source and test types without rechecking source implementations', () => {
-  const sourceConfig = ts.readConfigFile(join(uiDir, 'tsconfig.source.json'), ts.sys.readFile).config;
-  const testConfig = ts.readConfigFile(join(uiDir, 'tsconfig.test.json'), ts.sys.readFile).config;
+test('CLI projects preserve every original root and compiler strictness', () => {
+  assertProjectCoverage(resolve('apps/cli'), ['tsconfig.source.json']);
+});
+
+function assertNativeProjectBoundary(packageDir) {
+  const sourceConfig = ts.readConfigFile(join(packageDir, 'tsconfig.source.json'), ts.sys.readFile).config;
+  const testConfig = ts.readConfigFile(join(packageDir, 'tsconfig.test.json'), ts.sys.readFile).config;
   const fixtureDir = mkdtempSync(join(tmpdir(), 'happier-ui-typecheck-'));
   const write = (file, value) => {
     mkdirSync(dirname(join(fixtureDir, file)), { recursive: true });
     writeFileSync(join(fixtureDir, file), value);
   };
-  const invocation = resolveTypeScriptCliInvocation({ repoRoot: resolve('.'), workspaceDir: uiDir });
+  const invocation = resolveTypeScriptCliInvocation({ repoRoot: resolve('.'), workspaceDir: packageDir });
   const run = (project, extra = []) => spawnSync(invocation.command,
     [...invocation.argsPrefix, '--project', join(fixtureDir, project), '--pretty', 'false', ...extra],
     { encoding: 'utf8', cwd: fixtureDir });
   try {
     const options = { types: [], paths: { '@/*': ['./sources/*'] }, rootDir: '.' };
     write('tsconfig.source.json', JSON.stringify({
-      extends: join(uiDir, 'tsconfig.json'),
+      extends: join(packageDir, 'tsconfig.json'),
       compilerOptions: { ...options, ...sourceConfig.compilerOptions,
         rootDir: '.', outDir: './cache/source', tsBuildInfoFile: './cache/source.tsbuildinfo' },
       files: ['node_modules/fixture-native-package/src/index.ts'],
       include: ['sources/**/*.ts', 'external/**/*.ts', 'external/**/*.json'], exclude: ['**/*.test.ts'],
     }));
     write('tsconfig.test.json', JSON.stringify({
-      extends: join(uiDir, 'tsconfig.json'),
+      extends: join(packageDir, 'tsconfig.json'),
       compilerOptions: { ...options, ...testConfig.compilerOptions,
         rootDir: '.', tsBuildInfoFile: './cache/test.tsbuildinfo' },
       references: [{ path: './tsconfig.source.json' }],
@@ -124,4 +137,87 @@ test('native UI project boundary checks source and test types without rechecking
   } finally {
     rmSync(fixtureDir, { recursive: true, force: true });
   }
+}
+
+test('native UI projects redirect direct and transitive imports across the complete serial boundary', () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), 'happier-ui-transitive-'));
+  const invocation = resolveTypeScriptCliInvocation({ repoRoot: resolve('.'), workspaceDir: uiDir });
+  const write = (file, value) => {
+    mkdirSync(dirname(join(fixtureDir, file)), { recursive: true });
+    writeFileSync(join(fixtureDir, file), value);
+  };
+  const run = (name, extra = []) => spawnSync(invocation.command,
+    [...invocation.argsPrefix, '--project', join(fixtureDir, `tsconfig.${name}.json`),
+      '--pretty', 'false', ...extra], { encoding: 'utf8', cwd: fixtureDir });
+  try {
+    const names = ['foundation', 'core', 'source', 'test'];
+    const files = { foundation: ['foundation.ts', 'flags.json'], core: ['left.ts', 'right.ts'],
+      source: ['entry.ts'], test: ['entry.test.ts'] };
+    for (let index = 0; index < names.length; index++) {
+      const name = names[index];
+      const actual = ts.readConfigFile(join(uiDir, `tsconfig.${name}.json`), ts.sys.readFile).config;
+      write(`tsconfig.${name}.json`, JSON.stringify({
+        extends: join(uiDir, 'tsconfig.json'),
+        compilerOptions: { ...actual.compilerOptions, types: [], paths: {}, rootDir: '.',
+          outDir: `./cache/${name}`, tsBuildInfoFile: `./cache/${name}.tsbuildinfo` },
+        ...(index ? { references: [{ path: `./tsconfig.${names[index - 1]}.json` }] } : {}),
+        files: [...files[name], 'ambient.d.ts'], include: [], exclude: [],
+      }));
+    }
+    write('ambient.d.ts', 'declare const fixtureAmbient: string;\n');
+    write('flags.json', '{"enabled":true}');
+    write('foundation.ts', "import flags from './flags.json'; export const label: string = 'ok'; export const enabled = flags.enabled;\n");
+    write('left.ts', "import { label } from './foundation'; import { right } from './right'; export function left(): string { return label + right; }\n");
+    write('right.ts', "import { left } from './left'; export const right: number = 'bad'; export const invoke = () => left();\n");
+    write('entry.ts', "import { left } from './left'; import { label } from './foundation'; export const value = left() + label + fixtureAmbient;\n");
+    write('entry.test.ts', "import { value } from './entry'; import { left } from './left'; import { label } from './foundation'; const result: number = value + left() + label;\n");
+    const foundation = run('foundation');
+    assert.equal(foundation.status, 0, foundation.stdout + foundation.stderr);
+    const coreRed = run('core');
+    assert.notEqual(coreRed.status, 0);
+    assert.match(coreRed.stdout + coreRed.stderr, /right\.ts.*TS2322/u);
+    write('right.ts', "import { left } from './left'; export const right: string = 'ok'; export const invoke = () => left();\n");
+    for (const name of ['core', 'source']) {
+      const green = run(name, ['--listFiles']);
+      assert.equal(green.status, 0, green.stdout + green.stderr);
+      const inputs = green.stdout.split(/\r?\n/u).map((file) => resolve(file.trim()));
+      assert.ok(inputs.includes(join(fixtureDir, 'cache/foundation/foundation.d.ts')));
+      assert.ok(!inputs.includes(join(fixtureDir, 'foundation.ts')));
+      if (name === 'source') {
+        assert.ok(inputs.includes(join(fixtureDir, 'cache/core/left.d.ts')));
+        assert.ok(!inputs.includes(join(fixtureDir, 'left.ts')));
+      }
+    }
+    const testRed = run('test');
+    assert.notEqual(testRed.status, 0);
+    assert.match(testRed.stdout + testRed.stderr, /entry\.test\.ts.*TS2322/u);
+    write('entry.test.ts', "import { value } from './entry'; import { left } from './left'; import { label } from './foundation'; const result: string = value + left() + label;\n");
+    const serial = spawnSync(process.execPath, [resolve('scripts/workspaces/runTypeScriptCli.mjs'),
+      ...names.flatMap((name) => ['--project', join(fixtureDir, `tsconfig.${name}.json`)]),
+      '--pretty', 'false', '--listFiles'], {
+      cwd: fixtureDir, encoding: 'utf8',
+      env: { ...process.env, CI: 'true', HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS: '1' },
+    });
+    assert.equal(serial.status, 0, serial.stdout + serial.stderr);
+    const testGreen = run('test', ['--listFiles']);
+    assert.equal(testGreen.status, 0, testGreen.stdout + testGreen.stderr);
+    const inputs = testGreen.stdout.split(/\r?\n/u).map((file) => resolve(file.trim()));
+    for (const [name, file] of [['foundation', 'foundation'], ['core', 'left'], ['source', 'entry']]) {
+      assert.ok(inputs.includes(join(fixtureDir, `cache/${name}/${file}.d.ts`)));
+      assert.ok(!inputs.includes(join(fixtureDir, `${file}.ts`)));
+    }
+    if (process.platform === 'linux') {
+      const reports = serial.stderr.split('\n').filter((line) => line.startsWith('[typescript] {'))
+        .map((line) => JSON.parse(line.slice('[typescript] '.length)));
+      assert.deepEqual(reports.map(({ project }) => project),
+        names.map((name) => join(fixtureDir, `tsconfig.${name}.json`)));
+      assert.ok(reports.every(({ maxRssKiB, status }) => maxRssKiB > 0 && status === 0));
+    }
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('native CLI project boundary checks source and test types without rechecking source implementations', () => {
+  assertNativeProjectBoundary(resolve('apps/cli'));
 });

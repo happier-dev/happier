@@ -164,8 +164,8 @@
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "typecheck": "../stack/bin/hstack-exec --script=typecheck:local",
-    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --project tsconfig.source.json --project tsconfig.test.json --noEmit --singleThreaded",
-    "typecheck:source:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --project tsconfig.source.json --project tsconfig.test.json --noEmit --singleThreaded",
+    "typecheck:local": "yarn -s typecheck:source:finite",
+    "typecheck:source:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --project tsconfig.source.json --project tsconfig.test.json",
     "build": "node scripts/build.mjs",
     "plugins:aggregate:finite": "node scripts/withNodeHeapLimit.mjs node --experimental-strip-types scripts/build-owned/generateBundledPluginEntries.ts --root ../.. --mode check --scope projections --aggregate",
     "build:prepared": "node scripts/build.mjs",

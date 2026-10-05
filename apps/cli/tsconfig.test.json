@@ -1,15 +1,23 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "noEmit": true,
+    "disableSourceOfProjectReferenceRedirect": true,
     "tsBuildInfoFile": "node_modules/.cache/tsc/cli.test.typecheck.tsbuildinfo"
   },
+  "references": [
+    {
+      "path": "./tsconfig.source.json"
+    }
+  ],
   "include": [
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
     "src/**/*.spec.ts",
-    "src/**/*.spec.tsx",
-    "src/**/__tests__/**/*.ts",
-    "src/**/__tests__/**/*.tsx",
-    "src/**/*.d.ts"
+    "src/**/*.spec.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "src/**/*.tmp.test.ts"
   ]
 }
