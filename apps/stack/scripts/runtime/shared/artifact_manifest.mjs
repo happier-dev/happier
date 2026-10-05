@@ -1,8 +1,10 @@
-import { join } from 'node:path';
-import { access } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { stat } from 'node:fs/promises';
 
 import { readJsonIfExists, writeJsonAtomic } from '../../utils/fs/json.mjs';
 import { resolveStackComponentArtifactDir, validateRuntimeArtifactFingerprint } from './runtime_paths.mjs';
+import { assertWebArtifactPayload } from './web_payload.mjs';
+import { assertDaemonSupportPayload } from './daemon_support_payload.mjs';
 
 const COMPONENT_SUPPORT_ARTIFACT_FIELDS = Object.freeze({
   server: {
@@ -122,12 +124,32 @@ export async function resolveComponentArtifactSupportReference({ stackBaseDir, m
   };
 }
 
-export async function readReusableArtifactManifest({ artifactDir, artifactFingerprint }) {
+// Historical self-contained snapshots have no artifact manifest. They share
+// payload health with live artifacts without acquiring a current support binding.
+export async function assertArtifactPayload({ stackBaseDir, payloadDir, manifest }) {
+  const entrypoint = await stat(join(payloadDir, manifest.entrypoint));
+  if (!entrypoint.isFile() || entrypoint.size === 0) {
+    throw new Error(`[runtime] ${manifest.component} artifact payload is incomplete: entrypoint must be a non-empty file.`);
+  }
+  if (manifest.component === 'web') {
+    await assertWebArtifactPayload({ payloadDir, entrypoint: manifest.entrypoint });
+  }
+  if (manifest.component === 'daemon-support') {
+    await assertDaemonSupportPayload({ supportPayloadDir: payloadDir });
+  }
+  await resolveComponentArtifactSupportReference({ stackBaseDir, manifest });
+}
+
+export async function readReusableArtifactManifest({
+  artifactDir,
+  artifactFingerprint,
+  stackBaseDir = dirname(dirname(dirname(artifactDir))),
+}) {
   const manifest = await readArtifactManifest({ artifactDir });
   const validation = validateArtifactManifest(manifest);
   if (!validation.ok || validation.manifest.artifactFingerprint !== artifactFingerprint) return null;
   try {
-    await access(join(artifactPayloadDir(artifactDir), validation.manifest.entrypoint));
+    await assertArtifactPayload({ stackBaseDir, payloadDir: artifactPayloadDir(artifactDir), manifest: validation.manifest });
     return validation.manifest;
   } catch {
     return null;

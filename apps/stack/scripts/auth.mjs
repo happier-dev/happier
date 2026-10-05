@@ -41,12 +41,12 @@ import { bold, cyan, dim } from './utils/ui/ansi.mjs';
 import {
   renderPrismaCompatibleSqliteDatabaseUrl,
   resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
-} from '@happier-dev/cli-common/firstPartyRuntime';
+} from '@happier-dev/cli-common/firstPartyRuntime/selfHostServerEnv';
 import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
 import { runOrchestratedGuidedAuthFlow, startDaemonPostAuth } from './utils/auth/orchestrated_stack_auth_flow.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { isLocalishUrl } from './utils/service/auth_guidance.mjs';
-import { resolveBestExpoWebappUrlForAuth, resolveStackAuthCliExecutable } from './utils/auth/stack_guided_login.mjs';
+import { buildStackAuthLoginInvocation, resolveBestExpoWebappUrlForAuth, resolveStackAuthCliExecutable } from './utils/auth/stack_guided_login.mjs';
 import { buildAuthSafeStackStartSpec } from './utils/auth/buildAuthSafeStackStartSpec.mjs';
 import {
   findAnyCredentialPathInCliHome,
@@ -1693,21 +1693,20 @@ async function cmdLogin({ argv, json }) {
       : env;
 
   const cliExecutable = await resolveStackAuthCliExecutable({ rootDir, env: loginEnv });
-  const executableLooksLikeScript =
-    cliExecutable.endsWith('.mjs') || cliExecutable.endsWith('.js') || cliExecutable.endsWith('.cjs');
-  const loginCommand = executableLooksLikeScript ? process.execPath : cliExecutable;
-  let loginArgs = executableLooksLikeScript ? [cliExecutable, 'auth', 'login'] : ['auth', 'login'];
-  if (force || argv.includes('--force')) {
-    loginArgs.push('--force');
-  }
-  if (noOpen) {
-    loginArgs.push('--no-open');
-  }
-  if (method) {
-    loginArgs.push('--method', method);
-  }
+  const buildLoginInvocation = async (runEnv) => await buildStackAuthLoginInvocation({
+    rootDir,
+    stackName,
+    webappUrl: String(runEnv.HAPPIER_WEBAPP_URL ?? '').trim() || HOSTED_WEBAPP_URL,
+    env: { ...runEnv, ...(method ? { HAPPIER_AUTH_METHOD: method } : {}) },
+  });
 
   if (wantPrint) {
+    const invocation = await buildLoginInvocation(loginEnv);
+    const provenanceEnv = [
+      'HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED',
+      'HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT',
+      'HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT',
+    ].filter((key) => invocation.env[key]).map((key) => `${key}="${invocation.env[key]}" `).join('');
     const cmd =
       `HAPPIER_HOME_DIR="${cliHomeDir}" ` +
       `HAPPIER_SERVER_URL="${internalServerUrl}" ` +
@@ -1716,7 +1715,8 @@ async function cmdLogin({ argv, json }) {
       (webappUrl ? `HAPPIER_WEBAPP_URL="${webappUrl}" ` : '') +
       (noOpen ? `HAPPIER_NO_BROWSER_OPEN="1" ` : '') +
       (method ? `HAPPIER_AUTH_METHOD="${method}" ` : '') +
-      `"${loginCommand}" ${loginArgs.map((arg) => `"${arg}"`).join(' ')}`;
+      provenanceEnv +
+      `"${invocation.command}" ${invocation.args.map((arg) => `"${arg}"`).join(' ')}`;
 
     const configureServer =
       webappUrl && publicServerUrlForAuth
@@ -1863,12 +1863,6 @@ async function cmdLogin({ argv, json }) {
         console.error(`[auth] ${stackName}: service-mode stack is not becoming healthy; falling back to mobile login.`);
         method = 'mobile';
         env.HAPPIER_AUTH_METHOD = 'mobile';
-        const methodIdx = loginArgs.indexOf('--method');
-        if (methodIdx >= 0) {
-          loginArgs[methodIdx + 1] = 'mobile';
-        } else {
-          loginArgs = [...loginArgs, '--method', 'mobile'];
-        }
       } else {
         try {
           await waitForGuidedServerReadyOrThrow('already starting');
@@ -1884,12 +1878,6 @@ async function cmdLogin({ argv, json }) {
           );
           method = 'mobile';
           env.HAPPIER_AUTH_METHOD = 'mobile';
-          const methodIdx = loginArgs.indexOf('--method');
-          if (methodIdx >= 0) {
-            loginArgs[methodIdx + 1] = 'mobile';
-          } else {
-            loginArgs = [...loginArgs, '--method', 'mobile'];
-          }
         }
       }
     } else {
@@ -1947,7 +1935,8 @@ async function cmdLogin({ argv, json }) {
       });
       clearedForceCredentials = true;
     }
-    await run(loginCommand, loginArgs, { cwd: rootDir, env: runEnv });
+    const invocation = await buildLoginInvocation(runEnv);
+    await run(invocation.command, invocation.args, { cwd: rootDir, env: invocation.env });
   };
 
   let webappUrlForDaemon = webappUrl;
@@ -2048,24 +2037,8 @@ async function cmdLogin({ argv, json }) {
         if (choice === 'mobile') {
           // eslint-disable-next-line no-console
           console.error(`[auth] ${stackName}: switching to mobile login (targets: ${publicServerUrl}).`);
-          const mobileArgs = [...loginArgs];
-          if (!mobileArgs.includes('--method')) {
-            mobileArgs.push('--method', 'mobile');
-          } else {
-            const idx = mobileArgs.indexOf('--method');
-            if (idx >= 0) {
-              mobileArgs[idx + 1] = 'mobile';
-            }
-          }
-          if (force && !clearedForceCredentials) {
-            await clearStackForceLoginCredentialPaths({
-              cliHomeDir,
-              serverUrl: internalServerUrl,
-              env,
-            });
-            clearedForceCredentials = true;
-          }
-          await run(loginCommand, mobileArgs, { cwd: rootDir, env: scopedEnv });
+          method = 'mobile';
+          await runLogin(scopedEnv);
           break;
         }
 

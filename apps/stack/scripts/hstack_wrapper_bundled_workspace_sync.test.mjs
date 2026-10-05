@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,6 +16,59 @@ function stackRootDirFromMeta(metaUrl) {
   const scriptsDir = dirname(fileURLToPath(metaUrl));
   return dirname(scriptsDir);
 }
+
+test('named daemon builds record preparation failures instead of failing in launcher publication', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-daemon-build-admission-'));
+  t.after(() => rmSync(fixtureDir, { recursive: true, force: true }));
+  const repoRoot = join(fixtureDir, 'repo');
+  const stackDir = join(repoRoot, 'apps', 'stack');
+  const commonDir = join(repoRoot, 'packages', 'cli-common');
+  await ensureMinimalMonorepoLayout(repoRoot);
+  mkdirSync(join(stackDir, 'bin'), { recursive: true });
+  mkdirSync(commonDir, { recursive: true });
+  writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*', 'packages/*'] }));
+  writeFileSync(join(repoRoot, 'yarn.lock'), '');
+  writeFileSync(join(stackDir, 'package.json'), JSON.stringify({ name: '@happier-dev/stack' }));
+  // The fixture's package build is an external process boundary. The launcher,
+  // dependency admission, build owner, and status writer all remain real.
+  writeFileSync(join(commonDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/cli-common', type: 'module', main: './dist/index.js',
+    scripts: { build: 'node -e "process.stderr.write(\'fixture workspace compiler failed\\n\'); process.exit(41)"' },
+  }));
+  copyFileSync(join(rootDir, 'bin', 'hstack.mjs'), join(stackDir, 'bin', 'hstack.mjs'));
+  symlinkSync(join(rootDir, 'scripts'), join(stackDir, 'scripts'), process.platform === 'win32' ? 'junction' : 'dir');
+  copyFileSync(join(rootDir, 'bin', 'localBundledWorkspacePreflight.mjs'), join(stackDir, 'bin', 'localBundledWorkspacePreflight.mjs'));
+  symlinkSync(join(rootDir, '..', '..', 'scripts'), join(repoRoot, 'scripts'), process.platform === 'win32' ? 'junction' : 'dir');
+  const storageDir = join(fixtureDir, 'storage');
+  const envPath = join(storageDir, 'qa', 'env');
+  mkdirSync(dirname(envPath), { recursive: true });
+  writeFileSync(envPath, `HAPPIER_STACK_STACK=qa\nHAPPIER_STACK_REPO_DIR=${repoRoot}\n`);
+  const env = buildStackFixtureEnv({
+    homeDir: join(fixtureDir, 'home'), storageDir, stackName: 'qa', envPath, stripStackEnv: true,
+    extraEnv: {
+      HAPPIER_STACK_UPDATE_CHECK: '0', HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+      HAPPIER_STACK_REPO_DIR: repoRoot,
+      HAPPIER_HSTACK_DISPATCH_CONTROL: '1',
+    },
+  });
+  for (const invocation of [
+    { producer: 'producer-named', args: ['stack', 'build', 'qa', '--daemon', '--json'] },
+    { producer: 'producer-direct', args: ['build', '--daemon', '--json'] },
+  ]) {
+    writeFileSync(envPath, `HAPPIER_STACK_STACK=qa\nHAPPIER_STACK_REPO_DIR=${repoRoot}\nHAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK=${invocation.producer}\n`);
+    const result = await runNodeCapture([
+      join(stackDir, 'bin', 'hstack.mjs'), ...invocation.args,
+    ], { cwd: repoRoot, env: { ...env, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: invocation.producer } });
+    assert.notEqual(result.code, 0);
+    const statePath = join(storageDir, invocation.producer, 'stack.runtime.json');
+    assert.ok(existsSync(statePath), `${invocation.producer} must publish its terminal outcome; stderr: ${result.stderr}`);
+    const publication = JSON.parse(readFileSync(statePath, 'utf8')).runtimePublication;
+    assert.equal(publication.components.daemon.phase, 'failed');
+    assert.match(publication.components.daemon.error, /fixture workspace compiler failed/);
+    assert.equal(publication.phase, 'failed');
+  }
+});
 
 function createBundledWorkspaceSyncLoaderFixture(fixtureDir, options = {}) {
   const syncMarkerPath = join(fixtureDir, 'sync.json');
@@ -157,6 +210,88 @@ function bundledWorkspaceFailureEnv({ fixtureDir, loaderPath, storageDir }) {
     },
   });
 }
+
+function createSourceWorkspaceReadBoundary(fixtureDir, repoRoot) {
+  const markerPath = join(fixtureDir, 'source-workspace-read.txt');
+  const loaderPath = join(fixtureDir, 'source-workspace-read-loader.mjs');
+  const stubPaths = new Map();
+  // Make checkout build inputs unavailable at the filesystem boundary. Runtime
+  // admission, source preflight, snapshot validation and CLI launch stay real.
+  for (const [specifier, functionName] of [['node:fs', 'readFileSync'], ['node:fs/promises', 'readFile']]) {
+    const stubPath = join(fixtureDir, `${functionName}-boundary.mjs`);
+    stubPaths.set(specifier, pathToFileURL(stubPath).href);
+    writeFileSync(stubPath, [
+      `import * as real from ${JSON.stringify(specifier)};`,
+      `import { writeFileSync as writeMarker } from 'node:fs';`,
+      `export * from ${JSON.stringify(specifier)};`,
+      `export function ${functionName}(path, ...args) {`,
+      `  const value = String(path).replaceAll('\\\\', '/');`,
+      `  if (value.startsWith(${JSON.stringify(join(repoRoot, 'packages').replaceAll('\\', '/') + '/')}) && value.endsWith('/package.json')) {`,
+      `    writeMarker(${JSON.stringify(markerPath)}, value);`,
+      `    throw new Error('source workspace build inputs are unavailable');`,
+      `  }`,
+      `  return real.${functionName}(path, ...args);`,
+      `}`,
+      `export default { ...real, ${functionName} };`,
+      '',
+    ].join('\n'), 'utf8');
+  }
+  writeFileSync(loaderPath, [
+    `const boundaries = new Map(${JSON.stringify([...stubPaths])});`,
+    'export async function resolve(specifier, context, nextResolve) {',
+    '  if (boundaries.has(specifier) && ![...boundaries.values()].includes(context.parentURL)) {',
+    '    return { url: boundaries.get(specifier), shortCircuit: true };',
+    '  }',
+    '  return nextResolve(specifier, context);',
+    '}',
+    '',
+  ].join('\n'), 'utf8');
+  return { loaderPath, markerPath };
+}
+
+test('required runtime auth login does not admit checkout source workspaces before dispatch', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const repoRoot = coerceHappyMonorepoRootFromPath(rootDir);
+  const fixture = await createRuntimeSnapshotFixture(t, { cliEntrypoint: 'cli/happier.mjs' });
+  const { loaderPath, markerPath } = createSourceWorkspaceReadBoundary(fixture.root, repoRoot);
+  writeFileSync(join(fixture.stackDir, 'env'), [
+    `HAPPIER_STACK_STACK=${fixture.stackName}`,
+    `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
+    'HAPPIER_STACK_RUNTIME_MODE=require',
+    'HAPPIER_STACK_TAILSCALE_PREFER_PUBLIC_URL=0',
+    'HAPPIER_STACK_TAILSCALE_SERVE=0',
+    '',
+  ].join('\n'));
+  const env = bundledWorkspaceFailureEnv({ fixtureDir: fixture.root, loaderPath, storageDir: fixture.storageDir });
+  const result = await runNodeCapture([
+    join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'auth', fixture.stackName, 'login', '--no-open', '--print', '--json',
+  ], { cwd: rootDir, env });
+  assert.equal(result.code, 0, `runtime auth must remain available\n${result.stderr}`);
+  assert.equal(existsSync(markerPath), false, 'runtime auth must not read checkout source build inputs');
+  assert.match(JSON.parse(result.stdout).cmd, /runtime\/builds\/snap-1\/cli\/happier\.mjs/);
+});
+
+test('runtime CLI wrapper does not admit checkout source workspaces before auth login', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const repoRoot = coerceHappyMonorepoRootFromPath(rootDir);
+  const fixture = await createRuntimeSnapshotFixture(t, {
+    cliEntrypoint: 'cli/happier.mjs',
+    cliSource: 'process.stdout.write(JSON.stringify(process.argv.slice(2)) + "\\n");\n',
+  });
+  const { loaderPath, markerPath } = createSourceWorkspaceReadBoundary(fixture.root, repoRoot);
+  const env = {
+    ...bundledWorkspaceFailureEnv({ fixtureDir: fixture.root, loaderPath, storageDir: fixture.storageDir }),
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+    HAPPIER_STACK_REPO_DIR: repoRoot,
+  };
+  const result = await runNodeCapture([
+    join(rootDir, 'bin', 'happier.mjs'), '--runtime', 'auth', 'login', '--no-open',
+  ], { cwd: rootDir, env });
+  assert.equal(result.code, 0, `runtime CLI must remain available\n${result.stderr}`);
+  assert.equal(existsSync(markerPath), false, 'runtime CLI must not read checkout source build inputs');
+  assert.deepEqual(JSON.parse(result.stdout), ['auth', 'login', '--no-open']);
+});
 
 test('hstack wrapper refreshes bundled workspace packages for normal commands without replacing existing directories', async () => {
   const rootDir = stackRootDirFromMeta(import.meta.url);

@@ -17,7 +17,9 @@ function defaultBoundary() {
 
 export async function runForegroundChild({ command, args, options, boundary = defaultBoundary() }) {
   const child = boundary.spawn(command, args, options);
+  let interruptionSignal = null;
   const removeSignalHandlers = boundary.onSignal((signal) => {
+    interruptionSignal ??= signal;
     try {
       child.kill(signal);
     } catch {
@@ -27,7 +29,9 @@ export async function runForegroundChild({ command, args, options, boundary = de
   try {
     return await new Promise((resolvePromise, rejectPromise) => {
       child.once('error', rejectPromise);
-      child.once('close', (exitCode, signal) => resolvePromise({ exitCode, signal }));
+      child.once('close', (exitCode, signal) => resolvePromise(
+        interruptionSignal ? { exitCode: null, signal: interruptionSignal } : { exitCode, signal },
+      ));
     });
   } finally {
     removeSignalHandlers();

@@ -49,6 +49,21 @@ test('readStackInfoSnapshot reports active runtime snapshot metadata', async (t)
   }
 });
 
+test('stack info reports stale packages from the selected snapshot', async (t) => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'qa-last-green-info' });
+  const manifestPath = join(fixture.snapshotDir, 'manifest.json');
+  const { readFile } = await import('node:fs/promises');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const stalePackages = [{ packageName: '@happier-dev/example', outputIdentity: 'prior-output', diagnosticSummary: 'error TS2322' }];
+  manifest.components.daemon.stalePackages = stalePackages;
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
+  try {
+    const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+    assert.deepEqual(out.runtime.snapshotComponents.daemon.stalePackages, stalePackages);
+  } finally { restore(); }
+});
+
 test('readStackInfoSnapshot projects publication status from the existing runtime state', async (t) => {
   const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'runtime-publication-status' });
   const status = {

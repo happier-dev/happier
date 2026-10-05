@@ -10,7 +10,7 @@ let protocolComparableKeyFactory;
 function getProtocolComparableKeyFactory() {
   if (protocolComparableKeyFactory !== undefined) return protocolComparableKeyFactory;
   try {
-    const protocol = require('@happier-dev/protocol');
+    const protocol = require('@happier-dev/protocol/server/urls');
     protocolComparableKeyFactory =
       typeof protocol?.createServerUrlComparableKey === 'function' ? protocol.createServerUrlComparableKey : null;
   } catch {

@@ -8,9 +8,11 @@ import { coerceHappyMonorepoRootFromPath, getHappyStacksHomeDir } from '../paths
 import { withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
 import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
 
-const REFRESH_STATE_VERSION = 5;
+// v5 could publish an --ignore-scripts bootstrap as a complete install.
+const REFRESH_STATE_VERSION = 6;
 const REFRESH_MARKER = '.happier-stack-dependencies-ready';
 const DEPENDENCY_INSTALL_MODE = 'development-full-v1';
+export const SCRIPTLESS_DEPENDENCY_INSTALL_MODE = 'development-scriptless-v1';
 
 function installDirLockKey(installDir) {
   return createHash('sha256').update(resolve(installDir), 'utf-8').digest('hex');
@@ -138,7 +140,7 @@ async function readInputSnapshot({ inputPaths, installDir, componentDir }) {
   return snapshot.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-async function resolveDependencyIdentity({ installDir, runtimeIdentity }) {
+async function resolveDependencyIdentity({ installDir, runtimeIdentity, installMode = DEPENDENCY_INSTALL_MODE }) {
   if (runtimeIdentity) return runtimeIdentity;
   let packageManager = 'unknown';
   try {
@@ -155,17 +157,21 @@ async function resolveDependencyIdentity({ installDir, runtimeIdentity }) {
     nodeAbi: process.versions.modules ?? 'unknown',
     platform: process.platform,
     architecture: process.arch,
-    installMode: DEPENDENCY_INSTALL_MODE,
+    installMode,
   };
 }
 
-function dependencyIdentitiesMatch(before, after) {
+function dependencyIdentitySatisfies(before, after) {
+  // Runtime-ready installs also admit source tests, but a scripts-skipping
+  // bootstrap cannot prove that the runtime's postinstall outputs are ready.
   return before?.packageManager === after?.packageManager
     && before?.nodeVersion === after?.nodeVersion
     && before?.nodeAbi === after?.nodeAbi
     && before?.platform === after?.platform
     && before?.architecture === after?.architecture
-    && before?.installMode === after?.installMode;
+    && (before?.installMode === after?.installMode
+      || (before?.installMode === DEPENDENCY_INSTALL_MODE
+        && after?.installMode === SCRIPTLESS_DEPENDENCY_INSTALL_MODE));
 }
 
 function snapshotsMatch(before, after) {
@@ -206,11 +212,11 @@ async function repairSelfReferentialNodeModulesLink(installDir) {
   return true;
 }
 
-export async function inspectDependencyRefresh({ installDir, componentDir = installDir, runtimeIdentity }) {
+export async function inspectDependencyRefresh({ installDir, componentDir = installDir, runtimeIdentity, installMode }) {
   const nodeModules = join(installDir, 'node_modules');
   const inputPaths = await collectDependencyInputPaths({ installDir, componentDir });
   const inputSnapshot = await readInputSnapshot({ inputPaths, installDir, componentDir });
-  const dependencyIdentity = await resolveDependencyIdentity({ installDir, runtimeIdentity });
+  const dependencyIdentity = await resolveDependencyIdentity({ installDir, runtimeIdentity, installMode });
   // This is the admission record for the installed tree, so keep it with that
   // tree. Warm readers can prove freshness without touching mutation-lock paths,
   // and replacing node_modules naturally invalidates the old publication.
@@ -222,7 +228,7 @@ export async function inspectDependencyRefresh({ installDir, componentDir = inst
     : null;
   if (
     markerState?.version === REFRESH_STATE_VERSION
-    && dependencyIdentitiesMatch(markerState.identity, dependencyIdentity)
+    && dependencyIdentitySatisfies(markerState.identity, dependencyIdentity)
     && Array.isArray(markerState.inputs)
   ) {
     return {
@@ -253,25 +259,26 @@ export async function withDependencyRefresh({
   env = process.env,
   onDependenciesReady = null,
   runtimeIdentity,
+  installMode,
 }, refresh) {
   if (typeof refresh !== 'function') throw new TypeError('withDependencyRefresh requires a refresh callback');
   if (onDependenciesReady != null && typeof onDependenciesReady !== 'function') {
     throw new TypeError('withDependencyRefresh requires onDependenciesReady to be a function when provided');
   }
   const shouldRunDependencyReadyAction = onDependenciesReady !== null;
-  const beforeLock = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity });
+  const beforeLock = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, installMode });
   if (!beforeLock.required && !shouldRunDependencyReadyAction) return { refreshed: false, reason: 'up-to-date' };
 
   return await withJsonOwnerFileLock(async () => {
-    const afterDependencyLock = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity });
+    const afterDependencyLock = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, installMode });
     if (!afterDependencyLock.required && !shouldRunDependencyReadyAction) return { refreshed: false, reason: 'up-to-date' };
     const mutate = async () => {
-      let beforeMutation = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity });
+      let beforeMutation = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, installMode });
       let result = { refreshed: false, reason: 'up-to-date' };
       if (beforeMutation.selfReferentialNodeModulesLinkPath !== null) {
         const repaired = await repairSelfReferentialNodeModulesLink(installDir);
         if (repaired) {
-          beforeMutation = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity });
+          beforeMutation = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, installMode });
           result = {
             refreshed: false,
             reason: 'repaired-self-referential-node-modules-link',
@@ -286,9 +293,9 @@ export async function withDependencyRefresh({
           installDir,
           componentDir,
         });
-        const refreshedDependencyIdentity = await resolveDependencyIdentity({ installDir, runtimeIdentity });
+        const refreshedDependencyIdentity = await resolveDependencyIdentity({ installDir, runtimeIdentity, installMode });
         const superseded = !snapshotsMatch(beforeMutation.inputSnapshot, refreshedInputSnapshot)
-          || !dependencyIdentitiesMatch(beforeMutation.dependencyIdentity, refreshedDependencyIdentity);
+          || !dependencyIdentitySatisfies(beforeMutation.dependencyIdentity, refreshedDependencyIdentity);
         await writeJsonAtomic(beforeMutation.markerPath, {
           version: REFRESH_STATE_VERSION,
           identity: superseded ? beforeMutation.dependencyIdentity : refreshedDependencyIdentity,

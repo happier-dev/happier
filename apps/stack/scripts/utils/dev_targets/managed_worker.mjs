@@ -28,7 +28,7 @@ function guestSshPort(instance) {
   return value;
 }
 
-function renderGuestSshConfig({
+export function renderGuestSshConfig({
   alias,
   user,
   port,
@@ -41,7 +41,7 @@ function renderGuestSshConfig({
 }) {
   return [
     `Host ${alias}`,
-    '  HostName 127.0.0.1',
+    `  HostName ${alias}`,
     `  HostKeyAlias ${alias}`,
     `  Port ${port}`,
     `  User ${user}`,
@@ -57,7 +57,7 @@ function renderGuestSshConfig({
     '  ControlMaster auto',
     '  ControlPersist 600',
     `  ControlPath ${sshConfigQuote(controlPath)}`,
-    `  ProxyCommand ssh -T -F ${sshConfigQuote(outerSshConfigFile)} ${outerSsh} -W %h:%p`,
+    `  ProxyCommand ssh -T -F ${sshConfigQuote(outerSshConfigFile)} ${outerSsh} -W 127.0.0.1:%p`,
     '',
   ].join('\n');
 }
@@ -70,7 +70,7 @@ function replaceSshConfigDirective(contents, directive, value) {
   return contents.replace(expression, `$1${directive} ${value}`);
 }
 
-function readSshConfigDirective(contents, directive) {
+export function readSshConfigDirective(contents, directive) {
   const expression = new RegExp(`^\\s*${directive}\\s+(.+?)\\s*$`, 'mi');
   const match = contents.match(expression);
   if (!match) throw new Error(`[dev-targets] managed guest SSH config is missing ${directive}`);
@@ -165,6 +165,13 @@ export async function reconcileManagedLimaDevTargetSshPublication(
   const hostKeyAliasAdded = !/^\s*HostKeyAlias\s+/m.test(next);
   if (hostKeyAliasAdded) {
     next = next.replace(/^(\s*HostName\s+.*)$/m, `$1\n  HostKeyAlias ${alias}`);
+  }
+  // Published proxy configs used loopback as the multiplex identity. Give each
+  // guest its own identity while retaining the outer host's loopback destination.
+  if (/^\s*HostName\s+127\.0\.0\.1\s*$/m.test(next) &&
+      /^\s*ProxyCommand\s+.* -W %h:%p\s*$/m.test(next)) {
+    next = replaceSshConfigDirective(next, 'HostName', alias);
+    next = next.replace(/( -W )%h:%p(?=\s*$)/m, (_, prefix) => `${prefix}127.0.0.1:%p`);
   }
   const changed = next !== original;
   if (!changed && !guestVerified) return { changed: false, port, hostKeyAliasAdded: false };

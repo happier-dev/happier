@@ -178,17 +178,18 @@ async function waitForWorkspaceBundleLockChange({
   claimSnapshot,
   maxWaitMs,
   signal,
+  watchState,
 }) {
   signal?.throwIfAborted();
   await new Promise((resolve, reject) => {
     let settled = false;
-    let watcher = null;
     let timer = null;
     const finish = () => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      watcher?.close();
+      watchState.onChange = null;
+      watchState.onError = null;
       signal?.removeEventListener('abort', abort);
       if (signal?.aborted) reject(signal.reason);
       else resolve();
@@ -204,13 +205,23 @@ async function waitForWorkspaceBundleLockChange({
         !lockSnapshotUnchanged(readLockOwnerSnapshot(lockPath), lockSnapshot)
         || !lockSnapshotUnchanged(readLockOwnerSnapshot(claimPath), claimSnapshot)
       );
-      watcher = watch(dirname(lockPath), { persistent: false }, (_event, filename) => {
+      watchState.onChange = (filename) => {
         const changedName = filename == null ? '' : String(filename);
         // A queued event can describe the waiter's own already-observed claim refresh.
         // Waking for it refreshes the claim again and can starve the owner's completion.
         if ((!changedName || changedName === lockName || changedName === claimName) && snapshotsChanged()) finish();
-      });
-      watcher.on('error', finish);
+      };
+      watchState.onError = finish;
+      if (!watchState.watcher) {
+        watchState.watcher = watch(dirname(lockPath), { persistent: false }, (_event, filename) => {
+          watchState.onChange?.(filename);
+        });
+        watchState.watcher.on('error', () => {
+          watchState.watcher?.close();
+          watchState.watcher = null;
+          watchState.onError?.();
+        });
+      }
       if (snapshotsChanged()) queueMicrotask(finish);
     } catch {
       // The timer remains the portable fallback when directory watching is unavailable.
@@ -321,12 +332,21 @@ function hasFreshAuthenticatedOwnerHeartbeat(snapshot, staleAfterMs, nowMs) {
     && nowMs - updatedAtMs <= staleAfterMs;
 }
 
-function workspaceBundleLockWaitTimedOut(snapshot, staleAfterMs, startedAt, timeoutMs) {
+function workspaceBundleLockWaitTimedOut(lockPath, snapshot, staleAfterMs, startedAt, timeoutMs, options, priorityClaim = false) {
   const nowMs = Date.now();
   // Healthy authenticated owners may publish for longer than the contention budget. The existing
-  // heartbeat/reclamation policy owns their lifetime; other waits retain the elapsed bound.
-  return nowMs - startedAt > timeoutMs
-    && !hasFreshAuthenticatedOwnerHeartbeat(snapshot, staleAfterMs, nowMs);
+  // heartbeat/reclamation policy owns their lifetime. An EEXIST/owner observation can straddle
+  // release or initialization, so confirm the same blocker before applying the elapsed bound.
+  if (nowMs - startedAt <= timeoutMs || hasFreshAuthenticatedOwnerHeartbeat(snapshot, staleAfterMs, nowMs)) {
+    return false;
+  }
+  const currentSnapshot = readLockOwnerSnapshot(lockPath);
+  if (!currentSnapshot.exists || !lockSnapshotUnchanged(snapshot, currentSnapshot)) return false;
+  // Partial initialization has no owner to time out. The acquisition loop already waits for
+  // initializationGraceMs and reclaims stable malformed bytes after that existing window.
+  if (currentSnapshot.readable && currentSnapshot.owner === null) return false;
+  const shouldReclaim = priorityClaim ? shouldReclaimPriorityClaimSnapshot : shouldReclaimLockSnapshot;
+  return !shouldReclaim(currentSnapshot, staleAfterMs, nowMs, options);
 }
 
 function reclaimDecisionFromLocalProcess(snapshot, options = {}) {
@@ -887,25 +907,17 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
   let heartbeat = null;
   let heartbeatWorker = null;
   let waited = false;
-  let tryResolveWaiterOnNextIteration = false;
-  const waitForLockChange = options.waitForLockChangeImpl ?? waitForWorkspaceBundleLockChange;
+  // The acquisition owns one native watch. Reopening it on every fallback wake
+  // repeatedly registers FSEvents clients during long macOS build contention.
+  const watchState = { watcher: null, onChange: null, onError: null };
+  const waitForLockChange = options.waitForLockChangeImpl
+    ?? ((input) => waitForWorkspaceBundleLockChange({ ...input, watchState }));
   const claimHistoryOptions = { staleAfterMs, initializationGraceMs, options, priorityClaim: true };
   classifyRetainedLockSnapshots(claimPath, claimHistoryOptions);
 
   try {
     while (true) {
       options.signal?.throwIfAborted();
-      if (tryResolveWaiterOnNextIteration && typeof options.tryResolveWaiter === 'function') {
-        tryResolveWaiterOnNextIteration = false;
-        const resolution = await options.tryResolveWaiter();
-        options.signal?.throwIfAborted();
-        if (resolution?.resolved === true) {
-          clearPriorityClaimIfOwned(claimPath, ownClaimRaw);
-          ownClaimRaw = null;
-          return resolution.value;
-        }
-      }
-
       if (ownClaimRaw !== null) {
         ownClaimRaw = refreshPriorityClaim({
           claimPath,
@@ -924,7 +936,11 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
         }
         if (claimSnapshot.exists) {
           const waitSnapshot = lockSnapshot.exists ? lockSnapshot : claimSnapshot;
-          if (workspaceBundleLockWaitTimedOut(waitSnapshot, staleAfterMs, startedAt, timeoutMs)) {
+          if (workspaceBundleLockWaitTimedOut(
+            lockSnapshot.exists ? lockPath : claimPath,
+            waitSnapshot, staleAfterMs, startedAt, timeoutMs,
+            lockOwnerObservationOptions(options, initializationGraceMs), !lockSnapshot.exists,
+          )) {
             const errorLabel = options.errorLabel ?? 'workspace bundle lock';
             throw createWorkspaceBundleLockTimeoutError({
               errorLabel,
@@ -934,7 +950,6 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
           }
           waited = true;
           notifyWaiter(options, lockPath, waitSnapshot, startedAt, staleAfterMs, timeoutMs);
-          const waitedOwnerToken = String(waitSnapshot.owner?.token ?? '');
           await waitForLockChange({
           signal: options.signal,
             lockPath,
@@ -950,9 +965,6 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
               initializationGraceMs,
             }),
           });
-          const currentSnapshot = readLockOwnerSnapshot(lockPath);
-          tryResolveWaiterOnNextIteration = !currentSnapshot.exists
-            || String(currentSnapshot.owner?.token ?? '') !== waitedOwnerToken;
           continue;
         }
       }
@@ -1036,13 +1048,15 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
           if (claim.acquired) ownClaimRaw = claim.raw;
           if (claim.retry) continue;
         }
-        if (workspaceBundleLockWaitTimedOut(snapshot, staleAfterMs, startedAt, timeoutMs)) {
+        if (workspaceBundleLockWaitTimedOut(
+          lockPath, snapshot, staleAfterMs, startedAt, timeoutMs,
+          lockOwnerObservationOptions(options, initializationGraceMs),
+        )) {
           const errorLabel = options.errorLabel ?? 'workspace bundle lock';
           throw createWorkspaceBundleLockTimeoutError({ errorLabel, lockPath, snapshot });
         }
         waited = true;
         notifyWaiter(options, lockPath, snapshot, startedAt, staleAfterMs, timeoutMs);
-        const waitedOwnerToken = String(snapshot.owner?.token ?? '');
         await waitForLockChange({
           signal: options.signal,
           lockPath,
@@ -1058,15 +1072,14 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
             initializationGraceMs,
           }),
         });
-        const currentSnapshot = readLockOwnerSnapshot(lockPath);
-        tryResolveWaiterOnNextIteration = !currentSnapshot.exists
-          || String(currentSnapshot.owner?.token ?? '') !== waitedOwnerToken;
       }
     }
   } catch (error) {
     clearPriorityClaimIfOwned(claimPath, ownClaimRaw);
     classifyRetainedLockSnapshots(claimPath, { ...claimHistoryOptions, releasedOwner: { ownerToken, processInstanceFingerprint } });
     throw error;
+  } finally {
+    watchState.watcher?.close();
   }
 
   try {
@@ -1099,6 +1112,15 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
       }
     };
     options.signal?.throwIfAborted();
+    // A currentness/import probe can outlive the priority handoff lease. Admit the
+    // waiter first so the existing owner heartbeat protects its progress and no
+    // publisher can replace the output graph while the waiter validates reuse.
+    if (waited && typeof options.tryResolveWaiter === 'function') {
+      const resolution = await options.tryResolveWaiter();
+      options.signal?.throwIfAborted();
+      assertOwned();
+      if (resolution?.resolved === true) return resolution.value;
+    }
     return await fn({
       waited,
       lockPath,
@@ -1185,7 +1207,11 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
         }
         if (claimSnapshot.exists) {
           const waitSnapshot = lockSnapshot.exists ? lockSnapshot : claimSnapshot;
-          if (workspaceBundleLockWaitTimedOut(waitSnapshot, staleAfterMs, startedAt, timeoutMs)) {
+          if (workspaceBundleLockWaitTimedOut(
+            lockSnapshot.exists ? lockPath : claimPath,
+            waitSnapshot, staleAfterMs, startedAt, timeoutMs,
+            lockOwnerObservationOptions(options, initializationGraceMs), !lockSnapshot.exists,
+          )) {
             const errorLabel = options.errorLabel ?? 'workspace bundle lock';
             throw createWorkspaceBundleLockTimeoutError({
               errorLabel,
@@ -1278,7 +1304,10 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
           if (claim.acquired) ownClaimRaw = claim.raw;
           if (claim.retry) continue;
         }
-        if (workspaceBundleLockWaitTimedOut(snapshot, staleAfterMs, startedAt, timeoutMs)) {
+        if (workspaceBundleLockWaitTimedOut(
+          lockPath, snapshot, staleAfterMs, startedAt, timeoutMs,
+          lockOwnerObservationOptions(options, initializationGraceMs),
+        )) {
           const errorLabel = options.errorLabel ?? 'workspace bundle lock';
           throw createWorkspaceBundleLockTimeoutError({ errorLabel, lockPath, snapshot });
         }

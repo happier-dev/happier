@@ -17,6 +17,7 @@ import { ensureStackRuntimeModePrefer } from './runtime/shared/ensureStackRuntim
 import { resolveRuntimeBuildAuthority } from './runtime/shared/runtime_build_authority.mjs';
 import { createRuntimeSnapshotId } from './runtime/shared/runtime_snapshot_identity.mjs';
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
+import { withRuntimePublicationAdmission } from './build/build_stack_artifacts.mjs';
 
 function resolveSelectedComponents(flags) {
   const explicit = {
@@ -85,6 +86,7 @@ function resolveActivationComponentFingerprints({ artifacts, currentInspection }
 }
 
 /**
+ * Producer admission covers artifact discovery, publication, selection and pruning.
  * Artifact discovery is deliberately outside the producer snapshot lock. The
  * lock covers only validating the final graph, writing its manifest/reference
  * snapshot, and advancing the producer/explicit consumer pointers.
@@ -105,81 +107,83 @@ export async function activateRuntimeForAuthority({
   pruneRuntimeSnapshotsImpl = pruneRuntimeSnapshots,
   ensureStackRuntimeModePreferImpl = ensureStackRuntimeModePrefer,
 }) {
-  const stackBaseDir = authority.producerStackBaseDir;
-  const sourceMetadata = await collectBuildSourceMetadataImpl({ rootDir, env });
-  const resolveSelectedArtifacts = async () => {
-    const resolvedArtifacts = {};
-    for (const component of ['web', 'server', 'daemon']) {
-      if (!selectedComponents[component]) continue;
-      const artifact = await resolveLatestComponentArtifactImpl({ stackBaseDir, component });
-      if (!artifact) {
-        throw new Error(`[runtime] no ${component} artifact is available for activation. Build it first.`);
+  return await withRuntimePublicationAdmission({ authority, env, withWorkspaceBundleLockImpl, publish: async () => {
+    const stackBaseDir = authority.producerStackBaseDir;
+    const sourceMetadata = await collectBuildSourceMetadataImpl({ rootDir, env });
+    const resolveSelectedArtifacts = async () => {
+      const resolvedArtifacts = {};
+      for (const component of ['web', 'server', 'daemon']) {
+        if (!selectedComponents[component]) continue;
+        const artifact = await resolveLatestComponentArtifactImpl({ stackBaseDir, component });
+        if (!artifact) {
+          throw new Error(`[runtime] no ${component} artifact is available for activation. Build it first.`);
+        }
+        resolvedArtifacts[component] = artifact;
       }
-      resolvedArtifacts[component] = artifact;
-    }
-    return resolvedArtifacts;
-  };
-  let artifacts = await resolveSelectedArtifacts();
+      return resolvedArtifacts;
+    };
+    let artifacts = await resolveSelectedArtifacts();
 
-  const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
-  const publication = await withWorkspaceBundleLockImpl(async () => {
-    // The outside lookup avoids holding the snapshot lock during availability
-    // checks. Re-read the selected artifact at commit time so a completed
-    // publisher cannot be overwritten with the stale pre-lock selection.
-    artifacts = await resolveSelectedArtifacts();
-    const currentInspection = await inspectActiveRuntimeSnapshotImpl({ stackBaseDir });
-    const componentFingerprints = resolveActivationComponentFingerprints({ artifacts, currentInspection });
-    const snapshotId = createRuntimeSnapshotId({ sourceMetadata, componentFingerprints });
-    const published = await publishRuntimeSnapshotImpl({
-      producerStackBaseDir: stackBaseDir,
-      snapshotId,
+    const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
+    const publication = await withWorkspaceBundleLockImpl(async () => {
+      // The outside lookup avoids holding the snapshot lock during availability
+      // checks. Re-read the selected artifact at commit time so a completed
+      // publisher cannot be overwritten with the stale pre-lock selection.
+      artifacts = await resolveSelectedArtifacts();
+      const currentInspection = await inspectActiveRuntimeSnapshotImpl({ stackBaseDir });
+      const componentFingerprints = resolveActivationComponentFingerprints({ artifacts, currentInspection });
+      const snapshotId = createRuntimeSnapshotId({ sourceMetadata, componentFingerprints });
+      const published = await publishRuntimeSnapshotImpl({
+        producerStackBaseDir: stackBaseDir,
+        snapshotId,
+        sourceMetadata,
+        artifacts,
+        runtimeSnapshotKeepCount: retentionPolicy.runtimeSnapshotKeepCount,
+        externalReferenceStorageRoot: getStacksStorageRoot(env),
+        pruneAfterPublish: false,
+      });
+      await selectRuntimeSnapshotImpl({
+        consumerStackBaseDir: stackBaseDir,
+        producerStackBaseDir: stackBaseDir,
+        producerStackName: authority.producerStackName,
+        snapshotId: published.snapshotId,
+      });
+      const selectedRuntime = await selectRuntimeSnapshotImpl({
+        consumerStackBaseDir: authority.consumerStackBaseDir,
+        producerStackBaseDir: stackBaseDir,
+        producerStackName: authority.producerStackName,
+        snapshotId: published.snapshotId,
+      });
+      return {
+        published,
+        runtime: composeRuntimePublicationResult({
+          consumerStackName: authority.consumerStackName,
+          producerStackName: authority.producerStackName,
+          published,
+          selectedRuntime,
+        }),
+      };
+    }, {
+      lockPath: runtimePaths.lockPath,
+      errorLabel: 'runtime snapshot build lock',
+      timeoutMs: Number(env.HAPPIER_STACK_RUNTIME_BUILD_LOCK_TIMEOUT_MS) || undefined,
+    });
+
+    await pruneRuntimeSnapshotsImpl({
+      stackBaseDir,
+      keepCount: retentionPolicy.runtimeSnapshotKeepCount,
+      preserveSnapshotIds: [publication.published.snapshotId],
+      externalReferenceStorageRoot: getStacksStorageRoot(env),
+    });
+    const { envPath } = resolveStackEnvPath(stackName, env);
+    await ensureStackRuntimeModePreferImpl({ envPath });
+    return {
+      stackBaseDir,
       sourceMetadata,
       artifacts,
-      runtimeSnapshotKeepCount: retentionPolicy.runtimeSnapshotKeepCount,
-      externalReferenceStorageRoot: getStacksStorageRoot(env),
-      pruneAfterPublish: false,
-    });
-    await selectRuntimeSnapshotImpl({
-      consumerStackBaseDir: stackBaseDir,
-      producerStackBaseDir: stackBaseDir,
-      producerStackName: authority.producerStackName,
-      snapshotId: published.snapshotId,
-    });
-    const selectedRuntime = await selectRuntimeSnapshotImpl({
-      consumerStackBaseDir: authority.consumerStackBaseDir,
-      producerStackBaseDir: stackBaseDir,
-      producerStackName: authority.producerStackName,
-      snapshotId: published.snapshotId,
-    });
-    return {
-      published,
-      runtime: composeRuntimePublicationResult({
-        consumerStackName: authority.consumerStackName,
-        producerStackName: authority.producerStackName,
-        published,
-        selectedRuntime,
-      }),
+      runtime: publication.runtime,
     };
-  }, {
-    lockPath: runtimePaths.lockPath,
-    errorLabel: 'runtime snapshot build lock',
-    timeoutMs: Number(env.HAPPIER_STACK_RUNTIME_BUILD_LOCK_TIMEOUT_MS) || undefined,
-  });
-
-  await pruneRuntimeSnapshotsImpl({
-    stackBaseDir,
-    keepCount: retentionPolicy.runtimeSnapshotKeepCount,
-    preserveSnapshotIds: [publication.published.snapshotId],
-    externalReferenceStorageRoot: getStacksStorageRoot(env),
-  });
-  const { envPath } = resolveStackEnvPath(stackName, env);
-  await ensureStackRuntimeModePreferImpl({ envPath });
-  return {
-    stackBaseDir,
-    sourceMetadata,
-    artifacts,
-    runtime: publication.runtime,
-  };
+  } });
 }
 
 async function main() {

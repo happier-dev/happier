@@ -190,7 +190,7 @@ test('dev-vm exec preserves an explicit guest cwd through direct hstack and the 
   assert.equal(yarn.code, 0, yarn.stderr);
 
   const calls = await readFile(log, 'utf8');
-  assert.equal((calls.match(/shell --workdir \/home\/happier\/workspace\/dev candidate -- sh -lc pwd/g) ?? []).length, 2);
+  assert.equal((calls.match(/shell --workdir \/home\/happier\/workspace\/dev candidate -- systemd-run --user --scope --quiet --unit=\S+ -- sh -lc pwd/g) ?? []).length, 2);
   assert.doesNotMatch(calls, /create|delete/);
 });
 

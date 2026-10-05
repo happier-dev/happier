@@ -606,8 +606,16 @@ export async function updateStackRuntimeStateFile(statePath, patch) {
   return await withStackRuntimeStateMutationLock(statePath, async () => {
     const existing = (await readStackRuntimeStateFile(statePath)) ?? {};
     const next = deepMerge(existing, patch ?? {});
+    if (isPlainObject(patch?.runtimePublication?.components)) {
+      next.runtimePublication.phase = resolveRuntimePublicationPhase(next.runtimePublication.components);
+    }
     return await writeStackRuntimeStateFileUnlocked(statePath, next);
   });
+}
+
+export function resolveRuntimePublicationPhase(components) {
+  const phases = Object.values(components ?? {}).map((entry) => entry?.phase);
+  return ['publishing', 'failed', 'stale'].find((phase) => phases.includes(phase)) ?? 'current';
 }
 
 export async function recordStackRuntimeStart(

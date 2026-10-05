@@ -1,3 +1,4 @@
+import { runManagedWslOperation } from './managed_wsl.mjs';
 import { readFile } from 'node:fs/promises';
 
 import { createManagedLimaHostExecutor } from '../managed_lima/host_executor.mjs';
@@ -52,8 +53,12 @@ export async function startManagedDevTargetRuntime(
     getRuntimeStatus = getManagedLimaStatus,
     ensureGuestLoginManager = ensureManagedLimaGuestLoginManager,
     reconcileSshPublication = reconcileManagedLimaDevTargetSshPublication,
+    runCaptureResult,
   } = {},
 ) {
+  if (target?.managedRuntime?.kind === 'wsl') {
+    return await runManagedWslOperation({ target, action: 'Start', env }, { runCaptureResult });
+  }
   if (!target?.managedRuntime) return { changed: false, status: 'Unmanaged' };
   const executor = createExecutor(target, env);
   const lifecycle = await startRuntime({
@@ -93,6 +98,7 @@ export async function startDevTargetRuntime(
 
 export async function doctorManagedDevTargetRuntime({ target, env = process.env }) {
   if (!target?.managedRuntime) return null;
+  if (target.managedRuntime.kind === 'wsl') return await runManagedWslOperation({ target, action: 'Doctor', env });
   const executor = createManagedDevTargetRuntimeExecutor(target, env);
   return await doctorManagedLimaInstance({
     executor,
@@ -117,6 +123,12 @@ export async function applyManagedDevTargetCapacity(
 ) {
   const runtime = target?.managedRuntime;
   const resources = resolveManagedRuntimeCapacityResources(runtime);
+  if (runtime?.kind === 'wsl') {
+    const diagnosis = await runManagedWslOperation({ target, action: 'Doctor', env });
+    if (diagnosis.ok) return { changed: false, status: diagnosis.status };
+    if (!force) throw new Error('[dev-targets] WSL capacity changes require --force; applying them restarts its Linux guest');
+    return { ...await runManagedWslOperation({ target, action: 'Capacity', env }), changed: true };
+  }
   if (!runtime || !resources) {
     throw new Error(
       `[dev-targets] target ${String(target?.name ?? 'unknown')} has no configured managed Lima capacity`,

@@ -725,7 +725,8 @@ async function main() {
       command: executable,
       args: guestArgs.slice(1),
     });
-    if (Number.isInteger(result?.exitCode) && result.exitCode !== 0) process.exitCode = result.exitCode;
+    if (result?.signal) process.kill(process.pid, result.signal);
+    else if (Number.isInteger(result?.exitCode) && result.exitCode !== 0) process.exitCode = result.exitCode;
     return;
   }
   throw new Error(`[dev-vm] unknown command: ${command}`);

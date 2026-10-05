@@ -464,6 +464,7 @@ test('immutable server code artifacts reject a different server support identity
         entrypoint,
       },
     });
+    await rm(oldSupportArtifactDir, { recursive: true });
     let buildCount = 0;
     await assert.rejects(
       buildServerArtifact({

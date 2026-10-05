@@ -12,6 +12,7 @@ import { expoExec } from '../utils/expo/command.mjs';
 import { pathExists } from '../utils/fs/fs.mjs';
 import { buildStackWebExportEnv } from '../utils/ui/ui_export_env.mjs';
 import { artifactPayloadDir, readArtifactManifest, readReusableArtifactManifest, writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
+import { assertWebArtifactPayload } from '../runtime/shared/web_payload.mjs';
 
 function runCanonicalUiPostinstall({ uiDir, env }) {
   execYarn(['-s', 'postinstall:real'], {
@@ -157,6 +158,7 @@ export async function exportWebPayloadToArtifactPayloadDir({
       );
     }
 
+    await assertWebArtifactPayload({ payloadDir: stagingDir, entrypoint: 'index.html' });
     await moveDir({ fromDir: stagingDir, toDir: payloadDir });
     ok = true;
     return 'index.html';
@@ -181,6 +183,7 @@ export async function buildWebArtifact({
   artifactDir,
   artifactFingerprint,
   sourceMetadata,
+  stalePackages = [],
   forceRebuild = false,
   env = process.env,
 }) {
@@ -213,10 +216,12 @@ export async function buildWebArtifact({
       manifest: {
         version: 1,
         component: 'web',
+        target: { platform: process.platform, arch: process.arch },
         artifactFingerprint,
         sourceFingerprint: sourceMetadata.sourceFingerprint,
         createdAt: sourceMetadata.builtAt,
         source: sourceMetadata,
+        ...(stalePackages.length ? { stalePackages } : {}),
         payloadDir: 'payload',
         entrypoint,
       },

@@ -11,6 +11,7 @@ const result = await publishRepositoryRuntimeSnapshot({
   rootDir: request.rootDir,
   authority: request.authority,
   requestedComponents: request.requestedComponents,
+  observedStartedSeq: request.observedStartedSeq,
   env: process.env,
 });
 
@@ -19,4 +20,5 @@ process.stdout.write(`${RUNTIME_PUBLICATION_RESULT_PREFIX}${JSON.stringify({
   snapshotId: result.snapshotId ?? null,
   changed: result.changed === true,
   reused: result.reused === true,
+  publicationFlight: result.publicationFlight,
 })}\n`);

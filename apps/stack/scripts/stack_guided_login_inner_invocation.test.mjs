@@ -132,11 +132,19 @@ test('guided stack auth login invocation uses the active runtime snapshot cli wh
       rootDir,
       stackName: 'dev-built',
       webappUrl: 'http://localhost:5555',
-      env: fixture.buildEnv({ HAPPIER_STACK_RUNTIME_MODE: 'prefer' }),
+      env: fixture.buildEnv({
+        HAPPIER_STACK_RUNTIME_MODE: 'require',
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '0',
+        HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: '/other-checkout/dist/index.mjs',
+        HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: 'ffffffffffffffff',
+      }),
     });
 
     assert.equal(inv.command, join(snapshotDir, 'cli', 'happier'));
     assert.deepEqual(inv.args, ['auth', 'login']);
+    assert.equal(inv.env.HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED, '1');
+    assert.equal(inv.env.HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT, join(snapshotDir, 'cli', 'package-dist', 'index.mjs'));
+    assert.equal(inv.env.HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT, '0123456789abcdef');
   } finally {
     await fixture.cleanup();
   }

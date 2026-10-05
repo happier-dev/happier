@@ -17,7 +17,11 @@ import {
 import { readEnvObjectFromFile } from '../env/read.mjs';
 import { getWebappUrlEnvOverride, resolveServerUrls } from '../server/urls.mjs';
 import { resolveStackRuntimeLaunchContext } from '../../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
-import { resolveRuntimeManifestEntrypoint } from '../../runtime/shared/runtime_manifest.mjs';
+import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from '../../runtime/shared/borrowed_expo.mjs';
+import {
+  applyCliRuntimeLaunchProvenanceEnv,
+  resolveCliRuntimeLaunchSpec,
+} from '../../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 import { resolveStackCredentialPaths } from './credentials_paths.mjs';
 
 function extractEnvVar(cmd, key) {
@@ -26,8 +30,22 @@ function extractEnvVar(cmd, key) {
   return m?.[1] ? String(m[1]) : '';
 }
 
-async function resolveRuntimeExpoWebappUrlForAuth({ stackName }) {
+async function resolveRuntimeExpoWebappUrlForAuth({ rootDir, stackName, env = process.env }) {
   try {
+    const { envPath } = resolveStackEnvPath(stackName, env);
+    const stackEnv = await readEnvObjectFromFile(envPath);
+    const componentEnv = { ...env, ...stackEnv };
+    const producerStackName = componentEnv.HAPPIER_STACK_EXPO_SOURCE_STACK;
+    if (isBorrowedExpoConsumer({ consumerStackName: stackName, producerStackName })) {
+      const borrowedExpo = await resolveBorrowedExpoRuntime({ rootDir, producerStackName, env: componentEnv });
+      if (!borrowedExpo?.running) return '';
+      const serverPort = await resolveServerPortForCoreAuth({ stackName, env: componentEnv });
+      return buildBorrowedExpoUiUrl({
+        consumerHost: resolveLocalhostHost({ stackMode: true, stackName }),
+        expoPort: borrowedExpo.port,
+        serverPort,
+      }) || '';
+    }
     const runtimeStatePath = getStackRuntimeStatePath(stackName);
     const st = await readStackRuntimeStateFile(runtimeStatePath);
     const ownerPid = Number(st?.ownerPid);
@@ -138,7 +156,7 @@ async function resolveExpoWebappUrlForAuth({ rootDir, stackName, env = process.e
 }
 
 export async function resolveBestExpoWebappUrlForAuth({ rootDir, stackName, env = process.env, timeoutMs } = {}) {
-  const runtimeExpoUrl = await resolveRuntimeExpoWebappUrlForAuth({ stackName });
+  const runtimeExpoUrl = await resolveRuntimeExpoWebappUrlForAuth({ rootDir, stackName, env });
   if (runtimeExpoUrl) {
     return await preferStackLocalhostUrl(runtimeExpoUrl, { stackName });
   }
@@ -383,7 +401,7 @@ export async function resolveStackWebappTargetForAuth({ rootDir, stackName, env 
   // Runtime-backed stacks may place Expo on another target while the server remains API-only.
   // Trust only the Expo endpoint published by the active runtime before falling back to its server UI.
   if (runtimeLaunchContext.snapshot) {
-    const runtimeExpoUrl = await resolveRuntimeExpoWebappUrlForAuth({ stackName });
+    const runtimeExpoUrl = await resolveRuntimeExpoWebappUrlForAuth({ rootDir, stackName, env });
     if (runtimeExpoUrl) {
       return {
         webappUrl: await preferStackLocalhostUrl(runtimeExpoUrl, { stackName }),
@@ -517,17 +535,11 @@ async function prepareCoreAuthEnv({ stackName, webappUrl, env = process.env } = 
   };
 }
 
-export async function resolveStackAuthCliExecutable({ rootDir, env = process.env } = {}) {
+async function resolveStackAuthCliLaunch({ rootDir, env = process.env } = {}) {
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env });
-  const runtimeCliPath = runtimeLaunchContext.snapshot
-    ? resolveRuntimeManifestEntrypoint({
-        snapshotPath: runtimeLaunchContext.snapshot.snapshotPath,
-        manifest: runtimeLaunchContext.snapshot.manifest,
-        component: 'daemon',
-      })
-    : '';
-  if (runtimeCliPath) {
-    return runtimeCliPath;
+  if (runtimeLaunchContext.snapshot) {
+    const cliLaunchSpec = resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot });
+    return { cliExecutable: cliLaunchSpec.command, cliLaunchSpec };
   }
 
   const cliDir = getComponentDir(rootDir, 'happier-cli', env);
@@ -539,11 +551,16 @@ export async function resolveStackAuthCliExecutable({ rootDir, env = process.env
 
   for (const candidate of preferredEntrypoints) {
     if (existsSync(candidate)) {
-      return candidate;
+      return { cliExecutable: candidate, cliLaunchSpec: null };
     }
   }
 
-  return preferredEntrypoints[0];
+  return { cliExecutable: preferredEntrypoints[0], cliLaunchSpec: null };
+}
+
+export async function resolveStackAuthCliExecutable({ rootDir, env = process.env } = {}) {
+  const launch = await resolveStackAuthCliLaunch({ rootDir, env });
+  return launch.cliExecutable;
 }
 
 export async function buildStackAuthLoginInvocation({ rootDir, stackName, webappUrl, env = process.env } = {}) {
@@ -555,8 +572,11 @@ export async function buildStackAuthLoginInvocation({ rootDir, stackName, webapp
   if (!url) {
     throw new Error('[auth] buildStackAuthLoginInvocation requires a webappUrl');
   }
-  const cliExecutable = await resolveStackAuthCliExecutable({ rootDir: root, env });
-  const merged = { ...(env ?? process.env), HAPPIER_WEBAPP_URL: url };
+  const { cliExecutable, cliLaunchSpec } = await resolveStackAuthCliLaunch({ rootDir: root, env });
+  const merged = applyCliRuntimeLaunchProvenanceEnv({
+    env: { ...(env ?? process.env), HAPPIER_WEBAPP_URL: url },
+    cliLaunchSpec,
+  });
   const method = String(merged.HAPPIER_AUTH_METHOD ?? '').trim().toLowerCase();
   if (method && method !== 'web' && method !== 'browser' && method !== 'mobile') {
     throw new Error(`[auth] invalid HAPPIER_AUTH_METHOD=${method} (expected: web|browser|mobile)`);

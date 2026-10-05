@@ -79,7 +79,7 @@ import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog
 import { completeInterruptedStackStopBeforeStart } from './utils/stack/stop.mjs';
 import { decideDevStartupTopology, observeDevServerStartupTopology } from './utils/dev/devStartupTopology.mjs';
 import { isBorrowedExpoConsumer } from './runtime/shared/borrowed_expo.mjs';
-import { resolveServerMigrationsEnabled } from '@happier-dev/cli-common/firstPartyRuntime';
+import { resolveServerMigrationsEnabled } from '@happier-dev/cli-common/firstPartyRuntime/selfHostServerEnv';
 
 /**
  * Run the local stack in "production-like" mode:

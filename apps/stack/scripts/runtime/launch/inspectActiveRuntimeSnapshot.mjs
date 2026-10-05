@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path';
 import { lstat, realpath } from 'node:fs/promises';
 
-import { getFirstPartyComponentCatalogEntry } from '@happier-dev/cli-common/firstPartyRuntime';
+import { getFirstPartyComponentCatalogEntry } from '@happier-dev/cli-common/firstPartyRuntime/componentCatalog';
 
 import { pathExists } from '../../utils/fs/fs.mjs';
 import { readJsonIfExists } from '../../utils/fs/json.mjs';

@@ -112,7 +112,7 @@ describe('withCliDistBuildLock', () => {
         }
     });
 
-    it('fails closed for missing or unauthenticated inherited environment leases while an owner is live', async () => {
+    it('fails closed for missing or unauthenticated inherited environment leases while a non-heartbeating owner is live', async () => {
         const repoRoot = mkdtempSync(join(tmpdir(), 'cli-common-dist-lock-env-rejection-'));
         const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
         try {
@@ -142,7 +142,7 @@ describe('withCliDistBuildLock', () => {
                                 env,
                                 timeoutMs: 30,
                                 pollIntervalMs: 5,
-                                staleAfterMs: 1_000,
+                                staleAfterMs: 0,
                             }),
                         ).rejects.toThrow(/Timed out waiting for CLI dist build lock/);
                     }
@@ -151,7 +151,8 @@ describe('withCliDistBuildLock', () => {
                     lockPath,
                     timeoutMs: 1_000,
                     pollIntervalMs: 10,
-                    staleAfterMs: 1_000,
+                    // Keep a real live owner, but disable its heartbeat for the timeout contract.
+                    staleAfterMs: 0,
                 },
             );
         } finally {
@@ -179,7 +180,7 @@ describe('withCliDistBuildLock', () => {
                             },
                             timeoutMs: 30,
                             pollIntervalMs: 5,
-                            staleAfterMs: 1_000,
+                            staleAfterMs: 0,
                         }),
                     ).rejects.toThrow(/Timed out waiting for CLI dist build lock/);
 
@@ -194,7 +195,7 @@ describe('withCliDistBuildLock', () => {
                                 },
                                 timeoutMs: 30,
                                 pollIntervalMs: 5,
-                                staleAfterMs: 1_000,
+                                staleAfterMs: 0,
                             },
                         ),
                     ).resolves.toEqual({ inherited: true, value: 'nested' });
@@ -203,7 +204,8 @@ describe('withCliDistBuildLock', () => {
                     lockPath,
                     timeoutMs: 1_000,
                     pollIntervalMs: 10,
-                    staleAfterMs: 1_000,
+                    // The forged lease must wait on this non-heartbeating live owner.
+                    staleAfterMs: 0,
                 },
             );
         } finally {

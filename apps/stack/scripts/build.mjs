@@ -22,6 +22,7 @@ import { buildStackTauriExportEnv, buildStackWebExportEnv } from './utils/ui/ui_
 import { parseBuildSelection } from './build/build_targets.mjs';
 import { shouldBuildStackArtifacts } from './build/build_mode.mjs';
 import { resolveRuntimeBuildAuthority } from './runtime/shared/runtime_build_authority.mjs';
+import { captureRuntimePublicationStartedSeq } from './build/build_stack_artifacts.mjs';
 
 async function prepareTauriSidecarForBuild({ env }) {
   const moduleUrl = new URL('../../ui/scripts/prepareTauriSidecar.mjs', import.meta.url);
@@ -83,8 +84,9 @@ async function main() {
       consumerStackName: stackName,
       env: process.env,
     });
+    const observedStartedSeq = captureRuntimePublicationStartedSeq({ authority });
     const { buildStackArtifacts } = await import('./build/build_stack_artifacts.mjs');
-    const result = await buildStackArtifacts({ rootDir, argv, env: process.env, authority });
+    const result = await buildStackArtifacts({ rootDir, argv, env: process.env, authority, observedStartedSeq });
     if (json) {
       printResult({ json, data: result });
     } else {

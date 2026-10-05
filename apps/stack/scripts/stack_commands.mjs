@@ -44,26 +44,14 @@ import {
   writeStackEnv,
 } from './stack/stack_environment.mjs';
 import { cmdAuth, cmdRuntime, cmdService, cmdSrv, cmdTailscale, cmdWt } from './stack/delegated_script_commands.mjs';
-import { disableInstalledStackServicesBeforeArchive } from './utils/service/archive_service_lifecycle.mjs';
-import { runStackDaemonCommand } from './stack/stack_daemon_command.mjs';
-import { runStackHappierPassthroughCommand } from './stack/stack_happier_passthrough_command.mjs';
-import { runStackMobileInstallCommand } from './stack/stack_mobile_install_command.mjs';
-import { runStackResumeCommand } from './stack/stack_resume_command.mjs';
-import { runStackStopCommand } from './stack/stack_stop_command.mjs';
-import { readStackInfoSnapshot } from './stack/stack_info_snapshot.mjs';
-import { runStackScriptWithStackEnv } from './stack/run_script_with_stack_env.mjs';
 import { printDelegatedStackHelpIfAvailable } from './stack/stack_delegated_help.mjs';
-import { runStackWorkspaceCommand } from './stack/stack_workspace_command.mjs';
-import { runStackInstallCommand } from './stack/stack_install_command.mjs';
 import { resolveRequestedRepoCheckoutDir } from './stack/repo_checkout_resolution.mjs';
 import { resolveTransientRepoOverrides } from './stack/transient_repo_overrides.mjs';
 import { hasExplicitStackRuntimeModeArg } from './runtime/shared/runtime_mode.mjs';
 import { ensureEnvFileMutated, ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { listAllStackNames, stackExistsSync } from './utils/stack/stacks.mjs';
 import { writeDevAuthKey } from './utils/auth/dev_key.mjs';
-import { startDevServer } from './utils/dev/server.mjs';
 import { resolveStackCanonicalServerUrl } from './utils/server/urls.mjs';
-import { ensureDevExpoServer } from './utils/dev/expo_dev.mjs';
 import { requireDir } from './utils/proc/pm.mjs';
 import { waitForHttpOk } from './utils/server/server.mjs';
 import {
@@ -73,7 +61,6 @@ import {
 } from './utils/server/effective_db_provider.mjs';
 import { resolveLocalhostHost, preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { openUrlInBrowser } from './utils/ui/browser.mjs';
-import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
 import { bold, cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 import { bullets, sectionTitle } from './utils/ui/layout.mjs';
 import { findAnyCredentialPathInCliHome } from './utils/auth/credentials_paths.mjs';
@@ -91,10 +78,7 @@ import {
 import { randomToken } from './utils/crypto/tokens.mjs';
 import { sanitizeSlugPart } from './utils/git/refs.mjs';
 import { readLastLinesAfterProcessCompletion } from './utils/fs/tail.mjs';
-import { interactiveEdit, interactiveNew } from './utils/stack/interactive_stack_config.mjs';
 import { normalizeStackNameOrNull } from './utils/stack/names.mjs';
-import { runOrchestratedGuidedAuthFlow } from './utils/auth/orchestrated_stack_auth_flow.mjs';
-import { assertExpoWebappBundlesOrThrow } from './utils/auth/stack_guided_login.mjs';
 import { applyAuthForceEnv, resolveAuthForceFlag } from './utils/auth/auth_force_flag.mjs';
 import { createStepPrinter } from '@happier-dev/cli-common/output';
 import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
@@ -204,6 +188,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
 
   let config = defaults;
   if (interactive) {
+    const { interactiveNew } = await import('./utils/stack/interactive_stack_config.mjs');
     config = await withRl((rl) => interactiveNew({ rootDir, rl, defaults }));
   }
 
@@ -516,6 +501,7 @@ async function cmdEdit({ rootDir, argv }) {
     repo: null,
   };
 
+  const { interactiveEdit } = await import('./utils/stack/interactive_stack_config.mjs');
   const config = await withRl((rl) => interactiveEdit({ rootDir, rl, stackName, existingEnv, defaults }));
 
   // Build next env, starting from existing env but enforcing stack-scoped invariants.
@@ -684,6 +670,7 @@ async function cmdEdit({ rootDir, argv }) {
 }
 
 async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {}, background = false }) {
+  const { runStackScriptWithStackEnv } = await import('./stack/run_script_with_stack_env.mjs');
   await runStackScriptWithStackEnv({ rootDir, stackName, scriptPath, args, extraEnv, background });
 }
 
@@ -1302,6 +1289,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
             let uiStopRequested = false;
             try {
               steps.start('start temporary server');
+              const { startDevServer } = await import('./utils/dev/server.mjs');
               const started = await startDevServer({
                 serverComponentName: serverComponent,
                 serverDir: resolvedServerDir,
@@ -1325,6 +1313,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
 
               // Start Expo (web) so /terminal/connect exists for happier-cli web auth.
               steps.start('start temporary UI');
+              const { ensureDevExpoServer } = await import('./utils/dev/expo_dev.mjs');
               const uiRes = await ensureDevExpoServer({
                 startUi: true,
                 startMobile: false,
@@ -1384,6 +1373,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
 	                try {
 	                  const bundleTimeoutRaw = String(process.env.HAPPIER_STACK_AUTH_EXPO_BUNDLE_READY_TIMEOUT_MS ?? '').trim();
 	                  const bundleTimeoutMs = bundleTimeoutRaw ? Number(bundleTimeoutRaw) : null;
+	                  const { assertExpoWebappBundlesOrThrow } = await import('./utils/auth/stack_guided_login.mjs');
 	                  await assertExpoWebappBundlesOrThrow({
 	                    rootDir,
 	                    stackName: name,
@@ -1432,6 +1422,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
               console.log('');
               console.log(`[stack] step 3/3: authenticate the CLI against this stack ${dim('(web auth)')}`);
               console.log(`[stack] launching unified guided auth flow`);
+              const { runOrchestratedGuidedAuthFlow } = await import('./utils/auth/orchestrated_stack_auth_flow.mjs');
               await runOrchestratedGuidedAuthFlow({
                 rootDir,
                 stackName: name,
@@ -1650,6 +1641,7 @@ async function cmdArchiveStack({ rootDir, argv, stackName }) {
     };
   }
 
+  const { disableInstalledStackServicesBeforeArchive } = await import('./utils/service/archive_service_lifecycle.mjs');
   await disableInstalledStackServicesBeforeArchive({
     rootDir,
     stackName,
@@ -1784,6 +1776,7 @@ async function cmdInfo({ rootDir, argv }) {
     throw new Error(`[stack] info: stack does not exist: ${stackName}`);
   }
 
+  const { readStackInfoSnapshot } = await import('./stack/stack_info_snapshot.mjs');
   const out = await readStackInfoSnapshot({ rootDir, stackName });
   if (json) {
     printResult({ json, data: out });
@@ -1794,6 +1787,11 @@ async function cmdInfo({ rootDir, argv }) {
   console.log(`- env: ${out.envPath}`);
   console.log(`- runtime: ${out.runtimeStatePath}`);
   console.log(`- server: ${out.serverComponent}`);
+  for (const [component, entry] of Object.entries(out.runtime?.snapshotComponents ?? {})) {
+    for (const stale of entry.stalePackages ?? []) {
+      console.log(`- QA last-green (${component}): ${stale.packageName} built ${stale.lastGreenBuiltAt}`);
+    }
+  }
   const runningPid = Number(out.runtime?.runningPid);
   const ownerPid = Number(out.runtime?.ownerPid);
   const runningPidSuffix = Number.isFinite(runningPid) && runningPid > 1
@@ -2069,6 +2067,7 @@ async function cmdPrStack({ rootDir, argv }) {
 		  } else {
 	    progress(`[stack] pr: reusing existing stack "${stackName}"...`);
 	    // Ensure requested server flavor is compatible with the existing stack.
+	    const { readStackInfoSnapshot } = await import('./stack/stack_info_snapshot.mjs');
 	    const existing = await readStackInfoSnapshot({ rootDir, stackName });
     if (existing.serverComponent !== serverComponent) {
       throw new Error(
@@ -2228,6 +2227,7 @@ async function cmdPrStack({ rootDir, argv }) {
     await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('start') || 'run.mjs', args, background });
   }
 
+  const { readStackInfoSnapshot } = await import('./stack/stack_info_snapshot.mjs');
   const info = await readStackInfoSnapshot({ rootDir, stackName });
 
   const out = {
@@ -2247,6 +2247,7 @@ async function cmdPrStack({ rootDir, argv }) {
 }
 
 async function cmdStackDaemon({ rootDir, stackName, argv, json }) {
+  const { runStackDaemonCommand } = await import('./stack/stack_daemon_command.mjs');
   await runStackDaemonCommand({ rootDir, stackName, argv, json });
 }
 
@@ -2488,6 +2489,7 @@ async function main() {
     return;
   }
   if (cmd === 'install') {
+    const { runStackInstallCommand } = await import('./stack/stack_install_command.mjs');
     await runStackInstallCommand({ rootDir, stackName, argv: passthrough, json });
     return;
   }
@@ -2522,6 +2524,7 @@ async function main() {
     return;
   }
   if (cmd === 'happier') {
+    const { runStackHappierPassthroughCommand } = await import('./stack/stack_happier_passthrough_command.mjs');
     await runStackHappierPassthroughCommand({ rootDir, stackName, passthrough });
     return;
   }
@@ -2537,6 +2540,7 @@ async function main() {
             'bug-report',
             ...bugReportPassthroughRaw.slice(separatorIndex + 1),
           ];
+    const { runStackHappierPassthroughCommand } = await import('./stack/stack_happier_passthrough_command.mjs');
     await runStackHappierPassthroughCommand({ rootDir, stackName, passthrough: bugReportPassthrough });
     return;
   }
@@ -2578,20 +2582,24 @@ async function main() {
     return;
   }
   if (cmd === 'mobile:install') {
+    const { runStackMobileInstallCommand } = await import('./stack/stack_mobile_install_command.mjs');
     await runStackMobileInstallCommand({ rootDir, stackName, passthrough, json });
     return;
   }
   if (cmd === 'resume') {
+    const { runStackResumeCommand } = await import('./stack/stack_resume_command.mjs');
     await runStackResumeCommand({ rootDir, stackName, passthrough, json });
     return;
   }
 
   if (cmd === 'stop') {
+    const { runStackStopCommand } = await import('./stack/stack_stop_command.mjs');
     await runStackStopCommand({ rootDir, stackName, passthrough, json });
     return;
   }
 
   if (cmd === 'code' || cmd === 'cursor' || cmd === 'open') {
+    const { runStackWorkspaceCommand } = await import('./stack/stack_workspace_command.mjs');
     await runStackWorkspaceCommand({ command: cmd, rootDir, stackName, json, flags });
     return;
   }

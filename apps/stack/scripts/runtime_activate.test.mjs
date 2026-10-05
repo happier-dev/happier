@@ -7,6 +7,7 @@ import { activateRuntimeForAuthority } from './runtime_activate.mjs';
 test('runtime activation discovers artifacts outside the snapshot lock and commits only under that lock', async () => {
   const events = [];
   let snapshotLockHeld = false;
+  let publicationLockHeld = false;
   const authority = {
     consumerStackName: 'qa-consumer',
     consumerStackBaseDir: '/stacks/qa-consumer',
@@ -40,6 +41,11 @@ test('runtime activation discovers artifacts outside the snapshot lock and commi
       };
     },
     withWorkspaceBundleLockImpl: async (fn, options) => {
+      if (options.lockPath === join(authority.producerStackBaseDir, 'runtime', 'publication.lock')) {
+        publicationLockHeld = true;
+        try { return await fn({ waited: false }); } finally { publicationLockHeld = false; }
+      }
+      assert.equal(publicationLockHeld, true);
       assert.equal(options.lockPath, join(authority.producerStackBaseDir, 'runtime', 'build.lock'));
       snapshotLockHeld = true;
       try {
@@ -83,6 +89,7 @@ test('runtime activation discovers artifacts outside the snapshot lock and commi
     },
     pruneRuntimeSnapshotsImpl: async () => {
       assert.equal(snapshotLockHeld, false);
+      assert.equal(publicationLockHeld, true);
       events.push('retention');
     },
     ensureStackRuntimeModePreferImpl: async () => {
@@ -145,7 +152,8 @@ test('runtime activation re-resolves selected artifacts at commit after a waitin
         manifest: { artifactFingerprint: 'server-new' },
       };
     },
-    withWorkspaceBundleLockImpl: async (fn) => {
+    withWorkspaceBundleLockImpl: async (fn, options) => {
+      if (options.lockPath.endsWith('publication.lock')) return await fn({ waited: true });
       snapshotLockHeld = true;
       try {
         return await fn({ waited: true });

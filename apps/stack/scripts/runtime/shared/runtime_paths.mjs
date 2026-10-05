@@ -61,13 +61,6 @@ export function resolveStackComponentArtifactDir({ stackBaseDir, component, fing
   );
 }
 
-// Immutable artifact publication is serialized by the artifact identity, not by
-// the mutable runtime pointer. Keep the lock adjacent to its object without
-// placing it inside a directory that atomic publication replaces.
-export function resolveStackComponentArtifactLockPath({ stackBaseDir, component, fingerprint }) {
-  return `${resolveStackComponentArtifactDir({ stackBaseDir, component, fingerprint })}.lock`;
-}
-
 export function resolveStackRuntimePaths({ stackBaseDir, snapshotId = '' }) {
   const runtimeDir = join(String(stackBaseDir ?? '').trim(), 'runtime');
   const buildsDir = join(runtimeDir, 'builds');

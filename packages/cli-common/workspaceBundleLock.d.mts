@@ -39,6 +39,7 @@ export interface WorkspaceBundleLockOptions<T = unknown> {
     stderr?: unknown;
   };
   errorLabel?: string;
+  /** After contention, validates reusable outputs under the admitted lock before invoking the publisher. */
   tryResolveWaiter?: () =>
     | Promise<{ resolved: true; value: T } | { resolved: false }>
     | { resolved: true; value: T }

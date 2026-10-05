@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -327,8 +327,50 @@ test('sync status reports ownership and every target session without changing li
     inspectSync: async ({ target }) => ({ state: 'ready', sessionName: `happier-${target.name}` }),
   });
   assert.equal(result.independent, true);
+  assert.equal(result.state, 'ready');
   assert.equal(result.preparation.state, 'ready');
   assert.deepEqual(result.statuses.map((entry) => entry.status.state), ['ready', 'ready']);
+});
+
+test('recovered sync status uses current sessions and retains failed startup as history', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-recovered-sync-status-'));
+  try {
+    const binDir = join(root, 'bin');
+    await mkdir(binDir);
+    // Only the external Mutagen/SSH executables are replaced; project setup,
+    // exact-session inspection, recovery and persisted preparation stay real.
+    await writeFile(join(binDir, 'mutagen'), [
+      '#!/bin/sh',
+      'if [ "$1 $2" = "sync list" ]; then',
+      '  error=""',
+      '  if [ "${HSTACK_TEST_SYNC_UNHEALTHY:-}" = "1" ]; then error="transient beta transition"; fi',
+      '  printf \'[{"name":"%s","paused":false,"status":"watching","successfulCycles":2,"lastError":"%s","alpha":{"connected":true,"scanned":true},"beta":{"connected":true,"scanned":true}}]\\n\' "$3" "$error"',
+      'fi',
+      'exit 0',
+      '',
+    ].join('\n'));
+    await writeFile(join(binDir, 'ssh'), '#!/bin/sh\nexit 0\n');
+    await Promise.all(['mutagen', 'ssh'].map((name) => chmod(join(binDir, name), 0o700)));
+    const recoveryTargets = targets.map(({ name }) => ({
+      name, platform: 'windows', ssh: name, repoDir: 'C:/repo', cliHomeDir: 'C:/home',
+    }));
+    const env = { ...process.env, PATH: `${binDir}:${process.env.PATH}`, HSTACK_TEST_SYNC_UNHEALTHY: '1' };
+    await assert.rejects(startDevTargetSyncService({
+      stackBaseDir: root, sourceDir: '/repo', targets: recoveryTargets, detached: true, env,
+    }), /transient beta transition/);
+    env.HSTACK_TEST_SYNC_UNHEALTHY = '0';
+    const inspect = () => inspectDevTargetSyncService({
+      stackBaseDir: root, targets: recoveryTargets, env,
+    });
+    const healthy = await inspect();
+    assert.equal(healthy.state, 'ready');
+    assert.equal(healthy.preparation.state, 'failed');
+    assert.match(healthy.preparation.targets.mac.error, /transient beta transition/);
+    env.HSTACK_TEST_SYNC_UNHEALTHY = '1';
+    assert.equal((await inspect()).state, 'failed', 'current failures remain visible after recovery');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('detached sync start records every synchronization observation before rejecting an unavailable target', async () => {
