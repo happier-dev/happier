@@ -9,8 +9,10 @@ export function shouldTerminalCaptureKeyboardEvent(input: Readonly<{
     terminalFocused: boolean;
     key: string;
     modifiers: TerminalKeyboardModifiers;
+    /** The canonical keyboard provider already admitted and handled this event. */
+    defaultPrevented?: boolean;
 }>): boolean {
-    if (!input.terminalFocused) {
+    if (!input.terminalFocused || input.defaultPrevented) {
         return false;
     }
     const normalizedKey = input.key.toLowerCase();

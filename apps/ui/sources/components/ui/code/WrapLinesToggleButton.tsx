@@ -5,10 +5,13 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
+import { useEffectiveDiffWrapLines } from './diff/diffPresentationStyle';
 
 export const WrapLinesToggleButton = React.memo(() => {
     const [wrapLinesSetting, setWrapLines] = useSettingMutable('wrapLinesInDiffs');
-    const wrapLines = wrapLinesSetting === true;
+    const phone = useSurfaceStateSize() === 'phone';
+    const wrapLines = useEffectiveDiffWrapLines(wrapLinesSetting === true) === true;
     const label = t('settingsAppearance.wrapLinesInDiffs');
 
     return (
@@ -19,13 +22,14 @@ export const WrapLinesToggleButton = React.memo(() => {
             accessibilityRole="switch"
             checked={wrapLines}
             selected={wrapLines}
+            disabled={phone}
             iconName="arrow-elbow-down-left"
             iconSize={18}
             size={28}
             variant="plain"
             minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
             interactiveTargetGapPx={8}
-            onPress={() => setWrapLines(!wrapLines)}
+            onPress={() => { if (!phone) setWrapLines(!wrapLines); }}
         />
     );
 });

@@ -7,6 +7,9 @@ import { trimIdent } from '@/utils/strings/trimIdent';
 import { useSetting } from '@/sync/domains/state/storage';
 
 import { Text } from '@/components/ui/text/Text';
+import type { ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { useToolFindState } from '../core/ToolFindText';
+import { buildToolFileDiffLines, projectToolDiffLines } from './toolDiffDisplayText';
 
 const TEXT_ARROW = '→';
 
@@ -74,15 +77,23 @@ function truncateOneLine(text: string, maxChars: number): string {
     return `${oneLine.slice(0, maxChars - 1)}…`;
 }
 
-export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionId, serverId }) => {
+function readEditDisplay(input: unknown, result: unknown) {
+    const extracted = extractEditStrings(input, result);
+    return { oldString: trimIdent(extracted.old || ''), newString: trimIdent(extracted.next || ''), filePath: extracted.filePath };
+}
+
+export const projectEditDisplayText: ToolDisplayTextProjector = (tool) => {
+    const { oldString, newString } = readEditDisplay(tool.input, tool.result);
+    return projectToolDiffLines(buildToolFileDiffLines({ oldText: oldString, newText: newString }), 'tool-edit');
+};
+
+export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionId, serverId, messageId }) => {
+    const find = useToolFindState(messageId);
     const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
     
-    const extracted = extractEditStrings(tool.input, tool.result);
-    const oldString = trimIdent(extracted.old || '');
-    const newString = trimIdent(extracted.next || '');
-    const filePath = extracted.filePath;
+    const { oldString, newString, filePath } = readEditDisplay(tool.input, tool.result);
 
-    if (detailLevel === 'title') {
+    if (detailLevel === 'title' && !find.active) {
         const from = truncateOneLine(oldString, 48);
         const to = truncateOneLine(newString, 48);
         return (
@@ -96,14 +107,16 @@ export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionI
 
     const isFull = detailLevel === 'full';
     const maxLines = isFull ? 400 : 20;
-    const truncatedOld = truncateLines(oldString, maxLines);
-    const truncatedNew = truncateLines(newString, maxLines);
+    const truncatedOld = find.active ? oldString : truncateLines(oldString, maxLines);
+    const truncatedNew = find.active ? newString : truncateLines(newString, maxLines);
     const showLineNumbers = isFull ? true : !!showLineNumbersInToolViews;
 
     return (
         <>
             <ToolSectionView fullWidth>
                 <ToolDiffView 
+                    messageId={messageId}
+                    findBlockPrefix="tool-edit"
                     sessionId={sessionId}
                     serverId={serverId}
                     filePath={filePath}

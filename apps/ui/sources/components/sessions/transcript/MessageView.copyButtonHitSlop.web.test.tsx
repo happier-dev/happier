@@ -2,7 +2,8 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { standardCleanup } from '@/dev/testkit';
+import { renderWithSessionTranscriptSource as renderScreen } from '@/dev/testkit/sessionTranscriptSource';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
@@ -142,6 +143,7 @@ describe('MessageView (copy button target, web)', () => {
         const message: any = {
             kind: 'user-text',
             localId: 'local-1',
+            id: 'local-1',
             text: 'hello',
         };
 
@@ -159,8 +161,8 @@ describe('MessageView (copy button target, web)', () => {
         const copyStyle = typeof copyPressables[0].props.style === 'function'
             ? copyPressables[0].props.style({ pressed: false })
             : copyPressables[0].props.style;
-        expect(flattenStyle(copyStyle).minWidth).toBeGreaterThanOrEqual(44);
-        expect(flattenStyle(copyStyle).minHeight).toBeGreaterThanOrEqual(44);
-        expect(copyPressables[0].props.hitSlop).toBeUndefined();
+        expect(flattenStyle(copyStyle).width).toBeGreaterThanOrEqual(44);
+        expect(flattenStyle(copyStyle).height).toBeGreaterThanOrEqual(44);
+        expect(copyPressables[0].props.hitSlop ?? 0).toBe(0);
     });
 });

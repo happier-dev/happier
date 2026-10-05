@@ -4,22 +4,30 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { maybeParseJson } from '@happier-dev/protocol';
-import { Text } from '@/components/ui/text/Text';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 import { t } from '@/text';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+
+export const projectChangeTitleDisplayText: ToolDisplayTextProjector = (tool) => {
+    const title = resolveChangeTitle(tool.input, tool.result);
+    return [
+        ...toolTextBlock('tool-title-label', title ? t('tools.changeTitleView.titleLabel') : null),
+        ...toolTextBlock('tool-new-title', title),
+    ];
+};
 
 
-export const ChangeTitleView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
-    if (detailLevel === 'title') return null;
+export const ChangeTitleView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId }) => {
+    const find = useToolFindState(messageId);
+    if (detailLevel === 'title' && !find.active) return null;
     const title = resolveChangeTitle(tool.input, tool.result);
     if (!title) return null;
 
     return (
         <ToolSectionView>
             <View style={styles.container}>
-                <Text style={styles.label}>{t('tools.changeTitleView.titleLabel')}</Text>
-                <Text style={styles.title} numberOfLines={detailLevel === 'full' ? undefined : 2}>
-                    {title}
-                </Text>
+                <ToolFindText messageId={messageId} blockId="tool-title-label" text={t('tools.changeTitleView.titleLabel')} style={styles.label} />
+                <ToolFindText messageId={messageId} blockId="tool-new-title" text={title} style={styles.title} numberOfLines={detailLevel === 'full' ? undefined : 2} />
             </View>
         </ToolSectionView>
     );

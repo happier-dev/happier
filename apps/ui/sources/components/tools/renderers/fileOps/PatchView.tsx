@@ -5,12 +5,15 @@ import { deriveCanonicalPatchFileDiffs } from '@happier-dev/protocol/tools/v2';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { resolvePath } from '@/utils/path/pathUtils';
-import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 import { buildDiffFileEntries, type DiffBlockInput, type DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
 import { ToolFileDiffListView } from './ToolFileDiffListView';
 import { Icon } from '@/components/ui/icons/Icon';
+import { projectToolFileDiffDisplayText } from './toolDiffDisplayText';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText } from '../core/ToolFindText';
+import { resolveToolErrorDisplay } from '@/components/tools/shell/presentation/resolveToolInlineErrorDisplay';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -110,34 +113,47 @@ function hasAppliedResult(result: unknown): boolean {
     return asRecord(result)?.applied === true;
 }
 
-export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLevel, sessionId, serverId }) => {
+function patchFileName(file: string, metadata: ToolViewProps['metadata']) {
+    const filePath = resolvePath(file, metadata);
+    return filePath.split('/').pop() || filePath;
+}
+
+function patchStatus(tool: ToolViewProps['tool']) {
+    const changes = asRecord(tool.input)?.changes;
+    const allDeletes = Boolean(changes && typeof changes === 'object' && extractFilePaths(tool.input).length > 0 && Object.values(changes).every(isDeleteChange));
+    return { allDeletes, applied: hasAppliedResult(tool.result), errorMessage: tool.state === 'error' ? extractErrorMessage(tool.result) : null };
+}
+
+export const projectPatchDisplayText: ToolDisplayTextProjector = (tool, metadata) => {
+    const diffs = buildPatchDiffEntries(tool.input, tool.result);
+    const status = patchStatus(tool);
+    return [
+        ...toolTextBlock('tool-patch-error', status.errorMessage ? resolveToolErrorDisplay(status.errorMessage).text : null),
+        ...toolTextBlock('tool-patch-deleted', status.allDeletes ? t('common.deleted') : null),
+        ...toolTextBlock('tool-patch-applied', status.applied ? t('common.applied') : null),
+        ...(diffs.length > 0 ? projectToolFileDiffDisplayText(diffs, 'tool-patch')
+            : extractFilePaths(tool.input).flatMap((file, index) => toolTextBlock(`tool-patch-${index}-path`, patchFileName(file, metadata ?? null)))),
+    ];
+};
+
+export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLevel, sessionId, serverId, messageId }) => {
     const { theme } = useUnistyles();
     const { input } = tool;
-    const errorMessage = tool.state === 'error' ? extractErrorMessage(tool.result) : null;
+    const { errorMessage, allDeletes, applied } = patchStatus(tool);
     const files = extractFilePaths(input);
     const diffFiles = React.useMemo(() => buildPatchDiffEntries(tool.input, tool.result), [tool.input, tool.result]);
-    const inputRecord = asRecord(input);
-    const changes = inputRecord?.changes;
-
-    const allDeletes =
-        changes &&
-        typeof changes === 'object' &&
-        files.length > 0 &&
-        Object.values(changes).every(isDeleteChange);
-
-    const applied = hasAppliedResult(tool.result);
 
     if (diffFiles.length > 0) {
         return (
             <ToolSectionView fullWidth>
-                {errorMessage ? <ToolError message={errorMessage} /> : null}
+                {errorMessage ? <ToolError message={errorMessage} messageId={messageId} blockId="tool-patch-error" /> : null}
                 {allDeletes || applied ? (
                     <View style={styles.statusRow}>
-                        {allDeletes ? <Text style={styles.applied}>{t('common.deleted')}</Text> : null}
-                        {applied ? <Text style={styles.applied}>{t('common.applied')}</Text> : null}
+                        {allDeletes ? <ToolFindText text={t('common.deleted')} blockId="tool-patch-deleted" messageId={messageId} style={styles.applied} /> : null}
+                        {applied ? <ToolFindText text={t('common.applied')} blockId="tool-patch-applied" messageId={messageId} style={styles.applied} /> : null}
                     </View>
                 ) : null}
-                <ToolFileDiffListView files={diffFiles} detailLevel={detailLevel} sessionId={sessionId} serverId={serverId} />
+                <ToolFileDiffListView files={diffFiles} detailLevel={detailLevel} sessionId={sessionId} serverId={serverId} messageId={messageId} findBlockPrefix="tool-patch" />
             </ToolSectionView>
         );
     }
@@ -146,7 +162,7 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
         if (errorMessage) {
             return (
                 <ToolSectionView>
-                    <ToolError message={errorMessage} />
+                    <ToolError message={errorMessage} messageId={messageId} blockId="tool-patch-error" />
                 </ToolSectionView>
             );
         }
@@ -154,17 +170,16 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
     }
 
     if (files.length === 1) {
-        const filePath = resolvePath(files[0], metadata);
-        const fileName = filePath.split('/').pop() || filePath;
+        const fileName = patchFileName(files[0], metadata);
 
         return (
             <ToolSectionView>
-                {errorMessage ? <ToolError message={errorMessage} /> : null}
+                {errorMessage ? <ToolError message={errorMessage} messageId={messageId} blockId="tool-patch-error" /> : null}
                 <View style={styles.fileContainer}>
                     <Icon name="git-diff" size={16} color={theme.colors.text.secondary} />
-                    <Text style={styles.fileName}>{fileName}</Text>
-                    {allDeletes ? <Text style={styles.applied}>{t('common.deleted')}</Text> : null}
-                    {applied ? <Text style={styles.applied}>{t('common.applied')}</Text> : null}
+                    <ToolFindText text={fileName} blockId="tool-patch-0-path" messageId={messageId} style={styles.fileName} />
+                    {allDeletes ? <ToolFindText text={t('common.deleted')} blockId="tool-patch-deleted" messageId={messageId} style={styles.applied} /> : null}
+                    {applied ? <ToolFindText text={t('common.applied')} blockId="tool-patch-applied" messageId={messageId} style={styles.applied} /> : null}
                 </View>
             </ToolSectionView>
         );
@@ -172,18 +187,17 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
 
     return (
         <ToolSectionView>
-            {errorMessage ? <ToolError message={errorMessage} /> : null}
+            {errorMessage ? <ToolError message={errorMessage} messageId={messageId} blockId="tool-patch-error" /> : null}
             <View style={styles.filesContainer}>
-                {allDeletes ? <Text style={styles.applied}>{t('common.deleted')}</Text> : null}
-                {applied ? <Text style={styles.applied}>{t('common.applied')}</Text> : null}
+                {allDeletes ? <ToolFindText text={t('common.deleted')} blockId="tool-patch-deleted" messageId={messageId} style={styles.applied} /> : null}
+                {applied ? <ToolFindText text={t('common.applied')} blockId="tool-patch-applied" messageId={messageId} style={styles.applied} /> : null}
                 {files.map((file, index) => {
-                    const filePath = resolvePath(file, metadata);
-                    const fileName = filePath.split('/').pop() || filePath;
+                    const fileName = patchFileName(file, metadata);
 
                     return (
                         <View key={index} style={styles.fileRow}>
                             <Icon name="git-diff" size={14} color={theme.colors.text.secondary} />
-                            <Text style={styles.fileNameMulti}>{fileName}</Text>
+                            <ToolFindText text={fileName} blockId={`tool-patch-${index}-path`} messageId={messageId} style={styles.fileNameMulti} />
                         </View>
                     );
                 })}

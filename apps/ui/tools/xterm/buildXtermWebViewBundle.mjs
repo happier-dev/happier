@@ -42,11 +42,13 @@ function createEntrySource() {
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { SearchAddon } from '@xterm/addon-search';
 
 globalThis.HAPPIER_XTERM_WEBVIEW = {
   Terminal,
   FitAddon,
   WebLinksAddon,
+  SearchAddon,
 };
 `;
 }
@@ -155,4 +157,3 @@ if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
             process.exit(1);
         });
 }
-

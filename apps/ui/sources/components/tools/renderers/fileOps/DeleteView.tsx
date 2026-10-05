@@ -6,6 +6,8 @@ import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { maybeParseJson } from '@happier-dev/protocol';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -18,8 +20,8 @@ function coerceFilePaths(value: unknown): string[] {
     const record = asRecord(parsed) ?? {};
 
     const list =
-        (Array.isArray((record as any).file_paths) ? ((record as any).file_paths as unknown[]) : null) ??
-        (Array.isArray((record as any).paths) ? ((record as any).paths as unknown[]) : null) ??
+        (Array.isArray(record.file_paths) ? record.file_paths : null) ??
+        (Array.isArray(record.paths) ? record.paths : null) ??
         null;
     if (list) {
         const out = list
@@ -30,32 +32,34 @@ function coerceFilePaths(value: unknown): string[] {
     }
 
     const single =
-        typeof (record as any).file_path === 'string'
-            ? String((record as any).file_path)
-            : typeof (record as any).path === 'string'
-                ? String((record as any).path)
+        typeof record.file_path === 'string'
+            ? record.file_path
+            : typeof record.path === 'string'
+                ? record.path
                 : null;
     if (single && single.trim()) return [single.trim()];
     return [];
 }
 
-export const DeleteView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+export const projectDeleteDisplayText: ToolDisplayTextProjector = (tool) => coerceFilePaths(tool.input)
+    .flatMap((text, index) => toolTextBlock(`tool-delete-${index}`, text));
+
+export const DeleteView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId }) => {
+    const find = useToolFindState(messageId);
     const { theme } = useUnistyles();
     const filePaths = coerceFilePaths(tool.input);
     if (filePaths.length === 0) return null;
 
     const isFullView = detailLevel === 'full';
     const max = isFullView ? 40 : 8;
-    const shown = filePaths.slice(0, max);
+    const shown = find.active ? filePaths : filePaths.slice(0, max);
     const more = filePaths.length - shown.length;
 
     return (
         <ToolSectionView fullWidth={isFullView}>
             <View style={styles.container}>
                 {shown.map((entry, idx) => (
-                    <Text key={`${idx}-${entry}`} style={styles.entry} numberOfLines={isFullView ? 2 : 1}>
-                        {entry}
-                    </Text>
+                    <ToolFindText key={`${idx}-${entry}`} text={entry} blockId={`tool-delete-${idx}`} messageId={messageId} style={styles.entry} numberOfLines={isFullView ? 2 : 1} />
                 ))}
                 {more > 0 ? (
                     <Text style={[styles.entry, { color: theme.colors.text.secondary }]}>

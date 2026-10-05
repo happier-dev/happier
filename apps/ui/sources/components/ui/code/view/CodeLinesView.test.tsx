@@ -36,9 +36,10 @@ installCodeViewCommonModuleMocks({
     },
 });
 
-vi.mock('./CodeLineRow', () => ({
-    CodeLineRow: (props: any) => React.createElement('CodeLineRow', props),
-}));
+async function findCodeRows(tree: renderer.ReactTestRenderer) {
+    const { CodeLineRow } = await import('./CodeLineRow');
+    return tree.root.findAllByType(CodeLineRow);
+}
 
 async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
     return await run();
@@ -74,7 +75,7 @@ describe('CodeLinesView', () => {
 
         expect(findAllByType(tree, 'FlatList')).toHaveLength(0);
 
-        const rows = findAllByType(tree, 'CodeLineRow');
+        const rows = await findCodeRows(tree);
         expect(rows).toHaveLength(1);
     });
 
@@ -170,7 +171,7 @@ describe('CodeLinesView', () => {
                     isCommentActive={(line) => line.id === '1'}
                 />)).tree;
 
-        const rows = findAllByType(tree, 'CodeLineRow');
+        const rows = await findCodeRows(tree);
         expect(rows).toHaveLength(1);
         expect(rows[0]!.props.commentActive).toBe(true);
     });
@@ -208,7 +209,7 @@ describe('CodeLinesView', () => {
                     ]}
                 />)).tree;
 
-        const rows = findAllByType(tree, 'CodeLineRow');
+        const rows = await findCodeRows(tree);
         const highlighted = rows.filter((r) => r.props.highlighted === true);
         expect(highlighted).toHaveLength(1);
         expect(highlighted[0]!.props.line.id).toBe('2');
@@ -259,7 +260,7 @@ describe('CodeLinesView', () => {
                     ]}
                 />)).tree;
 
-        const rows = findAllByType(tree, 'CodeLineRow');
+        const rows = await findCodeRows(tree);
         const highlightedLineIds = rows
             .filter((r) => r.props.highlighted === true)
             .map((r) => r.props.line.id);
@@ -293,7 +294,7 @@ describe('CodeLinesView', () => {
                     }}
                 />)).tree;
 
-        const rows = findAllByType(tree, 'CodeLineRow');
+        const rows = await findCodeRows(tree);
         expect(rows).toHaveLength(1);
         expect(rows[0]!.props.syntaxHighlighting.mode).toBe('advanced');
     });
@@ -347,7 +348,7 @@ describe('CodeLinesView', () => {
             onPressLineRange={onPressLineRange}
         />);
 
-        const rows = findAllByType(screen.tree, 'CodeLineRow');
+        const rows = await findCodeRows(screen.tree);
         rows[0]!.props.onPressLine(lines[0]);
         rows[2]!.props.onPressLine(lines[2], { nativeEvent: { shiftKey: true } });
 
@@ -392,7 +393,7 @@ describe('CodeLinesView', () => {
             onPressLineRange={onPressLineRange}
         />);
 
-        const rows = findAllByType(screen.tree, 'CodeLineRow');
+        const rows = await findCodeRows(screen.tree);
         expect(rows[0]!.props.onPressInLine).toBeUndefined();
         expect(rows[1]!.props.onHoverLine).toBeUndefined();
         expect(rows[1]!.props.onPressOutLine).toBeUndefined();
@@ -438,7 +439,7 @@ describe('CodeLinesView', () => {
             onPressLineRange={onPressLineRange}
         />);
 
-        const rows = findAllByType(screen.tree, 'CodeLineRow');
+        const rows = await findCodeRows(screen.tree);
         rows[0]!.props.onPressLine(lines[0]);
         rows[1]!.props.onPressLine(lines[1]);
 

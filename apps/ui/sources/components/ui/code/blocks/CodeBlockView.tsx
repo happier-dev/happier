@@ -6,6 +6,7 @@ import { evaluateCodeHighlightingBudget } from '@/components/ui/code/highlightin
 import { CodeBlockViewFrame } from './CodeBlockViewFrame';
 import { SimpleSyntaxHighlighter } from '@/components/ui/media/SimpleSyntaxHighlighter';
 import { Text } from '@/components/ui/text/Text';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import { resolveCodeMonoFontFamily } from '../codeTypography';
 import { normalizeHappierCodeLanguage } from '@happier-dev/plugin-ui/presentation';
 
@@ -24,6 +25,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
     headerRight,
     scrollTestID,
     containerStyle,
+    findRanges,
 }) => {
     const { theme } = useUnistyles();
     const normalizedLanguage = normalizeHappierCodeLanguage(language) ?? null;
@@ -47,6 +49,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
             language={syntax.language}
             selectable={selectable}
             wrap={wrap}
+            findRanges={findRanges}
         />
     ) : (
         <Text
@@ -59,7 +62,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                 flexShrink: wrap ? undefined : 0,
             }}
         >
-            {code}
+            {findRanges?.length ? <FindHighlightedText text={code} ranges={findRanges} selectable={selectable} /> : code}
         </Text>
     );
 

@@ -4,6 +4,7 @@ import type { DiffFileEntry } from '@/components/ui/code/model/diff/diffViewMode
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 
 import { DiffReviewCommentsViewer } from './DiffReviewCommentsViewer';
+import type { DiffFileFindState } from '../DiffFilesListView';
 
 export type InlineUnifiedDiffReviewCommentsRenderer = (params: Readonly<{
     file: DiffFileEntry;
@@ -12,6 +13,7 @@ export type InlineUnifiedDiffReviewCommentsRenderer = (params: Readonly<{
     wrapLines: boolean;
     showLineNumbers: boolean;
     showPrefix: boolean;
+    findState?: DiffFileFindState;
 }>) => React.ReactNode;
 
 export function useInlineUnifiedDiffReviewCommentsRenderer(params: Readonly<{
@@ -24,10 +26,13 @@ export function useInlineUnifiedDiffReviewCommentsRenderer(params: Readonly<{
     return React.useMemo(() => {
         if (!params.enabled) return undefined;
 
-        return ({ file, wrapLines, showLineNumbers, showPrefix }) => {
+        return ({ file, wrapLines, showLineNumbers, showPrefix, findState }) => {
             if (!file.filePath || typeof file.unifiedDiff !== 'string') return null;
             return (
                 <DiffReviewCommentsViewer
+                    findActive={findState?.findActive}
+                    findRangesByLineId={findState?.findRangesByLineId}
+                    scrollToLineId={findState?.scrollToLineId}
                     filePath={file.filePath}
                     unifiedDiff={file.unifiedDiff}
                     reviewCommentsEnabled={true}

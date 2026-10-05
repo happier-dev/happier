@@ -20,6 +20,29 @@ const lines = buildCodeLinesFromUnifiedDiff({ unifiedDiff: '@@ -1 +1 @@\n-old\n+
 const settleScroll = async () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
 
 describe('code line navigation', () => {
+    it('reveals the next occurrence on the same line without repeating on equivalent decorations', async () => {
+        let scrollY = 0;
+        const externalScrollView = {
+            scrollRef: { current: { scrollTo: ({ y }: { y: number }) => { scrollY = y; } } },
+            contentRef: { current: {} as View },
+            offsetRef: { current: 0 },
+        };
+        const render = (start: number) => <CodeLinesViewCore lines={lines} virtualized={false} scrollToLineId="a:2"
+            findRangesByLineId={new Map([['a:2', [{ start, end: start + 1, current: true }]]])} externalScrollView={externalScrollView} />;
+        const screen = await renderScreen(render(0), {
+            createNodeMock: () => ({ measureLayout: (_relative: unknown, callback: (x: number, y: number, width: number, height: number) => void) => callback(0, 240, 400, 22) }),
+        });
+        await settleScroll();
+        scrollY = 320;
+        await act(async () => screen.tree.update(render(1)));
+        await settleScroll();
+        expect(scrollY).toBe(240);
+        scrollY = 320;
+        await act(async () => screen.tree.update(render(1)));
+        await settleScroll();
+        expect(scrollY).toBe(320);
+    });
+
     it('jumps through the enclosing native ScrollView and preserves later manual scrolling on refresh', async () => {
         let scrollY = 0;
         const externalScrollView = {

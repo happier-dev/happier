@@ -2,10 +2,13 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
 
 interface ToolSectionViewProps {
     title?: string;
+    titleFindRanges?: readonly FindTextRange[];
     fullWidth?: boolean;
     children: React.ReactNode;
 }
@@ -30,7 +33,7 @@ export function ToolSectionSpacingProvider(props: {
     );
 }
 
-export const ToolSectionView = React.memo<ToolSectionViewProps>(({ title, children, fullWidth }) => {
+export const ToolSectionView = React.memo<ToolSectionViewProps>(({ title, titleFindRanges, children, fullWidth }) => {
     const spacing = React.useContext(ToolSectionSpacingContext);
     return (
         <View style={[
@@ -38,7 +41,7 @@ export const ToolSectionView = React.memo<ToolSectionViewProps>(({ title, childr
             { marginBottom: TOOL_SECTION_BOTTOM_SPACING[spacing] },
             fullWidth && styles.fullWidthSection,
         ]}>
-            {title && <Text style={styles.sectionTitle}>{title}</Text>}
+            {title && <Text style={styles.sectionTitle}>{titleFindRanges?.length ? <FindHighlightedText text={title} ranges={titleFindRanges} /> : title}</Text>}
             <View style={fullWidth ? styles.fullWidthContent : undefined}>
                 {children}
             </View>

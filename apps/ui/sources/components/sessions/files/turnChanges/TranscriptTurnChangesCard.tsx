@@ -11,6 +11,7 @@ export type TranscriptTurnChangesCardProps = Readonly<{
     serverId?: string | null;
     turnId: string;
     files: readonly ScmFileStatus[];
+    messageId?: string;
     /** Opens one file; absent where the viewer may not open files (a public or read-only transcript). */
     onOpenFile?: ((fullPath: string) => void) | null;
 }>;
@@ -48,6 +49,7 @@ export const TranscriptTurnChangesCard = React.memo(function TranscriptTurnChang
         <TurnChangesCard
             testID={`turn-changes-card:${props.turnId}`}
             files={props.files}
+            messageId={props.messageId}
             workspace={workspace}
             onOpenFile={props.onOpenFile ?? noop}
             onOpenInFiles={openInFiles}

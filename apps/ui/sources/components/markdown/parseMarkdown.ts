@@ -46,7 +46,7 @@ export type MarkdownBlock = ({
 }) & MarkdownSourceFields;
 
 export type MarkdownSpan = {
-    styles: ('italic' | 'bold' | 'semibold' | 'code')[],
+    styles: ('italic' | 'bold' | 'semibold' | 'code' | 'strikethrough')[],
     text: string,
     url: string | null
 }

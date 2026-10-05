@@ -29,13 +29,13 @@ describe('transcriptJumpHighlightStore', () => {
     it('records a highlight for a landed route-message-id jump with seq fallback identity', async () => {
         const store = await importStore();
 
-        store.applyTranscriptJumpHighlightForJumpResult('session-1', {
+        store.applyTranscriptJumpHighlightForJumpResult({ serverId: 'home-a', sessionId: 'session-1' }, {
             status: 'scrolled',
             target: { kind: 'route-message-id', routeMessageId: 'local:m-1', seqHint: 42 },
         });
 
         expect(store.readActiveTranscriptJumpHighlight()).toEqual({
-            sessionId: 'session-1',
+            sessionAddress: { serverId: 'home-a', sessionId: 'session-1' },
             routeMessageId: 'local:m-1',
             seq: 42,
             token: 1,
@@ -45,14 +45,14 @@ describe('transcriptJumpHighlightStore', () => {
     it('records a highlight for a landed seq jump', async () => {
         const store = await importStore();
 
-        store.applyTranscriptJumpHighlightForJumpResult('session-1', {
+        store.applyTranscriptJumpHighlightForJumpResult({ serverId: 'home-a', sessionId: 'session-1' }, {
             status: 'window-rendered',
             target: { kind: 'seq', seq: 7 },
             windowId: 'w-1',
         });
 
         expect(store.readActiveTranscriptJumpHighlight()).toEqual({
-            sessionId: 'session-1',
+            sessionAddress: { serverId: 'home-a', sessionId: 'session-1' },
             routeMessageId: null,
             seq: 7,
             token: 1,
@@ -62,40 +62,57 @@ describe('transcriptJumpHighlightStore', () => {
     it('matches rows by routeMessageId primary and seq fallback, scoped to the session', async () => {
         const store = await importStore();
 
-        store.setTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: 'local:m-1', seq: 42 });
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: 'local:m-1', seq: 42 });
         const active = store.readActiveTranscriptJumpHighlight();
         expect(active).not.toBeNull();
 
         // routeMessageId is primary when both sides carry one.
         expect(store.isTranscriptJumpHighlightActiveForRow(active!, {
-            sessionId: 's1', routeMessageId: 'local:m-1', seq: 999,
+            sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: 'local:m-1', seq: 999,
         })).toBe(true);
         expect(store.isTranscriptJumpHighlightActiveForRow(active!, {
-            sessionId: 's1', routeMessageId: 'local:other', seq: 42,
+            sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: 'local:other', seq: 42,
         })).toBe(false);
         // seq fallback when the row has no routeMessageId.
         expect(store.isTranscriptJumpHighlightActiveForRow(active!, {
-            sessionId: 's1', routeMessageId: null, seq: 42,
+            sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: null, seq: 42,
         })).toBe(true);
         // session scoping.
         expect(store.isTranscriptJumpHighlightActiveForRow(active!, {
-            sessionId: 's2', routeMessageId: 'local:m-1', seq: 42,
+            sessionAddress: { serverId: 'home-a', sessionId: 's2' }, routeMessageId: 'local:m-1', seq: 42,
         })).toBe(false);
     });
 
     it('increments the token when the same row is jumped to again so consumers can retrigger', async () => {
         const store = await importStore();
 
-        store.setTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: 'local:m-1', seq: 1 });
-        store.setTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: 'local:m-1', seq: 1 });
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: 'local:m-1', seq: 1 });
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: 'local:m-1', seq: 1 });
 
         expect(store.readActiveTranscriptJumpHighlight()?.token).toBe(2);
+    });
+
+    it('does not highlight the same session and message in another Home', async () => {
+        const store = await importStore();
+        const target = {
+            sessionAddress: { serverId: 'home-a', sessionId: 's1' },
+            routeMessageId: 'local:m-1',
+            seq: 42,
+        };
+        store.setTranscriptJumpHighlight(target);
+        const active = store.readActiveTranscriptJumpHighlight();
+        expect(active).not.toBeNull();
+        expect(store.isTranscriptJumpHighlightActiveForRow(active!, target)).toBe(true);
+        expect(store.isTranscriptJumpHighlightActiveForRow(active!, {
+            ...target,
+            sessionAddress: { serverId: 'home-b', sessionId: 's1' },
+        })).toBe(false);
     });
 
     it('auto-expires the highlight after the canonical duration', async () => {
         const store = await importStore();
 
-        store.setTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: 'local:m-1', seq: 1 });
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: 'local:m-1', seq: 1 });
         vi.advanceTimersByTime(store.TRANSCRIPT_JUMP_HIGHLIGHT_DURATION_MS - 1);
         expect(store.readActiveTranscriptJumpHighlight()).not.toBeNull();
 
@@ -106,9 +123,9 @@ describe('transcriptJumpHighlightStore', () => {
     it('keeps a retriggered highlight alive for its full duration', async () => {
         const store = await importStore();
 
-        store.setTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: 'local:m-1', seq: 1 });
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: 'local:m-1', seq: 1 });
         vi.advanceTimersByTime(store.TRANSCRIPT_JUMP_HIGHLIGHT_DURATION_MS - 100);
-        store.setTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: 'local:m-2', seq: 2 });
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: 'local:m-2', seq: 2 });
 
         vi.advanceTimersByTime(store.TRANSCRIPT_JUMP_HIGHLIGHT_DURATION_MS - 1);
         expect(store.readActiveTranscriptJumpHighlight()?.routeMessageId).toBe('local:m-2');
@@ -122,7 +139,7 @@ describe('transcriptJumpHighlightStore', () => {
         const listener = vi.fn();
         const unsubscribe = store.subscribeToTranscriptJumpHighlight(listener);
 
-        store.setTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: 'local:m-1', seq: 1 });
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: 'local:m-1', seq: 1 });
         expect(listener).toHaveBeenCalledTimes(1);
 
         store.clearTranscriptJumpHighlight();
@@ -133,17 +150,17 @@ describe('transcriptJumpHighlightStore', () => {
         expect(listener).toHaveBeenCalledTimes(2);
 
         unsubscribe();
-        store.setTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: 'local:m-1', seq: 1 });
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: 'local:m-1', seq: 1 });
         expect(listener).toHaveBeenCalledTimes(2);
     });
 
     it('re-renders only the target row subscriber when a highlight is set', async () => {
         const store = await importStore();
-        const renderCounts = { target: 0, other: 0 };
+        const renderCounts = { target: 0, other: 0, otherHome: 0 };
 
-        function Probe(props: { id: 'target' | 'other'; seq: number }) {
+        function Probe(props: { id: 'target' | 'other' | 'otherHome'; seq: number; serverId?: string }) {
             renderCounts[props.id] += 1;
-            store.useTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: null, seq: props.seq });
+            store.useTranscriptJumpHighlight({ sessionAddress: { serverId: props.serverId ?? 'home-a', sessionId: 's1' }, routeMessageId: null, seq: props.seq });
             return null;
         }
 
@@ -154,21 +171,24 @@ describe('transcriptJumpHighlightStore', () => {
                 null,
                 React.createElement(Probe, { id: 'target', key: 'target', seq: 1 }),
                 React.createElement(Probe, { id: 'other', key: 'other', seq: 2 }),
+                React.createElement(Probe, { id: 'otherHome', key: 'otherHome', serverId: 'home-b', seq: 1 }),
             ));
         });
         const baseline = { ...renderCounts };
 
         act(() => {
-            store.setTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: null, seq: 1 });
+            store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: null, seq: 1 });
         });
         expect(renderCounts.target).toBe(baseline.target + 1);
         expect(renderCounts.other).toBe(baseline.other);
+        expect(renderCounts.otherHome).toBe(baseline.otherHome);
 
         act(() => {
             store.clearTranscriptJumpHighlight();
         });
         expect(renderCounts.target).toBe(baseline.target + 2);
         expect(renderCounts.other).toBe(baseline.other);
+        expect(renderCounts.otherHome).toBe(baseline.otherHome);
 
         act(() => {
             tree?.unmount();
@@ -178,13 +198,19 @@ describe('transcriptJumpHighlightStore', () => {
     it('ignores invalid identities instead of highlighting arbitrary rows', async () => {
         const store = await importStore();
 
-        store.setTranscriptJumpHighlight({ sessionId: '   ', routeMessageId: 'local:m-1', seq: 1 });
+        store.setTranscriptJumpHighlight({ sessionAddress: null, routeMessageId: 'local:m-1', seq: 1 });
         expect(store.readActiveTranscriptJumpHighlight()).toBeNull();
 
-        store.setTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: null, seq: null });
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: '   ', sessionId: 's1' }, routeMessageId: 'local:m-1', seq: 1 });
         expect(store.readActiveTranscriptJumpHighlight()).toBeNull();
 
-        store.setTranscriptJumpHighlight({ sessionId: 's1', routeMessageId: '  ', seq: Number.NaN });
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: '   ' }, routeMessageId: 'local:m-1', seq: 1 });
+        expect(store.readActiveTranscriptJumpHighlight()).toBeNull();
+
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: null, seq: null });
+        expect(store.readActiveTranscriptJumpHighlight()).toBeNull();
+
+        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: '  ', seq: Number.NaN });
         expect(store.readActiveTranscriptJumpHighlight()).toBeNull();
     });
 });

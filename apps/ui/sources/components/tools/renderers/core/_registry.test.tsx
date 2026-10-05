@@ -3,33 +3,34 @@ import type { ToolViewComponent } from './_registry';
 
 // `_registry` imports every tool view module. For these mapping tests we only care
 // about registry behavior, so all views are mocked to keep imports light and deterministic.
-vi.mock('../fileOps/EditView', () => ({ EditView: () => null }));
-vi.mock('../system/BashView', () => ({ BashView: () => null }));
-vi.mock('../fileOps/WriteView', () => ({ WriteView: () => null }));
-vi.mock('../workflow/TodoView', () => ({ TodoView: () => null }));
-vi.mock('../workflow/ExitPlanToolView', () => ({ ExitPlanToolView: () => null }));
-vi.mock('../fileOps/MultiEditView', () => ({ MultiEditView: () => null }));
-vi.mock('../workflow/EnterPlanModeView', () => ({ EnterPlanModeView: () => null }));
-vi.mock('../workflow/SubAgentView', () => ({ SubAgentView: () => null }));
-vi.mock('../fileOps/PatchView', () => ({ PatchView: () => null }));
-vi.mock('../fileOps/DiffView', () => ({ DiffView: () => null }));
-vi.mock('../workflow/AskUserQuestionView', () => ({ AskUserQuestionView: () => null }));
-vi.mock('../system/AcpHistoryImportView', () => ({ AcpHistoryImportView: () => null }));
-vi.mock('../fileOps/GlobView', () => ({ GlobView: () => null }));
-vi.mock('../fileOps/GrepView', () => ({ GrepView: () => null }));
-vi.mock('../fileOps/LSView', () => ({ LSView: () => null }));
-vi.mock('../web/WebFetchView', () => ({ WebFetchView: () => null }));
-vi.mock('../web/WebSearchView', () => ({ WebSearchView: () => null }));
-vi.mock('../fileOps/CodeSearchView', () => ({ CodeSearchView: () => null }));
-vi.mock('../workflow/ReasoningView', () => ({ ReasoningView: () => null }));
-vi.mock('../workflow/SubAgentRunView', () => ({ SubAgentRunView: () => null }));
-vi.mock('../workflow/WorkflowActivityView', () => ({ WorkflowActivityView: () => null }));
-vi.mock('../workflow/AgentTeamView', () => ({ AgentTeamView: () => null }));
-vi.mock('../system/WorkspaceIndexingPermissionView', () => ({ WorkspaceIndexingPermissionView: () => null }));
-vi.mock('../fileOps/DeleteView', () => ({ DeleteView: () => null }));
-vi.mock('../system/UnknownToolView', () => ({ UnknownToolView: () => null }));
+vi.mock('../fileOps/EditView', () => ({ EditView: () => null, projectEditDisplayText: () => [] }));
+vi.mock('../system/BashView', () => ({ BashView: () => null, projectBashDisplayText: () => [] }));
+vi.mock('../fileOps/WriteView', () => ({ WriteView: () => null, projectWriteDisplayText: () => [] }));
+vi.mock('../workflow/TodoView', () => ({ TodoView: () => null, projectTodoDisplayText: () => [] }));
+vi.mock('../workflow/ExitPlanToolView', () => ({ ExitPlanToolView: () => null, projectExitPlanDisplayText: () => [] }));
+vi.mock('../fileOps/MultiEditView', () => ({ MultiEditView: () => null, projectMultiEditDisplayText: () => [] }));
+vi.mock('../workflow/EnterPlanModeView', () => ({ EnterPlanModeView: () => null, projectEnterPlanModeDisplayText: () => [] }));
+vi.mock('../workflow/SubAgentView', () => ({ SubAgentView: () => null, projectSubAgentDisplayText: () => [] }));
+vi.mock('../fileOps/PatchView', () => ({ PatchView: () => null, projectPatchDisplayText: () => [] }));
+vi.mock('../fileOps/DiffView', () => ({ DiffView: () => null, projectDiffDisplayText: () => [] }));
+vi.mock('../workflow/AskUserQuestionView', () => ({ AskUserQuestionView: () => null, projectAskUserQuestionDisplayText: () => [] }));
+vi.mock('../system/AcpHistoryImportView', () => ({ AcpHistoryImportView: () => null, projectAcpHistoryImportDisplayText: () => [] }));
+vi.mock('../fileOps/GlobView', () => ({ GlobView: () => null, projectGlobDisplayText: () => [] }));
+vi.mock('../fileOps/GrepView', () => ({ GrepView: () => null, projectGrepDisplayText: () => [] }));
+vi.mock('../fileOps/LSView', () => ({ LSView: () => null, projectLSDisplayText: () => [] }));
+vi.mock('../web/WebFetchView', () => ({ WebFetchView: () => null, projectWebFetchDisplayText: () => [] }));
+vi.mock('../web/WebSearchView', () => ({ WebSearchView: () => null, projectWebSearchDisplayText: () => [] }));
+vi.mock('../fileOps/CodeSearchView', () => ({ CodeSearchView: () => null, projectCodeSearchDisplayText: () => [] }));
+vi.mock('../workflow/ReasoningView', () => ({ ReasoningView: () => null, projectReasoningDisplayText: () => [] }));
+vi.mock('../workflow/SubAgentRunView', () => ({ SubAgentRunView: () => null, projectSubAgentRunDisplayText: () => [] }));
+vi.mock('../workflow/WorkflowActivityView', () => ({ WorkflowActivityView: () => null, projectWorkflowActivityDisplayText: () => [] }));
+vi.mock('../workflow/AgentTeamView', () => ({ AgentTeamView: () => null, projectAgentTeamDisplayText: () => [] }));
+vi.mock('../system/WorkspaceIndexingPermissionView', () => ({ WorkspaceIndexingPermissionView: () => null, projectWorkspaceIndexingPermissionDisplayText: () => [] }));
+vi.mock('../fileOps/DeleteView', () => ({ DeleteView: () => null, projectDeleteDisplayText: () => [] }));
+vi.mock('../system/UnknownToolView', () => ({ UnknownToolView: () => null, projectUnknownDisplayText: () => [] }));
 vi.mock('../system/MCPToolView', () => ({
     MCPToolView: () => null,
+    projectMCPDisplayText: () => [],
     formatMCPTitle: () => 'MCP',
     formatMCPSubtitle: () => '',
 }));

@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { TranscriptJumpResult } from '@/components/sessions/transcript/viewport/jump/transcriptJumpTargetTypes';
+import { areSessionAddressesEqual, normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 /**
  * Canonical jump-landing highlight timing (spec: 1200-1800ms total, subtle wash, fade out).
@@ -12,23 +13,19 @@ export const TRANSCRIPT_JUMP_HIGHLIGHT_DURATION_MS = 1400;
 export const TRANSCRIPT_JUMP_HIGHLIGHT_FADE_MS = 450;
 
 export type TranscriptJumpHighlightRowIdentity = Readonly<{
-    sessionId: string;
+    sessionAddress: SessionAddress | null;
     routeMessageId?: string | null;
     seq?: number | null;
 }>;
 
 export type ActiveTranscriptJumpHighlight = Readonly<{
-    sessionId: string;
+    sessionAddress: SessionAddress;
     routeMessageId: string | null;
     seq: number | null;
     token: number;
 }>;
 
 export type TranscriptJumpLandedResult = Extract<TranscriptJumpResult, { status: 'scrolled' | 'window-rendered' }>;
-
-function normalizeSessionId(value: unknown): string | null {
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
 
 function normalizeRouteMessageId(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -77,14 +74,14 @@ export function clearTranscriptJumpHighlight(): void {
 }
 
 export function setTranscriptJumpHighlight(identity: TranscriptJumpHighlightRowIdentity): void {
-    const sessionId = normalizeSessionId(identity.sessionId);
+    const sessionAddress = normalizeSessionAddress(identity.sessionAddress?.serverId, identity.sessionAddress?.sessionId);
     const routeMessageId = normalizeRouteMessageId(identity.routeMessageId);
     const seq = normalizeSeq(identity.seq);
-    if (!sessionId || (routeMessageId == null && seq == null)) return;
+    if (!sessionAddress || (routeMessageId == null && seq == null)) return;
 
     cancelExpiryTimer();
     activeHighlight = {
-        sessionId,
+        sessionAddress,
         routeMessageId,
         seq,
         token: nextToken,
@@ -105,16 +102,16 @@ export function setTranscriptJumpHighlight(identity: TranscriptJumpHighlightRowI
  * routeMessageId is the primary row identity; seq (or seqHint) is the fallback.
  */
 export function applyTranscriptJumpHighlightForJumpResult(
-    sessionId: string,
+    sessionAddress: SessionAddress,
     result: TranscriptJumpLandedResult,
 ): void {
     const target = result.target;
     if (target.kind === 'seq') {
-        setTranscriptJumpHighlight({ sessionId, routeMessageId: null, seq: target.seq });
+        setTranscriptJumpHighlight({ sessionAddress, routeMessageId: null, seq: target.seq });
         return;
     }
     setTranscriptJumpHighlight({
-        sessionId,
+        sessionAddress,
         routeMessageId: target.routeMessageId,
         seq: target.seqHint ?? null,
     });
@@ -124,7 +121,8 @@ export function isTranscriptJumpHighlightActiveForRow(
     active: ActiveTranscriptJumpHighlight,
     row: TranscriptJumpHighlightRowIdentity,
 ): boolean {
-    if (active.sessionId !== normalizeSessionId(row.sessionId)) return false;
+    const rowAddress = normalizeSessionAddress(row.sessionAddress?.serverId, row.sessionAddress?.sessionId);
+    if (!areSessionAddressesEqual(active.sessionAddress, rowAddress)) return false;
     const rowRouteMessageId = normalizeRouteMessageId(row.routeMessageId);
     const rowSeq = normalizeSeq(row.seq);
     if (active.routeMessageId != null && rowRouteMessageId != null) {
@@ -142,13 +140,17 @@ export function isTranscriptJumpHighlightActiveForRow(
  * re-renders when the highlight changes (useSyncExternalStore bail-out).
  */
 export function useTranscriptJumpHighlight(row: TranscriptJumpHighlightRowIdentity): number | null {
-    const { sessionId, routeMessageId = null, seq = null } = row;
+    const serverId = row.sessionAddress?.serverId;
+    const sessionId = row.sessionAddress?.sessionId;
+    const { routeMessageId = null, seq = null } = row;
     const getSnapshot = React.useCallback(() => {
         const active = activeHighlight;
         if (active == null) return null;
-        return isTranscriptJumpHighlightActiveForRow(active, { sessionId, routeMessageId, seq })
+        return isTranscriptJumpHighlightActiveForRow(active, {
+            sessionAddress: normalizeSessionAddress(serverId, sessionId), routeMessageId, seq,
+        })
             ? active.token
             : null;
-    }, [sessionId, routeMessageId, seq]);
+    }, [serverId, sessionId, routeMessageId, seq]);
     return React.useSyncExternalStore(subscribeToTranscriptJumpHighlight, getSnapshot, getSnapshot);
 }

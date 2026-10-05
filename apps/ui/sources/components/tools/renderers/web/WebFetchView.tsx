@@ -5,7 +5,8 @@ import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '@happier-dev/protocol';
-import { Text } from '@/components/ui/text/Text';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { t } from '@/text';
 
 
@@ -38,11 +39,24 @@ function getStatus(result: unknown): number | null {
     return typeof obj.status === 'number' ? obj.status : null;
 }
 
-export const WebFetchView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
-    if (tool.state !== 'completed') return null;
+export const projectWebFetchDisplayText: ToolDisplayTextProjector = (tool) => {
+    if (tool.state !== 'completed') return [];
     const url = typeof tool.input?.url === 'string' ? tool.input.url : null;
-    const text = getText(tool.result);
     const status = getStatus(tool.result);
+    return [
+        ...toolTextBlock('tool-fetch-url', url),
+        ...toolTextBlock('tool-fetch-status', url && typeof status === 'number' ? t('tools.webFetch.httpStatus', { status }) : null),
+        ...toolTextBlock('tool-fetch-body', getText(tool.result)),
+    ];
+};
+
+export const WebFetchView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId }) => {
+    const find = useToolFindState(messageId);
+    if (tool.state !== 'completed') return null;
+    const blocks = projectWebFetchDisplayText(tool);
+    const url = blocks.find((block) => block.id === 'tool-fetch-url')?.text;
+    const text = blocks.find((block) => block.id === 'tool-fetch-body')?.text;
+    const status = blocks.find((block) => block.id === 'tool-fetch-status')?.text;
     if (!url && !text) return null;
 
     return (
@@ -50,15 +64,13 @@ export const WebFetchView = React.memo<ToolViewProps>(({ tool, detailLevel }) =>
             <View style={styles.container}>
                 {url ? (
                     <View style={styles.header}>
-                        <Text style={styles.url} numberOfLines={2}>
-                            {url}
-                        </Text>
-                        {typeof status === 'number' ? (
-                            <Text style={styles.status}>{t('tools.webFetch.httpStatus', { status })}</Text>
+                        <ToolFindText text={url} blockId="tool-fetch-url" messageId={messageId} style={styles.url} numberOfLines={2} />
+                        {status ? (
+                            <ToolFindText text={status} blockId="tool-fetch-status" messageId={messageId} style={styles.status} />
                         ) : null}
                     </View>
                 ) : null}
-                {text ? <CodeView code={detailLevel === 'full' ? text : truncate(text, 2200)} /> : null}
+                {text ? <CodeView code={detailLevel === 'full' || find.active ? text : truncate(text, 2200)} findRanges={find.ranges('tool-fetch-body')} /> : null}
             </View>
         </ToolSectionView>
     );

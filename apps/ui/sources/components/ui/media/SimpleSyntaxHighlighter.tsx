@@ -5,6 +5,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { tokenizeSimpleSyntaxText } from '@/components/ui/code/tokenization/simpleSyntaxTokenizer';
 import { Text } from '@/components/ui/text/Text';
+import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
 
 interface SimpleSyntaxHighlighterProps {
@@ -18,6 +20,7 @@ interface SimpleSyntaxHighlighterProps {
    * F-W13-1) where the full content must be readable without scrolling.
    */
   wrap?: boolean;
+  findRanges?: readonly FindTextRange[];
 }
 
 function resolveTokenColor(theme: any, tokenType: string, fallback: string): string {
@@ -33,6 +36,7 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
   language,
   selectable,
   wrap = false,
+  findRanges,
 }) => {
   const { theme } = useUnistyles();
   const fallback = theme.colors.text.primary ?? '#111';
@@ -43,6 +47,7 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
     : null;
 
   const tokens = React.useMemo(() => tokenizeSimpleSyntaxText({ text: code, language }), [code, language]);
+  let offset = 0;
 
   return (
     <View style={wrap ? { width: '100%' } : { flexShrink: 0, alignSelf: 'flex-start' }}>
@@ -58,7 +63,10 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
           webTextWrapStyle,
         ]}
       >
-        {tokens.map((token, index) => (
+        {tokens.map((token, index) => {
+          const ranges = sliceFindRanges(findRanges, offset, token.text.length);
+          offset += token.text.length;
+          return (
           <Text
             key={index}
             selectable={selectable}
@@ -68,9 +76,9 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
               fontWeight: token.type === 'keyword' ? '600' : '400',
             }}
           >
-            {token.text}
+            {ranges?.length ? <FindHighlightedText text={token.text} ranges={ranges} selectable={selectable} /> : token.text}
           </Text>
-        ))}
+        ); })}
       </Text>
     </View>
   );

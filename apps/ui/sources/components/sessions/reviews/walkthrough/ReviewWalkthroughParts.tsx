@@ -6,6 +6,7 @@ import type { ReviewFinding } from '@happier-dev/protocol';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { reviewSeverityCounts, reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
+import { StructuredFindText } from '@/components/sessions/transcript/structured/structuredFindText';
 import { useReviewSeverityColors } from '@/components/sessions/reviews/findings/useReviewSeverityColors';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -24,12 +25,14 @@ import type { ReviewWalkthroughProgress } from './reviewWalkthroughProgress';
  * a comment keeps its own card, a reviewed mark is the green check. Severity colour appears only here.
  */
 /** A severity: its dot and its word, in its colour ("● High"). */
-export function ReviewSeverityLabel(props: Readonly<{ severity: ReviewFinding['severity']; label?: string; size?: 'sm' | 'md' }>) {
+export function ReviewSeverityLabel(props: Readonly<{ severity: ReviewFinding['severity']; label?: string; size?: 'sm' | 'md'; findBlockId?: string }>) {
     const colors = useReviewSeverityColors(props.severity);
     return (
         <View style={styles.severity}>
             <View style={[styles.dot, { backgroundColor: colors.foreground }]} />
+            {props.findBlockId ? <StructuredFindText blockId={props.findBlockId} text={props.label ?? reviewSeverityLabel(props.severity)} style={[styles.severityText, props.size === 'md' ? styles.severityTextMd : null, { color: colors.foreground }]} /> : (
                 <Text style={[styles.severityText, props.size === 'md' ? styles.severityTextMd : null, { color: colors.foreground }]}>{props.label ?? reviewSeverityLabel(props.severity)}</Text>
+            )}
         </View>
     );
 }
@@ -41,13 +44,13 @@ export function ReviewSeverityDot(props: Readonly<{ severity: ReviewFinding['sev
 }
 
 /** "● 1 high  ● 2 medium  ● 1 low": a finished review's counts, most severe first (lab WT5-R8). */
-export function ReviewSeveritySummary(props: Readonly<{ findings: readonly ReviewFinding[]; testID?: string }>) {
+export function ReviewSeveritySummary(props: Readonly<{ findings: readonly ReviewFinding[]; testID?: string; findBlockPrefix?: string }>) {
     const counts = React.useMemo(() => reviewSeverityCounts(props.findings), [props.findings]);
     if (counts.length === 0) return null;
     return (
         <View testID={props.testID} style={styles.summary}>
             {counts.map(({severity, label}) => (
-                <ReviewSeverityLabel key={severity} severity={severity} label={label} />
+                <ReviewSeverityLabel key={severity} severity={severity} label={label} findBlockId={props.findBlockPrefix ? `${props.findBlockPrefix}:${severity}` : undefined} />
             ))}
         </View>
     );

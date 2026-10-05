@@ -7,6 +7,8 @@ import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '@happier-dev/protocol';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 
 
 /**
@@ -70,28 +72,28 @@ export function formatMCPSubtitle(input: unknown): string {
     const display = asRecord(mcp?.display);
     if (typeof display?.subtitle === 'string' && display.subtitle.trim()) return display.subtitle.trim();
 
-    const titleCandidate = typeof (inputObj as any).title === 'string' ? (inputObj as any).title : null;
+    const titleCandidate = typeof inputObj.title === 'string' ? inputObj.title : null;
     if (typeof titleCandidate === 'string' && titleCandidate.trim()) return truncate(titleCandidate.trim(), 140);
 
     const pathCandidate =
-        typeof (inputObj as any).path === 'string'
-            ? (inputObj as any).path
-            : typeof (inputObj as any).file_path === 'string'
-                ? (inputObj as any).file_path
-                : typeof (inputObj as any).filePath === 'string'
-                    ? (inputObj as any).filePath
+        typeof inputObj.path === 'string'
+            ? inputObj.path
+            : typeof inputObj.file_path === 'string'
+                ? inputObj.file_path
+                : typeof inputObj.filePath === 'string'
+                    ? inputObj.filePath
                     : null;
     if (typeof pathCandidate === 'string' && pathCandidate.trim()) return truncate(pathCandidate.trim(), 140);
 
-    const urlCandidate = typeof (inputObj as any).url === 'string' ? (inputObj as any).url : null;
+    const urlCandidate = typeof inputObj.url === 'string' ? inputObj.url : null;
     if (typeof urlCandidate === 'string' && urlCandidate.trim()) return truncate(urlCandidate.trim(), 140);
 
-    const queryCandidate = typeof (inputObj as any).query === 'string' ? (inputObj as any).query : null;
+    const queryCandidate = typeof inputObj.query === 'string' ? inputObj.query : null;
     if (typeof queryCandidate === 'string' && queryCandidate.trim()) return truncate(queryCandidate.trim(), 140);
 
     const keys = Object.keys(inputObj).filter((k) => !k.startsWith('_')).slice(0, 3);
     if (keys.length === 0) return '';
-    const parts = keys.map((k) => `${k}=${truncate(stringifyShort((inputObj as any)[k]), 60)}`);
+    const parts = keys.map((k) => `${k}=${truncate(stringifyShort(inputObj[k]), 60)}`);
     return truncate(parts.join(' '), 140);
 }
 
@@ -106,14 +108,36 @@ function getResultText(result: unknown): string | null {
     return null;
 }
 
-export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+function getMCPDisplay(tool: ToolViewProps['tool']) {
+    return {
+        title: formatMCPTitle(tool.name),
+        subtitle: formatMCPSubtitle(tool.input),
+        input: JSON.stringify(maybeParseJson(tool.input), null, 2) ?? '',
+        output: JSON.stringify(maybeParseJson(tool.result), null, 2) ?? '',
+        resultText: getResultText(tool.result),
+    };
+}
+
+export const projectMCPDisplayText: ToolDisplayTextProjector = (tool) => {
+    const display = getMCPDisplay(tool);
+    return [
+        ...toolTextBlock('tool-body-title', display.title),
+        ...toolTextBlock('tool-body-subtitle', display.subtitle),
+        ...toolTextBlock('tool-input-label', t('toolView.input')),
+        ...toolTextBlock('tool-input', display.input),
+        ...toolTextBlock('tool-output-preview', tool.state === 'completed' ? display.resultText : null),
+        ...toolTextBlock('tool-output-label', tool.state === 'completed' && tool.result != null ? t('toolView.output') : null),
+        ...toolTextBlock('tool-output', tool.state === 'completed' && tool.result != null ? display.output : null),
+    ];
+};
+
+export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId }) => {
+    const find = useToolFindState(messageId);
     if (detailLevel === 'title') return null;
 
-    const toolName = tool.name;
-    const subtitle = formatMCPSubtitle(tool.input);
-    const resultText = getResultText(tool.result);
+    const { title, subtitle, resultText, input, output } = getMCPDisplay(tool);
 
-    if (detailLevel === 'summary') {
+    if (detailLevel === 'summary' && !find.active) {
         return (
             <ToolSectionView>
                 <View style={styles.container}>
@@ -134,22 +158,19 @@ export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel }) => 
     return (
         <ToolSectionView fullWidth>
             <View style={styles.container}>
-                <Text style={styles.title} numberOfLines={2}>
-                    {formatMCPTitle(toolName)}
-                </Text>
+                <ToolFindText style={styles.title} numberOfLines={2} text={title} blockId="tool-body-title" messageId={messageId} />
                 {subtitle ? (
-                    <Text style={styles.subtitle} numberOfLines={3}>
-                        {subtitle}
-                    </Text>
+                    <ToolFindText style={styles.subtitle} numberOfLines={3} text={subtitle} blockId="tool-body-subtitle" messageId={messageId} />
                 ) : null}
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>{t('toolView.input')}</Text>
-                    <CodeView code={JSON.stringify(maybeParseJson(tool.input), null, 2)} />
+                    <ToolFindText style={styles.sectionTitle} text={t('toolView.input')} blockId="tool-input-label" messageId={messageId} />
+                    <CodeView code={input} findRanges={find.ranges('tool-input')} />
                 </View>
                 {tool.state === 'completed' && tool.result != null ? (
                     <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>{t('toolView.output')}</Text>
-                        <CodeView code={JSON.stringify(maybeParseJson(tool.result), null, 2)} />
+                        <ToolFindText style={styles.sectionTitle} text={t('toolView.output')} blockId="tool-output-label" messageId={messageId} />
+                        {find.active && resultText ? <CodeView code={resultText} findRanges={find.ranges('tool-output-preview')} /> : null}
+                        <CodeView code={output} findRanges={find.ranges('tool-output')} />
                     </View>
                 ) : null}
             </View>

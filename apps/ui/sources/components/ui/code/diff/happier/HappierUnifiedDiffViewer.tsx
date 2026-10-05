@@ -14,6 +14,14 @@ import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { mapCodeReadingAnchors } from '@/components/ui/code/model/mapCodeReadingAnchor';
 import { collapseUnifiedDiffContext } from './collapseUnifiedDiffContext';
 import { UnifiedDiffFoldToggleRow } from './UnifiedDiffFoldToggleRow';
+import { Text } from '@/components/ui/text/Text';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { t } from '@/text';
+import { useUnistyles } from 'react-native-unistyles';
+import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
+import { Typography } from '@/constants/Typography';
+import Color from 'color';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 
 export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((props) => {
     const wrapLines = props.wrapLines ?? true;
@@ -23,6 +31,9 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
     const contextThreshold = useSetting('filesDiffFoldingContextThreshold') ?? 0;
     const contextRadius = useSetting('filesDiffFoldingContextRadius') ?? 0;
     const intraLineDiff = useIntraLineWordDiffConfig();
+    const { theme } = useUnistyles();
+    const [refoldedFindLine, setRefoldedFindLine] = React.useState<string | null>(null);
+    React.useEffect(() => { setRefoldedFindLine(null); }, [props.scrollToLineId, props.findActive, props.findRangesByLineId]);
 
     const lines = React.useMemo(() => {
         if (props.precomputedLines) return props.precomputedLines;
@@ -57,13 +68,25 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
 
     const folded = React.useMemo(() => {
         if (!canFold) return { lines, regions: [] as const };
+        const expandedLineIndices = new Set(expansion.indices);
+        if (props.findActive && props.scrollToLineId && refoldedFindLine !== props.scrollToLineId) {
+            const currentIndex = lines.findIndex((line) => line.id === props.scrollToLineId);
+            if (currentIndex >= 0) expandedLineIndices.add(currentIndex);
+        }
         return collapseUnifiedDiffContext({
             lines,
             contextThreshold,
             contextRadius,
-            expandedLineIndices: expansion.indices,
+            expandedLineIndices,
         });
-    }, [canFold, contextRadius, contextThreshold, expansion.indices, lines]);
+    }, [canFold, contextRadius, contextThreshold, expansion.indices, lines, props.findActive, props.scrollToLineId, refoldedFindLine]);
+
+    const findOpenedRegion = React.useMemo(() => {
+        if (!canFold || !props.findActive || !props.scrollToLineId || refoldedFindLine === props.scrollToLineId) return null;
+        const ordinary = collapseUnifiedDiffContext({ lines, contextThreshold, contextRadius, expandedLineIndices: expansion.indices });
+        const index = lines.findIndex((line) => line.id === props.scrollToLineId);
+        return ordinary.regions.find((region) => index >= region.hiddenStartIndex && index < region.hiddenStartIndex + region.hiddenCount) ?? null;
+    }, [canFold, props.findActive, props.scrollToLineId, refoldedFindLine, lines, contextThreshold, contextRadius, expansion.indices]);
 
     const foldRegionsByAfterLineId = React.useMemo(() => {
         const map = new Map<string, { hiddenStartIndex: number; hiddenCount: number }>();
@@ -73,7 +96,25 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
         return map;
     }, [folded.regions]);
 
+    const openedBandColor = React.useMemo(() => {
+        try {
+            return Color(theme.colors.find.matchCurrent).alpha(0.1).rgb().string();
+        } catch {
+            return theme.colors.surface.inset;
+        }
+    }, [theme.colors.find.matchCurrent, theme.colors.surface.inset]);
     const renderAfterLine = React.useCallback((line: CodeLine) => {
+        // The fold Find opened (Find lab F1d): a faint band in the current-match tint, the reason on the left
+        // where the fold toggle sits, and the way back at the row's end.
+        if (findOpenedRegion?.afterLineId === line.id) return <View style={{ paddingLeft: 46, paddingRight: 12, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: openedBandColor }}>
+            <Icon name="arrows-down-up" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
+            <Text style={{ flex: 1, color: theme.colors.text.tertiary, fontSize: 12, ...Typography.default() }} numberOfLines={1}>{t('find.openedForMatch')}</Text>
+            <HappierPressable testID="diff-find-fold-again" accessibilityRole="button" accessibilityLabel={t('find.foldAgain')}
+                style={{ minHeight: resolveTouchTargetFloorPx() ?? 28, justifyContent: 'center' }}
+                onPress={() => setRefoldedFindLine(props.scrollToLineId ?? null)}>
+                <Text style={{ color: theme.colors.text.link, fontSize: 12, ...Typography.default() }}>{t('find.foldAgain')}</Text>
+            </HappierPressable>
+        </View>;
         const region = foldRegionsByAfterLineId.get(line.id) ?? null;
         if (!region) return null;
         return (
@@ -90,7 +131,7 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
                 }}
             />
         );
-    }, [foldRegionsByAfterLineId]);
+    }, [foldRegionsByAfterLineId, findOpenedRegion, openedBandColor, props.scrollToLineId, theme.colors.text.tertiary, theme.colors.text.link]);
 
     const view = (
         <View style={props.virtualized ? styles.virtualizedBody : undefined}>
@@ -117,6 +158,7 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
                 externalScrollView={props.externalScrollView}
                 highlightLineId={props.highlightLineId}
                 highlightLineIds={props.highlightLineIds}
+                findRangesByLineId={props.findRangesByLineId}
                 syntaxHighlighting={syntaxHighlighting}
                 testID={props.testID}
                 onLayout={props.onLayout}

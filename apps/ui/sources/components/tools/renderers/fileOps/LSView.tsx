@@ -6,6 +6,8 @@ import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { maybeParseJson } from '@happier-dev/protocol';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -21,7 +23,11 @@ function getEntries(result: unknown): string[] {
     return entries.filter((e): e is string => typeof e === 'string');
 }
 
-export const LSView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+export const projectLSDisplayText: ToolDisplayTextProjector = (tool) => tool.state === 'completed'
+    ? getEntries(tool.result).flatMap((text, index) => toolTextBlock(`tool-ls-${index}`, text)) : [];
+
+export const LSView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId }) => {
+    const find = useToolFindState(messageId);
     const { theme } = useUnistyles();
     if (tool.state !== 'completed') return null;
     const entries = getEntries(tool.result);
@@ -29,16 +35,14 @@ export const LSView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
 
     const isFullView = detailLevel === 'full';
     const max = isFullView ? 40 : 8;
-    const shown = entries.slice(0, max);
+    const shown = find.active ? entries : entries.slice(0, max);
     const more = entries.length - shown.length;
 
     return (
         <ToolSectionView fullWidth={isFullView}>
             <View style={styles.container}>
                 {shown.map((entry, idx) => (
-                    <Text key={`${idx}-${entry}`} style={styles.entry} numberOfLines={isFullView ? 2 : 1}>
-                        {entry}
-                    </Text>
+                    <ToolFindText key={`${idx}-${entry}`} text={entry} blockId={`tool-ls-${idx}`} messageId={messageId} style={styles.entry} numberOfLines={isFullView ? 2 : 1} />
                 ))}
                 {more > 0 ? (
                     <Text style={[styles.entry, { color: theme.colors.text.secondary }]}>

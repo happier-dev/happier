@@ -16,6 +16,7 @@ import {
 import { splitMarkdownRenderSegments } from './splitMarkdownRenderSegments';
 import { StaticMarkdownRenderPlaceholder } from './StaticMarkdownRenderPlaceholder';
 import { useDelayedStaticMarkdownRenderPlaceholder } from './useDelayedStaticMarkdownRenderPlaceholder';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
 type MarkdownViewRendererProps = Readonly<{
     testID?: string;
@@ -35,6 +36,8 @@ type MarkdownViewRendererProps = Readonly<{
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
+    findSourceRanges?: readonly FindTextRange[];
+    findActive?: boolean;
     agentTexMath: boolean;
     inlineReferences?: MarkdownInlineReferences;
 }>;
@@ -152,6 +155,8 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
                         onPressSourceRange={props.onPressSourceRange}
                         renderAfterSourceRange={props.renderAfterSourceRange}
                         highlightSourceRange={props.highlightSourceRange}
+                        findSourceRanges={props.findSourceRanges}
+                        findActive={props.findActive}
                         agentTexMath={props.agentTexMath}
                         inlineReferences={props.inlineReferences}
                     />

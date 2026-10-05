@@ -7,8 +7,6 @@ import { installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const rowSpy = vi.fn();
-
 installCodeViewCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -54,12 +52,10 @@ installCodeViewCommonModuleMocks({
     },
 });
 
-vi.mock('./CodeLineRow', () => ({
-    CodeLineRow: (props: any) => {
-        rowSpy(props);
-        return React.createElement('CodeLineRow', props);
-    },
-}));
+async function findCodeRows(tree: renderer.ReactTestRenderer) {
+    const { CodeLineRow } = await import('./CodeLineRow');
+    return tree.root.findAllByType(CodeLineRow);
+}
 
 const createHighlighterSpy = vi.fn(async (..._args: any[]) => ({
     loadLanguage: async () => {},
@@ -84,7 +80,6 @@ async function flushReactAsyncWork(): Promise<void> {
 
 describe('CodeLinesView (web)', () => {
     it('completes a web drag range in an explicit interaction mode', async () => {
-        rowSpy.mockClear();
         const { CodeLinesView } = await import('./CodeLinesView.web');
 
         const onPressLineRange = vi.fn();
@@ -131,7 +126,7 @@ describe('CodeLinesView (web)', () => {
             onPressLineRange={onPressLineRange}
         />);
 
-        const rows = screen.findAllByType('CodeLineRow' as any);
+        const rows = await findCodeRows(screen.tree);
         const event = { preventDefault: vi.fn(), nativeEvent: { preventDefault: vi.fn() } };
         rows[0]!.props.onPressInLine(lines[0], event);
         rows[2]!.props.onHoverLine(lines[2], event);
@@ -144,7 +139,6 @@ describe('CodeLinesView (web)', () => {
     });
 
     it('retries highlighter initialization after a cached failure', async () => {
-        rowSpy.mockClear();
         createHighlighterSpy.mockReset();
         createHighlighterSpy
             .mockImplementationOnce(async () => {
@@ -191,27 +185,24 @@ describe('CodeLinesView (web)', () => {
         // Uses Happier themes instead of generic GitHub themes.
         expect(createHighlighterSpy.mock.calls[0]?.[0]?.themes?.[0]?.name).toMatch(/^happier-light-/);
 
-        const calls1 = rowSpy.mock.calls.map((c) => c[0]);
+        const calls1 = (await findCodeRows(screen1.tree)).map((row) => row.props);
         expect(calls1.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0)).toBe(false);
 
         renderer.act(() => {
             screen1.tree.unmount();
         });
 
-        rowSpy.mockClear();
-
         const screen2 = await renderScreen(view);
         await flushReactAsyncWork();
 
-        const calls2 = rowSpy.mock.calls.map((c) => c[0]);
+        const calls2 = (await findCodeRows(screen2.tree)).map((row) => row.props);
         expect(calls2.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0)).toBe(true);
         expect(createHighlighterSpy).toHaveBeenCalledTimes(2);
 
-        expect(screen2.findAllByType('CodeLineRow' as any).length).toBe(1);
+        expect(await findCodeRows(screen2.tree)).toHaveLength(1);
     });
 
     it('computes Shiki tokens when advanced syntax highlighting is enabled', async () => {
-        rowSpy.mockClear();
         createHighlighterSpy.mockClear();
         const { CodeLinesView } = await import('./CodeLinesView.web');
 
@@ -243,7 +234,7 @@ describe('CodeLinesView (web)', () => {
         for (let i = 0; i < 10; i++) {
             // eslint-disable-next-line no-await-in-loop
             await flushReactAsyncWork();
-            const calls = rowSpy.mock.calls.map((c) => c[0]);
+            const calls = (await findCodeRows(screen.tree)).map((row) => row.props);
             if (calls.length === 0) continue;
             hasAdvanced = calls.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0);
             if (hasAdvanced) break;
@@ -251,6 +242,6 @@ describe('CodeLinesView (web)', () => {
         expect(hasAdvanced).toBe(true);
 
         // Keep tree referenced to avoid act warnings about unmounted trees.
-        expect(screen.findAllByType('CodeLineRow' as any).length).toBe(1);
+        expect(await findCodeRows(screen.tree)).toHaveLength(1);
     });
 });

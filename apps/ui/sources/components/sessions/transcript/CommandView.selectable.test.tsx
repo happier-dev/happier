@@ -69,4 +69,16 @@ describe('CommandView (selection)', () => {
       expect(node.props.selectable).toBe(true);
     }
   });
+
+  it('decorates the selected UTF-16 output span while preserving selectable command output', async () => {
+    const { CommandView } = await import('./CommandView');
+    const screen = await renderScreen(<CommandView command="echo hi" stdout="😀 needle remainder"
+      stdoutFindRanges={[{ start: 3, end: 9, current: true }]} />);
+    const match = screen.findByTestId('find-match-current');
+    if (!match) throw new Error('Expected the selected command-output match');
+    expect(match.props.children).toBe('needle');
+    expect(screen.getTextContent()).toContain('😀 needle remainder');
+    const output = screen.tree.findAllByType('Text' as never).find((node) => node.props.children?.props?.text === '😀 needle remainder');
+    expect(output?.props.selectable).toBe(true);
+  });
 });

@@ -7,6 +7,8 @@ import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '@happier-dev/protocol';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 
 const TEXT_ELLIPSIS = '…';
 
@@ -40,24 +42,28 @@ function truncateLines(text: string, maxLines: number): { text: string; truncate
     return { text: lines.slice(0, maxLines).join('\n'), truncated: true };
 }
 
-export const ReadView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+export const projectReadDisplayText: ToolDisplayTextProjector = (tool) => tool.state === 'completed'
+    ? toolTextBlock('tool-read', extractReadContent(tool.result)?.content ?? t('tools.workflowActivityView.unavailable')) : [];
+
+export const ReadView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId }) => {
+    const find = useToolFindState(messageId);
     if (tool.state !== 'completed') return null;
     const extracted = extractReadContent(tool.result);
     if (!extracted) {
         return (
             <ToolSectionView>
-                <Text style={styles.unavailable}>{t('tools.workflowActivityView.unavailable')}</Text>
+                <ToolFindText text={t('tools.workflowActivityView.unavailable')} blockId="tool-read" messageId={messageId} style={styles.unavailable} />
             </ToolSectionView>
         );
     }
 
     // Protect the UI from extremely large reads; keep `_raw` for debugging.
     const maxLines = detailLevel === 'full' ? 400 : 20;
-    const { text, truncated } = truncateLines(extracted.content, maxLines);
+    const { text, truncated } = find.active ? { text: extracted.content, truncated: false } : truncateLines(extracted.content, maxLines);
     return (
         <ToolSectionView fullWidth>
             <View style={styles.container}>
-                <CodeView code={text} />
+                <CodeView code={text} findRanges={find.ranges('tool-read')} />
                 {truncated ? <Text style={styles.more}>{TEXT_ELLIPSIS}</Text> : null}
             </View>
         </ToolSectionView>

@@ -7,7 +7,7 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const createModelSpy = vi.fn(() => ({
-    getValue: () => '',
+    getValue: (): string => '',
     setValue: () => {},
     dispose: () => {},
 }));
@@ -115,10 +115,6 @@ vi.mock('react-native-unistyles', async () => {
     };
 });
 
-vi.mock('@/sync/store/hooks', () => ({
-    useLocalSetting: () => 1,
-}));
-
 vi.mock('../codeEditorFontMetrics', () => ({
     resolveCodeEditorFontMetrics: () => ({ fontSize: 12, lineHeight: 14 }),
 }));
@@ -128,9 +124,58 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 import { MonacoEditorSurface } from './MonacoEditorSurface.web';
+import type { CodeEditorHandle } from '../codeEditorTypes';
 
 
 describe('MonacoEditorSurface (web)', () => {
+    it('seeds the native find widget through the public action without changing the model', async () => {
+        setupMonacoGlobals();
+        const trigger = vi.fn();
+        const setPosition = vi.fn();
+        const revealPositionInCenter = vi.fn();
+        const model = { getValue: () => 'first\r\nsecond\\n', setValue: vi.fn(), dispose: vi.fn() };
+        createModelSpy.mockReturnValueOnce(model);
+        const editorBoundary = {
+            ...createEditorSpy.getMockImplementation()!(), trigger, setPosition, revealPositionInCenter,
+        };
+        createEditorSpy.mockReturnValueOnce(editorBoundary);
+        const ref = React.createRef<CodeEditorHandle>();
+        await renderScreen(React.createElement(MonacoEditorSurface, {
+            ref, resetKey: 'seed', value: model.getValue(), language: 'plaintext', onChange: vi.fn(),
+        }));
+        ref.current?.find?.seed('\\n', { matchCase: true, regex: false }, { line: 2, column: 7 });
+        expect(trigger).toHaveBeenCalledWith('happier.find', 'editor.actions.findWithArgs', {
+            searchString: '\\n', isRegex: false, isCaseSensitive: true, matchWholeWord: false, findInSelection: false,
+        });
+        expect(setPosition).toHaveBeenCalledWith({ lineNumber: 2, column: 7 });
+        expect(revealPositionInCenter).toHaveBeenCalledWith({ lineNumber: 2, column: 7 });
+        expect(model.setValue).not.toHaveBeenCalled();
+        expect(ref.current?.find?.presentation).toBe('native');
+    });
+    it('updates material paint without replacing the editor or dimming syntax', async () => {
+        setupMonacoGlobals();
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const previous = storage.getState().settings;
+        const materials = glassPresetMaterials('everywhere');
+        try {
+            storage.setState({ settings: { ...previous, glassBlurEnabled: true, glassSurfaceMaterials: materials } });
+            await renderScreen(<MonacoEditorSurface resetKey="glass" value="const x = 1;" language="typescript" onChange={() => {}} />);
+            expect(defineThemeSpy).toHaveBeenLastCalledWith('happier-editor-dark', expect.objectContaining({
+                colors: expect.objectContaining({ 'editor.background': '#1f1f1f00', 'editor.foreground': '#f8f8f2' }),
+            }));
+            await act(async () => {
+                storage.setState({ settings: { ...previous, glassBlurEnabled: true, glassSurfaceMaterials: { ...materials, content: { blur: 'off', opacity: 1 } } } });
+            });
+            expect(createEditorSpy).toHaveBeenCalledTimes(1);
+            expect(createModelSpy).toHaveBeenCalledTimes(1);
+            expect(defineThemeSpy).toHaveBeenLastCalledWith('happier-editor-dark', expect.objectContaining({
+                colors: expect.objectContaining({ 'editor.background': '#1f1f1f', 'editor.foreground': '#f8f8f2' }),
+            }));
+        } finally {
+            await act(async () => { storage.setState({ settings: previous }); });
+        }
+    });
     it('boots Monaco even when initially not ready', async () => {
         setupMonacoGlobals();
 

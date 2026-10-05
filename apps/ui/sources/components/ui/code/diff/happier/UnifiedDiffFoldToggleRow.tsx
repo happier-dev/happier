@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { t } from '@/text';
 
 export const UnifiedDiffFoldToggleRow = React.memo(function UnifiedDiffFoldToggleRow(props: Readonly<{
     hiddenCount: number;
@@ -34,7 +35,7 @@ export const UnifiedDiffFoldToggleRow = React.memo(function UnifiedDiffFoldToggl
                         color: theme.colors.text.secondary,
                     }}
                 >
-                    {count === 1 ? 'Show 1 hidden line' : `Show ${count} hidden lines`}
+                    {t('find.showHiddenLines', { count })}
                 </Text>
             </Pressable>
         </View>

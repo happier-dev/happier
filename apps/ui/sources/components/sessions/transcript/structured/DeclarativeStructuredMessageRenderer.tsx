@@ -4,19 +4,19 @@ import { useUnistyles } from 'react-native-unistyles';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 
 import {
-    PluginContributionIdentityV1Schema,
-    buildQualifiedPluginContributionKey,
     type PluginContributionIdentityV1,
     type PluginDeclarativeNodeV2,
 } from '@happier-dev/protocol';
 
 import {
-    readDeclarativeRecord,
+    readDeclarativeActionSelection,
     readDeclarativeText,
     renderDeclarativeNode,
     type DeclarativeActionAffordance,
 } from '@/components/plugins/shared/declarativeNodes';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { MarkdownView } from '@/components/markdown/MarkdownView';
+import { StructuredFindText, useStructuredFindState } from './structuredFindText';
 
 export type StructuredMessageActionSelection = Readonly<{
     identity: PluginContributionIdentityV1;
@@ -31,26 +31,6 @@ type PrivateTranscriptPresentationNode = Exclude<
     PluginDeclarativeNodeV2,
     Readonly<{ kind: 'field' | 'collectionList' | 'targetedSurface' }>
 >;
-
-/**
- * Read the resolved action reference a declarative action node carries.
- *
- * The node carries BOTH a structured `identity` and its `qualifiedId`; the
- * identity is authoritative and the qualified key must agree with it, so a
- * resolution whose two spellings disagree is refused rather than dispatched.
- */
-function readActionSelection(nodeAction: unknown): Readonly<{
-    identity: PluginContributionIdentityV1;
-    qualifiedId: string;
-}> | null {
-    const action = readDeclarativeRecord(nodeAction);
-    const identity = PluginContributionIdentityV1Schema.safeParse(action?.identity ?? action);
-    if (!identity.success) return null;
-    const qualifiedId = buildQualifiedPluginContributionKey(identity.data);
-    return action?.qualifiedId === undefined || action.qualifiedId === qualifiedId
-        ? { identity: identity.data, qualifiedId }
-        : null;
-}
 
 /**
  * The transcript projection of a declarative document.
@@ -77,6 +57,7 @@ export function DeclarativeStructuredMessageRenderer(props: Readonly<{
     showUnavailableActions?: boolean;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const find = useStructuredFindState();
     const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
     const {
         onAction,
@@ -87,7 +68,7 @@ export function DeclarativeStructuredMessageRenderer(props: Readonly<{
     const minimumTouchTarget = resolveMinimumInteractiveTargetSize(Platform.OS);
 
     const resolveAction = React.useCallback((node: Readonly<Record<string, unknown>>): DeclarativeActionAffordance | null => {
-        const selection = readActionSelection(node.action);
+        const selection = readDeclarativeActionSelection(node.action);
         if (selection === null) return null;
         if (onAction === undefined && !showUnavailableActions) return null;
         const currentActionAvailable = isActionAvailable?.(selection) ?? true;
@@ -129,6 +110,16 @@ export function DeclarativeStructuredMessageRenderer(props: Readonly<{
                 resolveAction,
                 renderField,
                 renderCollectionList,
+                renderText: find.active
+                    ? (block) => <StructuredFindText blockId={block.id} text={block.text} useDefaultTypography={false} />
+                    : undefined,
+                renderMarkdown: (block, selectable, testID) => <MarkdownView
+                    markdown={block.text}
+                    selectable={selectable}
+                    testID={testID}
+                    findSourceRanges={find.ranges(block.id)}
+                    findActive={find.findActive}
+                />,
             })}
         </View>
     );

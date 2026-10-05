@@ -4,11 +4,13 @@ import { WebView } from 'react-native-webview';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useLocalSetting } from '@/sync/store/hooks';
-import type { CodeEditorHandle, CodeEditorProps } from '../codeEditorTypes';
+import type { CodeEditorFindHandle, CodeEditorFindSnapshot, CodeEditorHandle, CodeEditorProps } from '../codeEditorTypes';
 import { encodeChunkedEnvelope, decodeChunkedEnvelope } from '@/components/ui/webview/bridge/chunkedBridge';
 import { buildCodeMirrorWebViewHtml } from '../bridge/codemirrorWebViewHtml';
 import { resolveCodeMirrorWebViewLanguageSpec } from '../bridge/resolveCodeMirrorWebViewLanguageSpec';
 import { resolveCodeEditorTheme } from '../editorTheme';
+import { readCodeMirrorFindStatus } from '../bridge/codeEditorFindBridge';
+import type { CodeEditorFindMessage, CodeEditorFindSet } from '../bridge/codeEditorFindBridge';
 
 function createMessageId(): string {
     return Math.random().toString(36).slice(2);
@@ -36,6 +38,9 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
             theme.colors.syntax.string,
             theme.colors.text.primary,
             theme.colors.text.tertiary,
+            theme.colors.find.matchAll,
+            theme.colors.find.matchCurrent,
+            theme.colors.find.matchCurrentForeground,
         ],
     );
     const webViewRef = React.useRef<WebView>(null);
@@ -45,6 +50,13 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
     const pendingDocRequestRef = React.useRef(new Map<string, { resolve: () => void; timeoutId: any }>());
     const latestLanguageRef = React.useRef(props.language);
     const latestReadOnlyRef = React.useRef(false);
+    const focusedRef = React.useRef(false);
+    const findOpenRef = React.useRef(false);
+    const findRequestRef = React.useRef<CodeEditorFindSet | null>(null);
+    const findSnapshotRef = React.useRef<CodeEditorFindSnapshot>({
+        query: '', options: { matchCase: false, regex: false }, status: { kind: 'idle' },
+    });
+    const findListenersRef = React.useRef(new Set<() => void>());
 
     const wrapLines = props.wrapLines ?? true;
     const showLineNumbers = props.showLineNumbers ?? true;
@@ -86,6 +98,42 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
         [maxChunkBytes],
     );
 
+    const publishFind = React.useCallback((snapshot: CodeEditorFindSnapshot) => {
+        findSnapshotRef.current = snapshot;
+        for (const listener of findListenersRef.current) listener();
+    }, []);
+    const postFind = React.useCallback((message: CodeEditorFindMessage) => postEnvelope(message), [postEnvelope]);
+    const seedFind = React.useCallback<CodeEditorFindHandle['seed']>((query, options, target) => {
+        const request: CodeEditorFindSet = { query, options, ...(target ? { target } : {}) };
+        findOpenRef.current = true;
+        findRequestRef.current = request;
+        publishFind({ query, options, status: query ? { kind: 'searching', total: 0 } : { kind: 'idle' } });
+        if (readyRef.current) postFind({ v: 1, type: 'find.set', payload: request });
+    }, [postFind, publishFind]);
+    const find = React.useMemo<CodeEditorFindHandle>(() => ({
+        presentation: 'shared',
+        open: () => {
+            if (!findOpenRef.current) {
+                const { query, options } = findSnapshotRef.current;
+                seedFind(query, options);
+            }
+        },
+        seed: seedFind,
+        set: (query, options) => seedFind(query, options),
+        step: (direction) => { if (readyRef.current && findOpenRef.current) postFind({ v: 1, type: 'find.step', payload: { direction } }); },
+        close: () => {
+            findOpenRef.current = false;
+            findRequestRef.current = null;
+            publishFind({ ...findSnapshotRef.current, status: { kind: 'idle' } });
+            if (readyRef.current) postFind({ v: 1, type: 'find.close', payload: {} });
+        },
+        getSnapshot: () => findSnapshotRef.current,
+        subscribe: (listener) => { findListenersRef.current.add(listener); return () => { findListenersRef.current.delete(listener); }; },
+        containsFocus: () => focusedRef.current,
+        isOpen: () => findOpenRef.current,
+        isInputFocused: () => false, // The host's shared FindBar owns its input focus.
+    }), [postFind, publishFind, seedFind]);
+
     const flushPendingChange = React.useCallback(async (): Promise<void> => {
         if (!readyRef.current) return;
         const requestId = createMessageId();
@@ -108,9 +156,13 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
         () => ({
             getValue: () => lastDocRef.current,
             flushPendingChange,
-            focus: () => webViewRef.current?.requestFocus?.(),
+            focus: () => {
+                webViewRef.current?.requestFocus?.();
+                if (readyRef.current) postEnvelope({ v: 1, type: 'focus', payload: {} });
+            },
+            find,
         }),
-        [flushPendingChange],
+        [find, flushPendingChange],
     );
 
     const sendInit = React.useCallback(() => {
@@ -127,7 +179,8 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                 readOnly: latestReadOnlyRef.current,
             },
         });
-    }, [postEnvelope]);
+        if (findRequestRef.current) postFind({ v: 1, type: 'find.set', payload: findRequestRef.current });
+    }, [postEnvelope, postFind]);
 
     React.useEffect(() => {
         if (lastDocRef.current === props.value) return;
@@ -146,6 +199,18 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
         if (!readyRef.current) return;
         sendInit();
     }, [props.language, readOnly, sendInit]);
+
+    React.useEffect(() => {
+        return () => {
+            readyRef.current = false;
+            focusedRef.current = false;
+            for (const pending of pendingDocRequestRef.current.values()) {
+                clearTimeout(pending.timeoutId);
+                pending.resolve();
+            }
+            pendingDocRequestRef.current.clear();
+        };
+    }, [props.resetKey, html]);
 
     return (
         <View
@@ -171,6 +236,22 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                     if (decoded.type === 'ready') {
                         readyRef.current = true;
                         sendInit();
+                        return;
+                    }
+
+                    if (decoded.type === 'editor.focus') {
+                        const payload = decoded.payload;
+                        if (payload && typeof payload === 'object' && 'focused' in payload) focusedRef.current = payload.focused === true;
+                        return;
+                    }
+                    if (decoded.type === 'find.status') {
+                        const status = readCodeMirrorFindStatus(decoded.payload, findSnapshotRef.current);
+                        if (status && findOpenRef.current) publishFind({ ...findSnapshotRef.current, status });
+                        return;
+                    }
+                    if (decoded.type === 'error') {
+                        readyRef.current = false;
+                        if (findOpenRef.current) publishFind({ ...findSnapshotRef.current, status: { kind: 'unavailable', reason: 'unsupportedEngine' } });
                         return;
                     }
 

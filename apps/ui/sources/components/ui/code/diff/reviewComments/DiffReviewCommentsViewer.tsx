@@ -14,6 +14,7 @@ import { useIntraLineWordDiffConfig } from '@/components/ui/code/diff/useIntraLi
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
 import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
 import { useSetting } from '@/sync/domains/state/storage';
+import type { DiffViewerBaseProps } from '../diffViewerTypes';
 
 const DISABLED_INTRA_LINE_WORD_DIFF = {
     enabled: false,
@@ -22,7 +23,7 @@ const DISABLED_INTRA_LINE_WORD_DIFF = {
     maxPairs: 0,
 } as const;
 
-export type DiffReviewCommentsViewerProps = Readonly<{
+export type DiffReviewCommentsViewerProps = Pick<DiffViewerBaseProps, 'findActive' | 'findRangesByLineId'> & Readonly<{
     filePath: string;
     unifiedDiff: string;
     scrollToLineId?: string;
@@ -53,8 +54,11 @@ function areDiffReviewCommentsViewerPropsEqual(
     next: DiffReviewCommentsViewerProps,
 ): boolean {
     return previous.scrollToLineId === next.scrollToLineId
+        && previous.findActive === next.findActive
+        && previous.findRangesByLineId === next.findRangesByLineId
         && previous.highlightLineId === next.highlightLineId
         && previous.onScrollToLine === next.onScrollToLine
+        && previous.externalScrollView === next.externalScrollView
         && previous.renderAfterLine === next.renderAfterLine
         && previous.filePath === next.filePath
         && previous.unifiedDiff === next.unifiedDiff
@@ -130,6 +134,8 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
     return (
         <View style={virtualized ? resolveInlineDiffVirtualizedViewportStyle(resolveInlineDiffVirtualizedMaxHeight(windowHeight)) : undefined}>
             <DiffViewer
+                findActive={props.findActive}
+                findRangesByLineId={props.findRangesByLineId}
                 scrollToLineId={props.scrollToLineId}
                 highlightLineId={props.highlightLineId}
                 onScrollToLine={props.onScrollToLine}

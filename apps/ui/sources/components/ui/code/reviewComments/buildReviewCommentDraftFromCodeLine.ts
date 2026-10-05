@@ -11,12 +11,30 @@ import { nowServerMs } from '@/sync/runtime/time';
 import { computeLineContentHash } from '@/utils/text/lineContentHash';
 
 export function formatReviewCommentCodeLineContent(params: { source: ReviewCommentSource; line: CodeLine }): string {
-    if (params.source === 'diff') {
-        const prefix = params.line.renderPrefixText ?? '';
-        const code = params.line.renderCodeText ?? '';
-        return `${prefix}${code}`.trimEnd();
-    }
-    return (params.line.renderCodeText ?? '').trimEnd();
+    return params.line.renderCodeText ?? '';
+}
+
+// The moving 0.2 predecessor wrote diff-prefix hashes; earlier 0.3 UI also
+// trimmed display text. Retain those only for comment/navigation matching.
+// New anchors always hash raw content and never use this as change authority.
+export function reviewCommentCodeLineMatchesHash(params: {
+    source: ReviewCommentSource;
+    line: CodeLine;
+    lineHash: string;
+}): boolean {
+    const content = formatReviewCommentCodeLineContent(params);
+    if (computeLineContentHash(content) === params.lineHash) return true;
+    if (params.source !== 'diff') return false;
+    const legacyContent = `${params.line.renderPrefixText}${content}`;
+    return computeLineContentHash(legacyContent) === params.lineHash
+        || computeLineContentHash(legacyContent.trimEnd()) === params.lineHash;
+}
+
+export function resolveReviewCommentRangeSide(source: ReviewCommentSource, lines: readonly CodeLine[]): 'before' | 'after' | null | undefined {
+    if (source !== 'diff') return undefined;
+    const hasRemovals = lines.some((line) => line.kind === 'remove');
+    const hasAdditions = lines.some((line) => line.kind === 'add');
+    return hasRemovals && hasAdditions ? null : hasRemovals ? 'before' : 'after';
 }
 
 function buildAnchor(params: { source: ReviewCommentSource; line: CodeLine }): ReviewCommentAnchor {
@@ -62,10 +80,9 @@ function buildRangeAnchor(params: {
     startLine: CodeLine;
     endLine: CodeLine;
     selectedLines: readonly string[];
+    side?: 'before' | 'after';
 }): ReviewCommentAnchor {
-    const side: 'before' | 'after' | undefined = params.source === 'diff'
-        ? (params.startLine.kind === 'remove' ? 'before' : 'after')
-        : undefined;
+    const side = params.side;
     const startLine = resolveAnchorLineNumber({ source: params.source, side, line: params.startLine });
     const endLine = resolveAnchorLineNumber({ source: params.source, side, line: params.endLine });
     const normalizedStartLine = Math.min(startLine, endLine);
@@ -120,6 +137,7 @@ function buildRangeSnapshot(params: {
     lines: readonly CodeLine[];
     rangeLines: readonly CodeLine[];
     contextRadius: number;
+    side?: 'before' | 'after';
 }): ReviewCommentSnapshot {
     const rangeIds = new Set(params.rangeLines.map((line) => line.id));
     const indexes = params.lines
@@ -131,7 +149,8 @@ function buildRangeSnapshot(params: {
 
     const selectedLines = params.lines
         .slice(startIndex, endIndex + 1)
-        .filter((line) => !line.renderIsHeaderLine)
+        .filter((line) => !line.renderIsHeaderLine && (params.source === 'file'
+            || (params.side === 'before' ? line.oldLine !== null : line.newLine !== null)))
         .map((line) => formatReviewCommentCodeLineContent({ source: params.source, line }));
 
     const before: string[] = [];
@@ -208,12 +227,17 @@ export function buildReviewCommentDraftFromCodeLineRange(params: {
     if (!first || !last) {
         throw new Error('review_comment_range_requires_lines');
     }
+    const side = resolveReviewCommentRangeSide(params.source, filteredRangeLines);
+    if (side === null) {
+        throw new Error('review_comment_range_requires_one_side');
+    }
 
     const snapshot = buildRangeSnapshot({
         source: params.source,
         lines: params.lines,
         rangeLines: filteredRangeLines,
         contextRadius: params.contextRadius,
+        side,
     });
     const anchor = buildRangeAnchor({
         filePath: params.filePath,
@@ -221,6 +245,7 @@ export function buildReviewCommentDraftFromCodeLineRange(params: {
         startLine: first,
         endLine: last,
         selectedLines: snapshot.selectedLines,
+        side,
     });
 
     const id = params.existing?.id ?? params.id ?? randomUUID();

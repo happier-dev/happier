@@ -6,7 +6,10 @@ import { knownTools } from '@/components/tools/catalog';
 import { ToolDiffView } from '@/components/tools/shell/presentation/ToolDiffView';
 import { useSetting } from '@/sync/domains/state/storage';
 
+import type { ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
+import { useToolFindState } from '../core/ToolFindText';
 import { Text } from '@/components/ui/text/Text';
+import { buildToolFileDiffLines, projectToolDiffLines } from './toolDiffDisplayText';
 
 
 function truncateLines(text: string, maxLines: number): string {
@@ -21,18 +24,25 @@ function truncateOneLine(text: string, maxChars: number): string {
     return `${oneLine.slice(0, maxChars - 1)}…`;
 }
 
-export const WriteView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionId, serverId }) => {
-    const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
-
+function readWriteInput(input: unknown) {
     let contents: string = '<no contents>';
     let filePath: string | null = null;
-    const parsed = knownTools.Write.input.safeParse(tool.input);
+    const parsed = knownTools.Write.input.safeParse(input);
     if (parsed.success && typeof parsed.data.content === 'string') {
         contents = parsed.data.content;
         filePath = typeof parsed.data.file_path === 'string' ? parsed.data.file_path : null;
     }
 
-    if (detailLevel === 'title') {
+    return { contents, filePath };
+}
+
+export const projectWriteDisplayText: ToolDisplayTextProjector = (tool) => projectToolDiffLines(buildToolFileDiffLines({ oldText: '', newText: readWriteInput(tool.input).contents }), 'tool-write');
+
+export const WriteView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionId, serverId, messageId }) => {
+    const find = useToolFindState(messageId);
+    const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
+    const { contents, filePath } = readWriteInput(tool.input);
+    if (detailLevel === 'title' && !find.active) {
         return (
             <ToolSectionView>
                 <Text style={styles.summaryText} numberOfLines={1}>{truncateOneLine(contents, 80)}</Text>
@@ -42,13 +52,15 @@ export const WriteView = React.memo<ToolViewProps>(({ tool, detailLevel, session
 
     const isFull = detailLevel === 'full';
     const maxLines = isFull ? 400 : 20;
-    const truncated = truncateLines(contents, maxLines);
+    const truncated = find.active ? contents : truncateLines(contents, maxLines);
     const showLineNumbers = isFull ? true : !!showLineNumbersInToolViews;
 
     return (
         <>
             <ToolSectionView fullWidth>
                 <ToolDiffView 
+                    messageId={messageId}
+                    findBlockPrefix="tool-write"
                     sessionId={sessionId}
                     serverId={serverId}
                     filePath={filePath}

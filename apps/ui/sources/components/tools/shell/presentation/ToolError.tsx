@@ -1,22 +1,36 @@
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { parseToolUseError } from '@/utils/errors/toolErrorParser';
+import * as React from 'react';
+import { resolveToolErrorDisplay } from './resolveToolInlineErrorDisplay';
 import { Text } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
+import { useTranscriptFindRow } from '@/components/sessions/transcript/find/TranscriptFindContext';
+import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 
 
-export function ToolError(props: { message: string }) {
+export function ToolError(props: { message: string; messageId?: string; blockId?: string }) {
     const { theme } = useUnistyles();
-    const { isToolUseError, errorMessage } = parseToolUseError(props.message);
-    const displayMessage = isToolUseError && errorMessage ? errorMessage : props.message;
+    const { isToolUseError, text: displayMessage } = resolveToolErrorDisplay(props.message);
+    const find = useTranscriptFindRow(props.messageId);
+    const ranges = find?.blocks.find((block) => block.id === props.blockId)?.sourceRanges;
+    const reveal = find?.reveal;
+    const revealId = reveal && reveal.blockId === props.blockId ? reveal.requestId : undefined;
+    const [expanded, setExpanded] = React.useState(false);
+    const mutateLayout = useTranscriptRowLayoutMutation();
+    React.useEffect(() => {
+        if (revealId === undefined) return;
+        mutateLayout({ reason: 'expand', sourceId: `tool-error:${props.messageId}:${props.blockId}` });
+        setExpanded(true);
+    }, [mutateLayout, props.blockId, props.messageId, revealId]);
     
     return (
-        <View style={[styles.errorContainer, isToolUseError && styles.toolUseErrorContainer]}>
+        <View testID="tool-error-body" style={[styles.errorContainer, isToolUseError && styles.toolUseErrorContainer, expanded && { maxHeight: undefined, overflow: 'visible' }]}>
             {isToolUseError && (
                 <Icon name="warning" size={16} color={theme.colors.state.warning.foreground} />
             )}
             <Text style={[styles.errorText, isToolUseError && styles.toolUseErrorText]}>
-                {displayMessage}
+                {ranges?.length ? <FindHighlightedText text={displayMessage} ranges={ranges} /> : displayMessage}
             </Text>
         </View>
     )

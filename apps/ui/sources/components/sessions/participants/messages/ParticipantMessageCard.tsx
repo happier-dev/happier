@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type { ParticipantMessageV1 } from '@happier-dev/protocol';
 
-import { Text } from '@/components/ui/text/Text';
+import { StructuredFindText, type StructuredFindTextBlock } from '@/components/sessions/transcript/structured/structuredFindText';
 import { t } from '@/text';
 
 function describeParticipantRecipient(payload: ParticipantMessageV1): string {
@@ -18,13 +18,20 @@ function describeParticipantRecipient(payload: ParticipantMessageV1): string {
     return r.memberLabel ?? r.memberId;
 }
 
+export function projectParticipantMessageFindText(payload: ParticipantMessageV1, messageText: string): readonly StructuredFindTextBlock[] {
+    return [
+        { id: 'structured-participant-recipient', text: t('session.participants.cardTo', { label: describeParticipantRecipient(payload) }) },
+        { id: 'structured-participant-body', text: messageText },
+    ];
+}
+
 export function ParticipantMessageCard(props: Readonly<{ payload: ParticipantMessageV1; messageText: string }>) {
-    const label = describeParticipantRecipient(props.payload);
+    const blocks = projectParticipantMessageFindText(props.payload, props.messageText);
 
     return (
         <View style={styles.container}>
-            <Text selectable style={styles.toText}>{t('session.participants.cardTo', { label })}</Text>
-            <Text selectable style={styles.bodyText}>{props.messageText}</Text>
+            <StructuredFindText selectable style={styles.toText} blockId={blocks[0]!.id} text={blocks[0]!.text} />
+            <StructuredFindText selectable style={styles.bodyText} blockId={blocks[1]!.id} text={blocks[1]!.text} />
         </View>
     );
 }

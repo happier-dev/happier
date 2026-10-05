@@ -145,8 +145,8 @@ describe('DiffFilesListView', () => {
 
             expect(screen.findAllByType('LegendList' as any)).toHaveLength(0);
             expect(screen.findAllByType('FlatList' as any)).toHaveLength(0);
-            expect(screen.getTextContent()).toContain('src/a.ts');
-            expect(screen.getTextContent()).toContain('src/b.ts');
+            expect(screen.getTextContent()).toContain('a.ts');
+            expect(screen.getTextContent()).toContain('b.ts');
         } finally {
             (Platform as unknown as { OS: string; select: (options: any) => unknown }).OS = previousOS;
             (Platform as unknown as { OS: string; select: (options: any) => unknown }).select = previousSelect;

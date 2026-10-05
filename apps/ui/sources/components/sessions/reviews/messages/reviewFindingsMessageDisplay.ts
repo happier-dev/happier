@@ -1,8 +1,9 @@
 import type { ReviewFinding, ReviewFindingsV1, ReviewFindingsV2, ReviewQuestion } from '@happier-dev/protocol';
 import type { Message } from '@happier-dev/session-core/messages';
-import { formatReviewFindingLocation, reviewSeverityCounts, reviewSeverityLabel, sortReviewFindingsBySeverity } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
+import { formatReviewFindingLocation, formatReviewFindingThreadQuote, formatReviewFindingThreadUpdate, reviewSeverityCounts, reviewSeverityLabel, sortReviewFindingsBySeverity } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 import { resolveReviewFollowUpAvailability } from '@/components/sessions/reviews/findings/reviewFollowUpAvailability';
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
+import type { StructuredFindTextBlock } from '@/components/sessions/transcript/structured/structuredFindText';
 import { resolveEffectiveReviewFindings } from './resolveEffectiveReviewFindings';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { t } from '@/text';
@@ -52,7 +53,7 @@ export function buildReviewFindingsMessageDisplay(payload: ReviewFindingsV1 | Re
     const effective = preparedEffective ?? resolveEffectiveReviewFindings({ runRef: payload.runRef, initialFindings: normalized.findings, messages: options.sessionMessages ?? [] });
     const findings = sortReviewFindingsBySeverity(effective.findings);
     const reviewer = resolveExecutionRunBackendLabel(payload.runRef.backendTarget ?? { kind: 'backend', backendId: payload.runRef.backendId }) ?? payload.runRef.backendId;
-    const block = (id: string, text: string) => ({ id, text });
+    const block = (id: string, text: string): StructuredFindTextBlock => ({ id, text });
     const compact = options.canNavigate === true;
     const visibleFindings = compact ? findings.slice(0, REVIEW_CARD_VISIBLE_FINDINGS) : findings;
     const followUp = resolveReviewFollowUpAvailability(payload.runRef);
@@ -94,4 +95,40 @@ export function buildReviewFindingsMessageDisplay(payload: ReviewFindingsV1 | Re
         unavailable: !compact && options.canSendMessages && findings.length > 0 && !followUp.available ? block('structured-review:unavailable', followUp.reason) : null,
         followUp,
     };
+}
+
+export function projectReviewFindingsFindText(payload: ReviewFindingsV1 | ReviewFindingsV2, options: ReviewFindingsMessageDisplayOptions = {}): readonly StructuredFindTextBlock[] {
+    const display = buildReviewFindingsMessageDisplay(payload, options);
+    const blocks: StructuredFindTextBlock[] = display.compact
+        ? [...(display.started ? [display.started] : []), display.finished, display.meta, ...(display.findings.length ? [display.count] : [])]
+        : [display.summary];
+    blocks.push(...display.severitySummary);
+    for (const item of display.findingDisplays) {
+        blocks.push(item.severity, item.title);
+        if (display.compact) blocks.push(item.reviewer);
+        else {
+            if (item.location) blocks.push(item.location);
+            if (item.original) {
+                blocks.push({ id: `${item.prefix}:updated`, text: t('runPage.review.updatedAfterQuestion') });
+                if (item.original.severity !== item.finding.severity) blocks.push({ id: `${item.prefix}:updated-severity`, text: `${reviewSeverityLabel(item.original.severity)} → ${reviewSeverityLabel(item.finding.severity)}` });
+            }
+            if (options.canSendMessages) {
+                if (item.decisionNote) blocks.push(item.decisionNote);
+                if (item.entries.length) {
+                    if (display.followUp.available) blocks.push({ id: `${item.prefix}:quote`, text: formatReviewFindingThreadQuote(item.finding) });
+                    item.entries.forEach((entry, index) => {
+                        const entryPrefix = `${item.prefix}:thread:${entry.threadId}:${entry.generatedAtMs}:${index}`;
+                        blocks.push({ id: `${entryPrefix}:request`, text: entry.requestMarkdown, format: display.followUp.available ? 'markdown' : 'plain' },
+                            { id: `${entryPrefix}:reviewer`, text: item.reviewer.text },
+                            { id: `${entryPrefix}:answer`, text: entry.answerMarkdown, format: display.followUp.available ? 'markdown' : 'plain' });
+                        if (display.followUp.available && entry.updatedFinding && entry.previousFinding) blocks.push({ id: `${entryPrefix}:updated`, text: formatReviewFindingThreadUpdate(item.reviewer.text, entry.previousFinding, entry.updatedFinding) });
+                    });
+                }
+            }
+        }
+    }
+    if (!display.compact && display.findings.length) blocks.push(display.count);
+    if (!display.compact && display.findings.length && options.canSendMessages && options.reviewComments?.status === 'failed') blocks.push({ id: 'structured-review:decisions-unavailable', text: t('runPage.review.decisionsUnavailable') });
+    if (display.unavailable) blocks.push(display.unavailable);
+    return blocks;
 }

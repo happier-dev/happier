@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
     computeLineContentHash,
-    findLineIndexByContentHash,
     isLineContentHash,
     normalizeLineContentForHash,
 } from './lineContentHash';
@@ -26,20 +25,4 @@ describe('lineContentHash', () => {
         expect(normalizeLineContentForHash('hello  ')).toBe('hello  ');
     });
 
-    it('finds a line by reusable content hash with optional candidate filtering', () => {
-        const lines = [
-            { side: 'before', text: 'const oldValue = 1;' },
-            { side: 'after', text: 'const value = 2;' },
-            { side: 'before', text: 'const value = 2;' },
-        ] as const;
-
-        const lineHash = computeLineContentHash('const value = 2;');
-
-        expect(findLineIndexByContentHash({
-            lines,
-            lineHash,
-            getLineContent: (line) => line.text,
-            isCandidate: (line) => line.side === 'after',
-        })).toBe(1);
-    });
 });

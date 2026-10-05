@@ -15,7 +15,9 @@ import { Typography } from '@/constants/Typography';
 import { resolveScmChangePathTag } from '@/scm/scmChangePathTag';
 import { projectChangedFilesAsScmSnapshot, type ScmFileStatus } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
+import { ToolFindText, useToolFindState } from '@/components/tools/renderers/core/ToolFindText';
 import { resolveTurnChangesCardDisplayText } from './turnChangesCardDisplayText';
+export { projectTurnChangesCardDisplayText } from './turnChangesCardDisplayText';
 
 import {
     TURN_CHANGES_PAGE_ROWS,
@@ -41,6 +43,7 @@ export type TurnChangesCardProps = Readonly<{
     /** Starts open (a surface that is itself about this turn); the transcript card starts collapsed. */
     initiallyOpen?: boolean;
     testID?: string;
+    messageId?: string;
 }>;
 
 /**
@@ -55,9 +58,13 @@ export const TurnChangesCard = React.memo(function TurnChangesCard(props: TurnCh
     const { theme } = useUnistyles();
     const testID = props.testID ?? 'turn-changes-card';
     const [open, setOpen] = React.useState(props.initiallyOpen === true);
+    const find = useToolFindState(props.messageId);
     const displayText = React.useMemo(() => resolveTurnChangesCardDisplayText(props.files), [props.files]);
     const summary = displayText.summary;
     const titleLabel = displayText.title;
+    const isBodyBlock = (id: string) => id === 'tool-turn-changes-count' || id.startsWith('tool-turn-changes-file-');
+    const revealBody = Boolean(find.blocks?.some((block) => isBodyBlock(block.id) && block.sourceRanges.length > 0)
+        || (find.reveal && isBodyBlock(find.reveal.blockId)));
     const hasActions = Boolean(props.onWalkThrough || props.onOpenInFiles);
 
     const header = (state: Readonly<{ expanded: boolean; headerProps: Readonly<{ onPress: () => void }> }>) => (
@@ -71,8 +78,8 @@ export const TurnChangesCard = React.memo(function TurnChangesCard(props: TurnCh
                 style={styles.title}
             >
                 <Icon name={state.expanded ? 'caret-down' : 'caret-right'} size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
-                <Text style={styles.titleText} numberOfLines={1}>{titleLabel}</Text>
-                {summary.linesKnown ? <LineTotals added={displayText.added ?? ''} removed={displayText.removed ?? ''} /> : null}
+                <ToolFindText text={titleLabel} blockId="tool-turn-changes-title" messageId={props.messageId} style={styles.titleText} numberOfLines={1} />
+                {summary.linesKnown ? <LineTotals added={displayText.added ?? ''} removed={displayText.removed ?? ''} messageId={props.messageId} /> : null}
             </Pressable>
             {hasActions ? (
                 <View testID={`${testID}-actions`} style={styles.actions}>
@@ -103,12 +110,14 @@ export const TurnChangesCard = React.memo(function TurnChangesCard(props: TurnCh
 
     return (
         <View testID={testID} accessibilityLabel={t('turnChanges.card.groupA11y')} style={styles.card}>
-            <ExpandableItem testID={`${testID}-disclosure`} expanded={open} onExpandedChange={setOpen} header={header} showDivider={false}>
+            <ExpandableItem testID={`${testID}-disclosure`} expanded={open || revealBody} onExpandedChange={setOpen} header={header} showDivider={false}>
                 <TurnChangesCardBody
                     testID={testID}
                     files={props.files}
                     workspace={props.workspace ?? null}
                     onOpenFile={props.onOpenFile}
+                    messageId={props.messageId}
+                    findBodyActive={revealBody}
                     countLabel={displayText.count}
                 />
             </ExpandableItem>
@@ -116,11 +125,11 @@ export const TurnChangesCard = React.memo(function TurnChangesCard(props: TurnCh
     );
 });
 
-function LineTotals(props: Readonly<{ added: string; removed: string }>) {
+function LineTotals(props: Readonly<{ added: string; removed: string; messageId?: string }>) {
     return (
         <View style={styles.totals}>
-            <Text style={styles.added}>{props.added}</Text>
-            <Text style={styles.removed}>{props.removed}</Text>
+            <ToolFindText text={props.added} blockId="tool-turn-changes-added" messageId={props.messageId} style={styles.added} />
+            <ToolFindText text={props.removed} blockId="tool-turn-changes-removed" messageId={props.messageId} style={styles.removed} />
         </View>
     );
 }
@@ -133,12 +142,14 @@ const TurnChangesCardBody = React.memo(function TurnChangesCardBody(props: Reado
     files: readonly ScmFileStatus[];
     workspace: TurnChangesCardWorkspace | null;
     onOpenFile: (fullPath: string) => void;
+    messageId?: string;
+    findBodyActive: boolean;
     countLabel: string;
 }>) {
     const display = useGitDisplaySettings();
     const pageRows = isTouchPrimaryPointer() ? TURN_CHANGES_PAGE_ROWS.touch : TURN_CHANGES_PAGE_ROWS.precise;
     const [visibleCount, setVisibleCount] = React.useState(() => nextTurnChangesVisibleCount({ visible: 0, total: props.files.length, pageRows }));
-    const shownCount = Math.min(visibleCount, props.files.length);
+    const shownCount = props.findBodyActive ? props.files.length : Math.min(visibleCount, props.files.length);
     const showMore = React.useCallback(() => {
         setVisibleCount((current) => nextTurnChangesVisibleCount({ visible: current, total: props.files.length, pageRows }));
     }, [pageRows, props.files.length]);
@@ -146,10 +157,10 @@ const TurnChangesCardBody = React.memo(function TurnChangesCardBody(props: Reado
     return (
         <View testID={`${props.testID}-body`} style={styles.body}>
             <View testID={`${props.testID}-toolbar`} style={styles.toolbar}>
-                <Text style={styles.toolbarText}>{props.countLabel}</Text>
-                <ChangedFilesLayoutSwitch testIDPrefix={`${props.testID}-layout`} />
+                <ToolFindText text={props.countLabel} blockId="tool-turn-changes-count" messageId={props.messageId} style={styles.toolbarText} />
+                {!props.findBodyActive ? <ChangedFilesLayoutSwitch testIDPrefix={`${props.testID}-layout`} /> : null}
             </View>
-            {display.changesLayout === 'tree' ? (
+            {display.changesLayout === 'tree' && !props.findBodyActive ? (
                 <TurnChangesTree files={props.files} workspace={props.workspace} pageRows={pageRows} onOpenFile={props.onOpenFile} />
             ) : (
                 <TurnChangesList
@@ -159,6 +170,8 @@ const TurnChangesCardBody = React.memo(function TurnChangesCardBody(props: Reado
                     statsFiles={props.files}
                     onShowMore={showMore}
                     onOpenFile={props.onOpenFile}
+                    messageId={props.messageId}
+                    findBodyActive={props.findBodyActive}
                 />
             )}
         </View>
@@ -173,12 +186,15 @@ const TurnChangesList = React.memo(function TurnChangesList(props: Readonly<{
     statsFiles: readonly ScmFileStatus[];
     onShowMore: () => void;
     onOpenFile: (fullPath: string) => void;
+    messageId?: string;
+    findBodyActive: boolean;
 }>) {
     const { theme } = useUnistyles();
+    const find = useToolFindState(props.messageId);
     const statsColumnWidth = React.useMemo(() => resolveScmChangeStatsColumnWidth(props.statsFiles), [props.statsFiles]);
     return (
         <View style={styles.rows}>
-            {props.files.map((file) => (
+            {props.files.map((file, index) => (
                 <ScmChangeRow
                     key={file.fullPath}
                     theme={theme}
@@ -188,6 +204,15 @@ const TurnChangesList = React.memo(function TurnChangesList(props: Readonly<{
                     statsColumnWidth={statsColumnWidth}
                     tag={resolveScmChangePathTag(file.fullPath)}
                     onPress={() => props.onOpenFile(file.fullPath)}
+                    findRanges={props.findBodyActive ? {
+                        path: find.ranges(`tool-turn-changes-file-${index}-path`) ?? [],
+                        tag: find.ranges(`tool-turn-changes-file-${index}-tag`),
+                        mark: find.ranges(`tool-turn-changes-file-${index}-mark`),
+                        added: find.ranges(`tool-turn-changes-file-${index}-added`),
+                        removed: find.ranges(`tool-turn-changes-file-${index}-removed`),
+                        unavailable: find.ranges(`tool-turn-changes-file-${index}-unavailable`),
+                        rename: find.ranges(`tool-turn-changes-file-${index}-rename`),
+                    } : undefined}
                 />
             ))}
             {props.remaining > 0 ? (

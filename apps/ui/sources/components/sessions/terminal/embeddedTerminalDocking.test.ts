@@ -6,22 +6,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
-vi.mock('@/platform/randomUUID', () => ({
-    randomUUID: () => 'terminal-instance-1',
-}));
-
 describe('embeddedTerminalDocking', () => {
-    it('creates a new details terminal tab with a generated terminal instance id by default', async () => {
-        const { createSessionDetailsTerminalTab } = await import('./embeddedTerminalDocking');
-
-        expect(createSessionDetailsTerminalTab()).toEqual({
-            key: 'terminal:terminal-instance-1',
-            kind: 'terminal',
-            title: 'settings.terminal',
-            resource: { kind: 'terminal', terminalInstanceId: 'terminal-instance-1', cwd: null },
-        });
-    });
-
     it('creates an explicitly keyed details terminal tab when a terminal instance id is provided', async () => {
         const { createSessionDetailsTerminalTab } = await import('./embeddedTerminalDocking');
 

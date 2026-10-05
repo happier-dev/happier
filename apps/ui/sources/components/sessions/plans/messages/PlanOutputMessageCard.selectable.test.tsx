@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installSessionMessageCardCommonModuleMocks } from '@/components/sessions/sessionMessageCardTestHelpers';
+import type { PlanOutputV1 } from '@happier-dev/protocol';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,6 +36,73 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 }));
 
 describe('PlanOutputMessageCard (selection)', () => {
+  it('decorates the actual summary while leaving the host action label outside Find', async () => {
+    const { PlanOutputMessageCard } = await import('./PlanOutputMessageCard');
+    const { StructuredFindMessageProvider } = await import('@/components/sessions/transcript/structured/structuredFindText');
+    const { TranscriptFindProvider } = await import('@/components/sessions/transcript/find/TranscriptFindContext');
+    const { createTranscriptFindRowStore } = await import('@/components/sessions/transcript/find/transcriptFindRowStore');
+    const store = createTranscriptFindRowStore();
+    const payload: PlanOutputV1 = {
+      runRef: { runId: 'run1', callId: 'call1', backendId: 'engine1' },
+      generatedAtMs: 123, summary: 'needle summary', sections: [],
+    };
+    const screen = await renderScreen(
+      <TranscriptFindProvider store={store}>
+        <StructuredFindMessageProvider messageId="plan-message">
+          <PlanOutputMessageCard payload={payload} sessionId="s1" canSendMessages />
+        </StructuredFindMessageProvider>
+      </TranscriptFindProvider>,
+    );
+    await act(() => store.publish(new Map([['plan-message', { blocks: [
+      { id: 'structured-plan-summary', sourceRanges: [{ start: 0, end: 6, current: true }] },
+    ] }]])));
+    expect(screen.findAllHostsByTestId('find-match-current').map((node) => node.children.join(''))).toEqual(['needle']);
+    expect(screen.findAllHostsByTestId('find-match-all')).toHaveLength(0);
+    expect(screen.getTextContent()).toContain('Adopt plan');
+    await act(() => store.clear());
+    expect(screen.findAllHostsByTestId('find-match-current')).toHaveLength(0);
+    expect(screen.getTextContent()).toContain('needle summary');
+  });
+
+  it('projects displayed semantic fields while excluding host action labels from Find', async () => {
+    const { PlanOutputMessageCard, projectPlanOutputFindText } = await import('./PlanOutputMessageCard');
+    const payload: PlanOutputV1 = {
+      runRef: { runId: 'hidden-run', callId: 'hidden-call', backendId: 'hidden-backend' },
+      generatedAtMs: 123,
+      summary: 'Visible summary',
+      sections: Array.from({ length: 11 }, (_, section) => ({
+        title: `Section ${section}`,
+        items: Array.from({ length: 13 }, (_, item) => `Step ${section}/${item}`),
+      })),
+      risks: Array.from({ length: 13 }, (_, index) => `Risk ${index}`),
+      milestones: Array.from({ length: 13 }, (_, index) => ({ title: `Milestone ${index}`, details: `Details ${index}` })),
+      recommendedBackendId: 'Visible engine',
+      privateMetadata: 'Hidden metadata',
+    };
+    const blocks = projectPlanOutputFindText(payload, { canSendMessages: true });
+    const texts = blocks.map((block) => block.text);
+    const screen = await renderScreen(<PlanOutputMessageCard payload={payload} sessionId="s1" canSendMessages />);
+    for (const text of texts) expect(screen.getTextContent()).toContain(text);
+    expect(texts).toContain('Visible summary');
+    expect(texts).toContain('Step 9/11');
+    expect(texts).toContain('Risk 11');
+    expect(texts).toContain('Details 11');
+    expect(texts).toContain('Visible engine');
+    expect(texts).not.toContain('Adopt plan');
+    expect(blocks.map((block) => block.id)).not.toContain('structured-plan-adopt');
+    expect(projectPlanOutputFindText({ ...payload, summary: 'Adopt plan' })
+      .find((block) => block.id === 'structured-plan-summary')?.text).toBe('Adopt plan');
+    expect(texts).not.toContain('Section 10');
+    expect(texts).not.toContain('Step 0/12');
+    expect(texts).not.toContain('Risk 12');
+    expect(texts).not.toContain('Details 12');
+    expect(texts.join('\n')).not.toContain('hidden-');
+    expect(texts).not.toContain('Hidden metadata');
+    expect(new Set(blocks.map((block) => block.id)).size).toBe(blocks.length);
+    expect(projectPlanOutputFindText(payload, { canSendMessages: false }).map((block) => block.text)).not.toContain('Adopt plan');
+    expect(projectPlanOutputFindText(payload, { presentation: 'page' }).map((block) => block.text)).not.toContain('Plan');
+  });
+
   it('routes adopt-plan through canonical submitMessage', async () => {
     submitMessageSpy.mockClear();
     const { PlanOutputMessageCard } = await import('./PlanOutputMessageCard');

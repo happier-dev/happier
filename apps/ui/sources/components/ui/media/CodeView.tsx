@@ -1,16 +1,19 @@
 import * as React from 'react';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { useSetting } from '@/sync/domains/state/storage';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
 
 interface CodeViewProps {
     code: string;
     language?: string;
+    findRanges?: readonly FindTextRange[];
 }
 
 export const CodeView = React.memo<CodeViewProps>(({ 
     code, 
-    language
+    language,
+    findRanges,
 }) => {
     const jsonInferenceMaxBytes = useSetting('filesCodeViewJsonInferenceMaxBytes') as number | null;
 
@@ -40,6 +43,7 @@ export const CodeView = React.memo<CodeViewProps>(({
             selectable={true}
             wrap={false}
             showCopyButton={true}
+            findRanges={findRanges}
         />
     );
 });

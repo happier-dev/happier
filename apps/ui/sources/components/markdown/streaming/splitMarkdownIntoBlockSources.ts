@@ -3,6 +3,11 @@ import { readIncompleteMarkdownBlockKind, type IncompleteMarkdownBlockKind } fro
 
 const markdownBlockParser = parser.configure(GFM);
 
+/** The same grammar owns rendering boundaries and display-to-source projections. */
+export function parseMarkdownSyntax(markdown: string) {
+    return markdownBlockParser.parse(markdown);
+}
+
 export type MarkdownBlockSource = Readonly<{
     index: number;
     source: string;
@@ -14,7 +19,7 @@ export type MarkdownBlockSource = Readonly<{
 
 /** One grammar owns boundaries for both grouped rendering and source-range measurement. */
 export function splitMarkdownIntoBlockSources(markdown: string): MarkdownBlockSource[] {
-    const tree = markdownBlockParser.parse(markdown);
+    const tree = parseMarkdownSyntax(markdown);
     const definitions: string[] = [];
     tree.iterate({ enter(node) {
         if (node.name !== 'LinkReference') return;

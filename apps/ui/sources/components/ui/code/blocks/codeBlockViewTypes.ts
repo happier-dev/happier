@@ -1,5 +1,6 @@
 import type * as React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
 export type CodeBlockViewProps = Readonly<{
     code: string;
@@ -12,4 +13,5 @@ export type CodeBlockViewProps = Readonly<{
     headerRight?: React.ReactNode;
     scrollTestID?: string;
     containerStyle?: StyleProp<ViewStyle>;
+    findRanges?: readonly FindTextRange[];
 }>;

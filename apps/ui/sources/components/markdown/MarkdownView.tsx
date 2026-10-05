@@ -12,6 +12,7 @@ import type { MarkdownInlineReferences } from './markdownInlineReferences';
 export type { MarkdownInlineReference, MarkdownInlineReferences } from './markdownInlineReferences';
 import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealConfig';
 import type { MarkdownStreamingMode } from './streaming/usePreparedStreamingMarkdown';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
 export type { Option };
 export type { OptionLongPressHandler };
@@ -47,6 +48,8 @@ export const MarkdownView = React.memo((props: {
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
+    findSourceRanges?: readonly FindTextRange[];
+    findActive?: boolean;
     agentTexMath?: boolean;
     /** Citations the caller owns, drawn inline where the author placed them (`[text](scheme:target)`). */
     inlineReferences?: MarkdownInlineReferences;
@@ -76,6 +79,8 @@ export const MarkdownView = React.memo((props: {
             onPressSourceRange={props.onPressSourceRange}
             renderAfterSourceRange={props.renderAfterSourceRange}
             highlightSourceRange={props.highlightSourceRange}
+            findSourceRanges={props.findSourceRanges}
+            findActive={props.findActive}
             agentTexMath={props.agentTexMath === true}
             inlineReferences={props.inlineReferences}
         />

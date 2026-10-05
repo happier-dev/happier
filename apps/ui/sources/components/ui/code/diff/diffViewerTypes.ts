@@ -25,6 +25,8 @@ export type DiffViewerBaseProps = Readonly<{
     externalScrollView?: CodeLinesViewProps['externalScrollView'];
     highlightLineId?: string;
     highlightLineIds?: CodeLinesViewProps['highlightLineIds'];
+    findActive?: boolean;
+    findRangesByLineId?: CodeLinesViewProps['findRangesByLineId'];
     selectedLineIds?: ReadonlySet<string>;
     testID?: CodeLinesViewProps['testID'];
     onLayout?: CodeLinesViewProps['onLayout'];

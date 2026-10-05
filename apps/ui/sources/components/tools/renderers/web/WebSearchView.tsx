@@ -6,6 +6,8 @@ import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { maybeParseJson } from '@happier-dev/protocol';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
+import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 
 
 type WebResult = { title?: string; url?: string; snippet?: string };
@@ -48,7 +50,17 @@ function coerceResults(value: unknown): WebResult[] {
     return out;
 }
 
-export const WebSearchView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+export const projectWebSearchDisplayText: ToolDisplayTextProjector = (tool) => {
+    if (tool.state !== 'completed') return [];
+    return coerceResults(tool.result).flatMap((result, index) => [
+        ...toolTextBlock(`tool-search-${index}-title`, result.title),
+        ...toolTextBlock(`tool-search-${index}-url`, result.url),
+        ...toolTextBlock(`tool-search-${index}-snippet`, result.snippet),
+    ]);
+};
+
+export const WebSearchView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId }) => {
+    const find = useToolFindState(messageId);
     if (tool.state !== 'completed') return null;
     const results = coerceResults(tool.result);
     if (results.length === 0) return null;
@@ -56,7 +68,7 @@ export const WebSearchView = React.memo<ToolViewProps>(({ tool, detailLevel }) =
     // NOTE: `detailLevel` controls how much of the tool output is rendered inline.
     // Summary keeps the timeline compact; full is used for expanded cards and the ToolFullView screen.
     const isFullView = detailLevel === 'full';
-    const shown = results.slice(0, isFullView ? 20 : 5);
+    const shown = find.active ? results : results.slice(0, isFullView ? 20 : 5);
     const more = results.length - shown.length;
 
     return (
@@ -64,9 +76,9 @@ export const WebSearchView = React.memo<ToolViewProps>(({ tool, detailLevel }) =
             <View style={styles.container}>
                 {shown.map((r, idx) => (
                     <View key={idx} style={styles.row}>
-                        {r.title ? <Text style={styles.title} numberOfLines={isFullView ? 3 : 2}>{r.title}</Text> : null}
-                        {r.url ? <Text style={styles.url} numberOfLines={isFullView ? 2 : 1}>{r.url}</Text> : null}
-                        {r.snippet ? <Text style={styles.snippet} numberOfLines={isFullView ? 6 : 3}>{r.snippet}</Text> : null}
+                        {r.title ? <ToolFindText text={r.title} blockId={`tool-search-${idx}-title`} messageId={messageId} style={styles.title} numberOfLines={isFullView ? 3 : 2} /> : null}
+                        {r.url ? <ToolFindText text={r.url} blockId={`tool-search-${idx}-url`} messageId={messageId} style={styles.url} numberOfLines={isFullView ? 2 : 1} /> : null}
+                        {r.snippet ? <ToolFindText text={r.snippet} blockId={`tool-search-${idx}-snippet`} messageId={messageId} style={styles.snippet} numberOfLines={isFullView ? 6 : 3} /> : null}
                     </View>
                 ))}
                 {more > 0 ? <Text style={styles.more}>{t('tools.structuredResult.more', { count: more })}</Text> : null}

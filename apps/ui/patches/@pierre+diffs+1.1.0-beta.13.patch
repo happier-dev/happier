@@ -1,0 +1,70 @@
+diff --git a/node_modules/@pierre/diffs/dist/renderers/DiffHunksRenderer.js b/node_modules/@pierre/diffs/dist/renderers/DiffHunksRenderer.js
+index 7ab24f5..587c17d 100644
+--- a/node_modules/@pierre/diffs/dist/renderers/DiffHunksRenderer.js
++++ b/node_modules/@pierre/diffs/dist/renderers/DiffHunksRenderer.js
+@@ -303,8 +303,20 @@ var DiffHunksRenderer = class {
+ 		const trailingRangeSize = calculateTrailingRangeSize(fileDiff);
+ 		let pendingSplitSpanSize = 0;
+ 		let pendingSplitMissing;
+-		function pushGutterLineNumber(type, lineType, lineNumber, lineIndex) {
+-			context.pushToGutter(type, createGutterItem(lineType, lineNumber, lineIndex));
++		function pushGutterLineNumber(type, lineType, lineNumber, lineIndex, oldLineNumber, newLineNumber) {
++			const item = createGutterItem(lineType, lineNumber, lineIndex);
++			if (type === "unified") {
++				item.properties["data-old-line-number"] = oldLineNumber;
++				item.properties["data-new-line-number"] = newLineNumber;
++				for (const [side, number] of [["old", oldLineNumber], ["new", newLineNumber]]) {
++					item.children.push(createHastElement({
++						tagName: "span",
++						properties: { "data-line-number-side": side },
++						children: [{ type: "text", value: number == null ? "" : `${number}` }]
++					}));
++				}
++			}
++			context.pushToGutter(type, item);
+ 		}
+ 		function flushSplitSpan() {
+ 			if (diffStyle === "unified") return;
+@@ -360,7 +372,7 @@ var DiffHunksRenderer = class {
+ 						console.error(errorMessage, { file: fileDiff.name });
+ 						throw new Error(errorMessage);
+ 					}
+-					pushGutterLineNumber("unified", type === "change" ? additionLine != null ? "change-addition" : "change-deletion" : type, additionLine != null ? additionLine.lineNumber : deletionLine.lineNumber, `${unifiedLineIndex},${splitLineIndex}`);
++					pushGutterLineNumber("unified", type === "change" ? additionLine != null ? "change-addition" : "change-deletion" : type, additionLine != null ? additionLine.lineNumber : deletionLine.lineNumber, `${unifiedLineIndex},${splitLineIndex}`, deletionLine?.lineNumber, additionLine?.lineNumber);
+ 					pushLineWithAnnotation({
+ 						diffStyle: "unified",
+ 						type,
+@@ -657,6 +669,7 @@ function pushSeparator(type, { hunkIndex, collapsedLines, rangeSize, hunkSpecs,
+ 	linesAST.push(createSeparator({
+ 		type: context.hunkSeparators,
+ 		content: getModifiedLinesString(collapsedLines),
++		hunkContext: context.hunkSeparators === "line-info" && hunkSpecs != null ? hunkSpecs.slice(hunkSpecs.indexOf("@@", 2) + 2).trim() : void 0,
+ 		expandIndex,
+ 		chunked,
+ 		slotName,
+diff --git a/node_modules/@pierre/diffs/dist/utils/createSeparator.js b/node_modules/@pierre/diffs/dist/utils/createSeparator.js
+index 67d44dd..c522bed 100644
+--- a/node_modules/@pierre/diffs/dist/utils/createSeparator.js
++++ b/node_modules/@pierre/diffs/dist/utils/createSeparator.js
+@@ -16,7 +16,7 @@ function createExpandButton(type) {
+ 		}
+ 	});
+ }
+-function createSeparator({ type, content, expandIndex, chunked = false, slotName, isFirstHunk, isLastHunk }) {
++function createSeparator({ type, content, hunkContext, expandIndex, chunked = false, slotName, isFirstHunk, isLastHunk }) {
+ 	const children = [];
+ 	if (type === "metadata" && content != null) children.push(createHastElement({
+ 		tagName: "div",
+@@ -36,7 +36,11 @@ function createSeparator({ type, content, expandIndex, chunked = false, slotName
+ 				tagName: "span",
+ 				children: [createTextNodeElement(content)],
+ 				properties: { "data-unmodified-lines": "" }
+-			})],
++			}), ...(hunkContext ? [createHastElement({
++				tagName: "span",
++				children: [createTextNodeElement(hunkContext)],
++				properties: { "data-hunk-context": "" }
++			})] : [])],
+ 			properties: { "data-separator-content": "" }
+ 		}));
+ 		children.push(createHastElement({

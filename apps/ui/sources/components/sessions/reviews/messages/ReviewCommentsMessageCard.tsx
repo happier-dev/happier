@@ -4,43 +4,67 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type { ReviewCommentsV1 } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
-import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { formatReviewCommentAnchorLabel } from '@/sync/domains/input/reviewComments/reviewCommentPresentation';
 import { t } from '@/text';
+import { StructuredFindText, type StructuredFindTextBlock } from '@/components/sessions/transcript/structured/structuredFindText';
 
+function reviewCommentsDisplay(payload: ReviewCommentsV1, canJumpToAnchor: boolean) {
+    const files = new Map<string, ReviewCommentsV1['comments']>();
+    for (const comment of payload.comments) {
+        const comments = files.get(comment.filePath);
+        if (comments) comments.push(comment);
+        else files.set(comment.filePath, [comment]);
+    }
+    const block = (id: string, text: string): StructuredFindTextBlock => ({ id, text });
+    return {
+        header: block('structured-review-comments:header', t('files.reviewComments.title', { count: payload.comments.length })),
+        groups: [...files].map(([filePath, comments]) => ({
+            file: block(`structured-review-comments:file:${filePath}`, filePath),
+            comments: comments.map((comment) => {
+                const prefix = `structured-review-comment:${comment.id}`;
+                return {
+                    comment,
+                    anchor: block(`${prefix}:anchor`, formatReviewCommentAnchorLabel(comment)),
+                    jump: canJumpToAnchor ? block(`${prefix}:jump`, t('files.reviewComments.jump')) : null,
+                    before: comment.snapshot.beforeContext.map((text, index) => block(`${prefix}:before:${index}`, text)),
+                    selected: comment.snapshot.selectedLines.map((text, index) => block(`${prefix}:selected:${index}`, text)),
+                    body: block(`${prefix}:body`, comment.body),
+                    after: comment.snapshot.afterContext.map((text, index) => block(`${prefix}:after:${index}`, text)),
+                };
+            }),
+        })),
+    };
+}
+
+export function projectReviewCommentsFindText(payload: ReviewCommentsV1, options?: Readonly<{ canJumpToAnchor?: boolean }>): readonly StructuredFindTextBlock[] {
+    const display = reviewCommentsDisplay(payload, options?.canJumpToAnchor === true);
+    return [display.header, ...display.groups.flatMap((group) => [group.file, ...group.comments.flatMap((comment) => [
+        comment.anchor, ...comment.before, ...comment.selected, comment.body, ...comment.after,
+    ])])];
+}
 
 export function ReviewCommentsMessageCard(props: {
     payload: ReviewCommentsV1;
     onJumpToAnchor?: (target: { filePath: string; source: ReviewCommentSource; anchor: ReviewCommentAnchor }) => void;
 }) {
-    const comments = props.payload.comments;
-    const byFile = React.useMemo(() => {
-        const map = new Map<string, typeof comments>();
-        for (const c of comments) {
-            const existing = map.get(c.filePath);
-            if (existing) existing.push(c);
-            else map.set(c.filePath, [c]);
-        }
-        return map;
-    }, [comments]);
+    const display = React.useMemo(() => reviewCommentsDisplay(props.payload, Boolean(props.onJumpToAnchor)), [props.payload, props.onJumpToAnchor]);
 
     return (
         <View style={styles.container}>
-            <Text selectable style={styles.headerText}>{t('files.reviewComments.title', { count: comments.length })}</Text>
-            {[...byFile.entries()].map(([filePath, fileComments]) => (
-                <View key={filePath} style={styles.fileGroup}>
-                    <Text selectable style={styles.filePathText}>{filePath}</Text>
-                    {fileComments.map((c) => {
+            <StructuredFindText blockId={display.header.id} text={display.header.text} selectable style={styles.headerText} />
+            {display.groups.map((group) => (
+                <View key={group.file.text} style={styles.fileGroup}>
+                    <StructuredFindText blockId={group.file.id} text={group.file.text} selectable style={styles.filePathText} />
+                    {group.comments.map((item) => {
+                        const c = item.comment;
                         return (
                             <View key={c.id} style={styles.commentRow}>
                                 <View
                                     testID={`review-comments-header:${c.id}`}
                                     style={styles.commentHeader}
                                 >
-                                    <Text selectable numberOfLines={1} style={styles.anchorText}>
-                                        {formatReviewCommentAnchorLabel(c)}
-                                    </Text>
+                                    <StructuredFindText blockId={item.anchor.id} text={item.anchor.text} selectable numberOfLines={1} style={styles.anchorText} />
                                     {props.onJumpToAnchor ? (
                                         <Pressable
                                             testID={`review-comments-jump:${c.id}`}
@@ -48,20 +72,20 @@ export function ReviewCommentsMessageCard(props: {
                                             onPress={() => props.onJumpToAnchor?.({ filePath: c.filePath, source: c.source, anchor: c.anchor })}
                                             style={styles.jumpButton}
                                         >
-                                            <Text style={styles.jumpText}>{t('files.reviewComments.jump')}</Text>
+                                            {item.jump ? <StructuredFindText blockId={item.jump.id} text={item.jump.text} style={styles.jumpText} /> : null}
                                         </Pressable>
                                     ) : null}
                                 </View>
                                 <View style={styles.commentBody}>
-                                    {c.snapshot.beforeContext.map((line, idx) => (
-                                        <Text selectable key={`before:${idx}`} numberOfLines={1} style={styles.codeMutedText}>{line}</Text>
+                                    {item.before.map((line) => (
+                                        <StructuredFindText blockId={line.id} text={line.text} selectable key={line.id} numberOfLines={1} style={styles.codeMutedText} />
                                     ))}
-                                    {c.snapshot.selectedLines.map((line, idx) => (
-                                        <Text selectable key={`selected:${idx}`} numberOfLines={1} style={styles.codeText}>{line}</Text>
+                                    {item.selected.map((line) => (
+                                        <StructuredFindText blockId={line.id} text={line.text} selectable key={line.id} numberOfLines={1} style={styles.codeText} />
                                     ))}
-                                    <Text selectable style={styles.commentText}>{c.body}</Text>
-                                    {c.snapshot.afterContext.map((line, idx) => (
-                                        <Text selectable key={`after:${idx}`} numberOfLines={1} style={styles.codeMutedText}>{line}</Text>
+                                    <StructuredFindText blockId={item.body.id} text={item.body.text} selectable style={styles.commentText} />
+                                    {item.after.map((line) => (
+                                        <StructuredFindText blockId={line.id} text={line.text} selectable key={line.id} numberOfLines={1} style={styles.codeMutedText} />
                                     ))}
                                 </View>
                             </View>

@@ -31,5 +31,8 @@ describe('buildCodeMirrorWebViewBundle', () => {
         expect(generated).toContain('HAPPIER_CODEMIRROR_WEBVIEW');
         expect(generated).toMatch(/\bHighlightStyle:/);
         expect(generated).toMatch(/\btags:/);
+        expect(generated).toMatch(/\bSearchQuery:/);
+        expect(generated).toMatch(/\bsetSearchQuery:/);
+        expect(generated).toMatch(/\bopenSearchPanel:/);
     });
 });
