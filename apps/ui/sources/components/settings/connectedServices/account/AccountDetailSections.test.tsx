@@ -9,6 +9,9 @@ import { AccountDetailUsageSectionView, AccountDetailSubscriptionSectionView, ty
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
+import { projectIndexMeters } from '../index/ConnectedAccountIndexRow';
+import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
+
 const FACTS: AccountDetailUsageFacts = {
     meters: [
         { meterId: 'five_hour', label: '5-hour', remainingPct: 60, resetsAt: null, status: 'ok' },
@@ -25,6 +28,27 @@ const FACTS: AccountDetailUsageFacts = {
 };
 
 describe('AccountDetailUsageSectionView', () => {
+    it('filters empty account windows, preserves a pinned unavailable window, and keeps errors visible', async () => {
+        const base = { used: null, limit: null, unit: 'unknown', utilizationPct: null, resetsAt: null, status: 'unavailable', details: {} } as const;
+        const reported: ConnectedServiceQuotaMeterV1[] = [
+            { ...base, meterId: 'full', label: 'Full', utilizationPct: 0, status: 'ok' },
+            { ...base, meterId: 'empty', label: 'Empty', utilizationPct: 100, status: 'ok' },
+            { ...base, meterId: 'placeholder', label: 'Placeholder' },
+            { ...base, meterId: 'pinned', label: 'Pinned' },
+        ];
+        const rows = projectIndexMeters(reported, 2_000, ['pinned']);
+        expect(rows.map((row) => row.meterId)).toEqual(['full', 'empty', 'pinned']);
+        const screen = await renderScreen(<AccountDetailUsageSectionView facts={{ ...FACTS, meters: rows }} signedOut={false} now={2_000} pins={{ pinnedMeterIds: ['pinned'], onToggle: () => {} }} />);
+        expect(screen.findByTestId('account-detail-usage:meter:placeholder')).toBeNull();
+        expect(screen.findByTestId('account-detail-usage:pin:pinned')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Unavailable');
+        await screen.update(<AccountDetailUsageSectionView facts={{ ...FACTS, meters: [], error: true }} signedOut={false} now={2_000} />);
+        expect(screen.findByTestId('account-detail-usage:error')).toBeTruthy();
+        await screen.update(<AccountDetailUsageSectionView facts={{ ...FACTS, meters: [] }} signedOut={false} now={2_000} />);
+        expect(screen.getTextContent()).not.toContain('billed per use');
+        expect(screen.getTextContent()).toContain('Unavailable');
+    });
+
     it('keeps compact usage timestamp without repeating the page refresh control', async () => {
         const screen = await renderScreen(<ItemList><AccountDetailUsageSectionView facts={{ ...FACTS, fetchedAt: Date.now() - 1000, refresh: vi.fn() }} signedOut={false} now={Date.now()} compact /></ItemList>);
         expect(screen.findByTestId('account-detail-usage:refresh') === null).toBe(true);

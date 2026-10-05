@@ -2729,6 +2729,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             'publishCurrentUiContext',
             'readResource',
             'watchResource',
+            'settleEphemeralInput',
         ]);
         expect(requiredHostMethods('review-web')).toEqual([
             'context',
@@ -4327,6 +4328,13 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 }),
             ]);
             expect(ingested.manifest.contributes.resources).toEqual([
+                expect.objectContaining({
+                    id: 'review-repositories',
+                    source: 'dynamic',
+                    kind: 'config',
+                    scope: 'global',
+                    contentType: 'application/json',
+                }),
                 expect.objectContaining({
                     id: 'review-guide',
                     source: 'packaged',

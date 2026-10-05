@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
-import { ACTION_IDS, getActionSpec, normalizeActionsSettingsV1, SignedRootActionIdSchema, UiActionDispatchRequestV1Schema } from '@happier-dev/protocol';
+import { ACTION_IDS, getActionSpec, normalizeActionsSettingsV1, SignedRootActionIdSchema, UiActionDispatchRequestV1Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
 import { createDaemonControlApp } from '@/daemon/controlServer';
+import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
+import { configuration } from '@/configuration';
 import { createExternalMcpServer } from './createExternalMcpServer';
 
 const credentials = { token: 'mcp-test-token', encryption: null, credentialProvenance: 'stored_session' } as const;
@@ -21,16 +25,43 @@ describe('standalone MCP client Action admission', () => {
   it.each([true, false])('delivers through the exact daemon and preserves MCP authority (connected=%s)', async connected => {
     const admitted: unknown[] = [];
     const daemonAdmissions: unknown[] = [];
+    let clientAvailable = connected;
+    let primarySessionId: string | null = 'canonical-session';
+    // The Home HTTP service is a network boundary. Session parsing, Account
+    // mode and daemon locality resolution use their real canonical owners.
+    const home = createServer((request, response) => {
+      request.resume();
+      const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+      response.setHeader('content-type', 'application/json');
+      if (path === '/v1/account/encryption/currentness') {
+        response.end(JSON.stringify({ mode: 'plain', version: 1, updatedAt: 1,
+          signingKeyFingerprint: null, contentKeyFingerprint: null }));
+      } else if (path.startsWith('/v2/sessions/')) {
+        response.end(JSON.stringify(V2SessionByIdResponseSchema.parse({ session: {
+          id: decodeURIComponent(path.slice('/v2/sessions/'.length)), seq: 1, createdAt: 1, updatedAt: 1,
+          active: true, activeAt: 1, encryptionMode: 'plain', metadataVersion: 1,
+          metadata: JSON.stringify({ machineId: 'mcp-machine' }), dataEncryptionKey: null,
+          agentState: null, agentStateVersion: 1,
+        } })));
+      } else { response.statusCode = 404; response.end(JSON.stringify({ error: 'Unexpected test Home route' })); }
+    });
+    home.listen(0, '127.0.0.1');
+    await once(home, 'listening');
+    const homeAddress = home.address();
+    if (!homeAddress || typeof homeAddress === 'string') throw new Error('Missing Home address');
     // The connected-client RPC is the network boundary. Admission, placement,
     // reverse dispatch, daemon HTTP and MCP SDK execution remain real.
     const clientActionExecute = createClientActionReverseDispatcher(() => ({
-      hasConnectedClientRpcHandler: () => connected,
+      hasConnectedClientRpcHandler: () => clientAvailable,
       callConnectedClientRpc: async (_method, raw, options) => {
         const request = UiActionDispatchRequestV1Schema.parse(raw);
         admitted.push(request);
         options.onIssued();
         const result = request.actionId === 'ui.find' ? { status: 'idle' }
-          : request.actionId === 'session.pending.next' ? { status: 'none' } : workspace;
+          : request.actionId === 'session.pending.next' ? { status: 'none' }
+          : request.actionId === 'session.target.primary.set' ? { ok: true, status: 'ok',
+            sessionId: primarySessionId, serverId: primarySessionId ? configuration.activeServerId : null,
+            address: primarySessionId ? { sessionId: primarySessionId, serverId: configuration.activeServerId } : null } : workspace;
         return { ok: true, result: { v: 1, execution: { ok: true, result } } };
       },
     }));
@@ -49,7 +80,7 @@ describe('standalone MCP client Action admission', () => {
       externalActionApi: {
         currentServerId: 'mcp-home', executor,
         verifyPat: async () => { throw new Error('Account MCP must not use PAT admission'); },
-        resolveTarget: async ({ target }) => target ?? { kind: 'machine', machineId: 'mcp-machine' },
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: `http://127.0.0.1:${homeAddress.port}` }),
       },
     });
     app.addHook('preHandler', async request => {
@@ -58,7 +89,7 @@ describe('standalone MCP client Action admission', () => {
     await app.listen({ host: '127.0.0.1', port: 0 });
     const address = app.server.address();
     if (!address || typeof address === 'string') throw new Error('Missing daemon address');
-    const { mcp } = createExternalMcpServer({ credentials, defaultSessionId: 'mcp-session', machineId: 'mcp-machine',
+    const { mcp } = createExternalMcpServer({ credentials, defaultSessionId: 'mcp-session-active', machineId: 'mcp-machine',
       daemonControlTarget: { pid: process.pid, httpPort: address.port, controlToken: 'private-mcp-control' },
     });
     const client = new Client({ name: 'standalone-client-relay-test', version: '1' });
@@ -78,7 +109,7 @@ describe('standalone MCP client Action admission', () => {
       }
       expect(admitted).toHaveLength(connected ? 3 : 0);
       if (connected) for (const request of admitted) expect(request).toMatchObject({ context: {
-        surface: 'mcp', authority: 'account_automation', defaultSessionId: 'mcp-session', defaultSessionMachineId: 'mcp-machine',
+        surface: 'mcp', authority: 'account_automation', defaultSessionId: 'mcp-session-active', defaultSessionMachineId: 'mcp-machine',
       } });
       const approval = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
         actionId: 'session.draft.delete', input: { draftId: '11111111-1111-4111-8111-111111111111' },
@@ -88,8 +119,32 @@ describe('standalone MCP client Action admission', () => {
       expect(JSON.parse(approvalText.text)).toMatchObject({ errorCode: 'approvals_not_supported' });
       expect(daemonAdmissions).toContainEqual(expect.objectContaining({ actionId: 'session.draft.delete', surface: 'mcp' }));
       expect(admitted).toHaveLength(connected ? 3 : 0);
+      if (connected) {
+        const selected = CallToolResultSchema.parse(await client.callTool({ name: 'session_target_primary_set', arguments: {
+          sessionId: 'requested-session', serverId: configuration.activeServerId,
+        } }));
+        expect(selected.isError).not.toBe(true);
+        expect(admitted.at(-1)).toMatchObject({ actionId: 'session.target.primary.set', context: { defaultSessionId: 'requested-session' } });
+        await client.callTool({ name: 'ui_find', arguments: { op: 'read' } });
+        expect(admitted.at(-1)).toMatchObject({ actionId: 'ui.find', context: { defaultSessionId: 'canonical-session' } });
+        clientAvailable = false;
+        await client.callTool({ name: 'session_target_primary_set', arguments: {
+          sessionId: 'unaccepted-session', serverId: configuration.activeServerId,
+        } });
+        clientAvailable = true;
+        await client.callTool({ name: 'ui_find', arguments: { op: 'read' } });
+        expect(admitted.at(-1)).toMatchObject({ actionId: 'ui.find', context: { defaultSessionId: 'canonical-session' } });
+        primarySessionId = null;
+        await client.callTool({ name: 'session_target_primary_set', arguments: { sessionId: null } });
+        expect(admitted.at(-1)).toMatchObject({ actionId: 'session.target.primary.set' });
+        expect(UiActionDispatchRequestV1Schema.parse(admitted.at(-1)).context).not.toHaveProperty('defaultSessionId');
+        await client.callTool({ name: 'ui_find', arguments: { op: 'read' } });
+        expect(UiActionDispatchRequestV1Schema.parse(admitted.at(-1)).context).not.toHaveProperty('defaultSessionId');
+      }
     } finally {
       await client.close(); await mcp.close(); await app.close();
+      home.closeAllConnections();
+      await new Promise<void>(resolve => home.close(() => resolve()));
     }
   });
 

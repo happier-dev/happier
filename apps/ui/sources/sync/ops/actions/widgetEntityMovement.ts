@@ -12,8 +12,15 @@ export type WidgetEntityMovementAdmission = Readonly<
     | { status: 'refused'; code: string; ref?: WidgetInstanceRefV1 }
 >;
 
+/** Host-bound incumbent owner; a mounted injected area binds both preview and execution together. */
+export type WidgetEntityMovementPort = Readonly<{
+    readAdmission(ref: WidgetInstanceRefV1, destination: WidgetSurfaceRefV1, signal?: AbortSignal): Promise<WidgetEntityMovementAdmission>;
+    execute(effect: EntityDropEffectV1, scope: Readonly<{ serverId: string; accountId: string }>): Promise<EntityDropOutcomeV1>;
+}>;
+
 /** Existing host identities map to the widget owner's qualified ref; no contributed kind is fabricated. */
 export function widgetEntitySourceRef(item: EntityDragItemV1): WidgetInstanceRefV1 | null {
+    if (item.kind === 'widget-area-instance') return item.ref;
     if (item.kind === 'home-section') return { surface: { ...item.scope, owner: { kind: 'home' } }, instanceId: item.sectionId };
     if (item.kind === 'work-board-widget') return { surface: { ...item.scope, owner: { kind: 'workBoard', boardId: item.boardId } }, instanceId: item.instanceId };
     if (item.kind === 'session-board-item') return { surface: { ...item.scope, owner: { kind: 'sessionBoard', sessionId: item.address.sessionId } }, instanceId: item.itemId };

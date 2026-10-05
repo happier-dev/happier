@@ -96,6 +96,22 @@ notification channels, identifying the account and pool. This reports that a res
 was used; session recovery may still be in progress. Uncertain outcomes do not send
 a success notification, and replaying the same receipt does not send another one.
 
+## Choosing accounts on a swap
+
+In development builds, **Expiring first** is the default selection strategy for
+new pools. When a swap is needed, Happier prefers an eligible account with enough
+fresh quota whose long usage allowance resets sooner or whose subscription ends
+sooner with renewal off. A renewing billing period is not a subscription expiry.
+
+The pool's existing early-switch threshold defines enough quota. If no account
+has that much left, selection falls back to the account with the most usable quota.
+Stale, missing, or passed dates add no preference. Equal deadlines are resolved by
+remaining quota, then member order. A healthy active account stays active; this
+strategy does not schedule switches or restart sessions.
+
+Existing explicit **Least limited**, **In order**, and **Manual** choices are
+preserved. Change the selection strategy in the pool's Behavior section to opt in.
+
 ## Choosing which limits drive a pool
 
 In development builds, a pool's Behavior section can use **All usage limits** (the

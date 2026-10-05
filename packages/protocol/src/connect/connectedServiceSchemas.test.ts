@@ -693,7 +693,7 @@ describe('connectedServiceSchemas', () => {
     it('parses default account group fallback policy', () => {
         expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1 })).toEqual({
             v: 1,
-            strategy: 'least_limited',
+            strategy: 'expiry_first',
             autoSwitch: false,
             switchOn: {
                 usageLimit: true,
@@ -716,6 +716,7 @@ describe('connectedServiceSchemas', () => {
         expect(ConnectedServiceAuthGroupPolicyV1Schema.safeParse({ v: 1, strategy: 'round_robin' }).success).toBe(false);
         // Existing pools that persisted an explicit `priority` strategy must NOT be silently migrated.
         expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1, strategy: 'priority' }).strategy).toBe('priority');
+        expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1, strategy: 'least_limited' }).strategy).toBe('least_limited');
     });
 
     it('rejects removed legacy no-op policy keys as unknown current-contract input', () => {

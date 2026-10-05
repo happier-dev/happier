@@ -16,6 +16,13 @@ import { resolveLatestComponentArtifact } from './resolve_latest_component_artif
 test('web reuse requires a non-empty entrypoint and its local referenced assets', async (t) => {
   const root = createTempDir('stack-web-reuse-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
+  // A missing fixture payload must not rebuild the operator's configured UI.
+  const previousRepoDir = process.env.HAPPIER_STACK_REPO_DIR;
+  process.env.HAPPIER_STACK_REPO_DIR = join(root, 'missing-checkout');
+  t.after(() => {
+    if (previousRepoDir === undefined) delete process.env.HAPPIER_STACK_REPO_DIR;
+    else process.env.HAPPIER_STACK_REPO_DIR = previousRepoDir;
+  });
   const artifactDir = join(root, 'artifacts', 'web', 'web');
   const payloadDir = join(artifactDir, 'payload');
   mkdirSync(payloadDir, { recursive: true });

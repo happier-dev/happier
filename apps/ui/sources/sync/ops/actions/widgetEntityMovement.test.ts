@@ -70,6 +70,16 @@ describe('widget movement Action recovery projection', () => {
                 .toBe(index === 0 ? 'top' : 'bottom');
         }
     });
+    it('projects Project-aside keyboard placement against current area order, excluding its source', () => {
+        const surface = { ...scope, owner: { kind: 'project' as const, projectId: 'portable-source' } };
+        for (const index of [0, 1]) {
+            const move: EntityDropEffectV1 = { actionId: 'widgets.instance.move', preview: effect.preview,
+                input: { ref: { surface, instanceId: 'copy' }, to: { surface, index } } };
+            expect(resolveSessionSurfaceIndicatorEdge({ effect: move, bounds: null, pointer: null,
+                widgetAreaTarget: { surface, itemId: 'ordinary', itemIds: ['copy', 'ordinary'] } }))
+                .toBe(index === 0 ? 'top' : 'bottom');
+        }
+    });
     it('requires acknowledgement of the exact requested destination rather than any success-shaped widget result', () => {
         expect(projectWidgetEntityMovementResult({ ok: true, result: { ref: fromRef, instance } }, effect).status).toBe('unknown');
         expect(projectWidgetEntityMovementResult({ ok: true, result: { ref: toRef, fromRef, instance, status: 'moved' } }, effect)).toEqual({ status: 'applied' });

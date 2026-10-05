@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierArtifactRevisionList, type HappierArtifactRevisionListProps } from '@happier-dev/plugin-ui/presentation';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -30,6 +31,10 @@ type HistoryState =
 
 /** Two columns (versions beside the preview) from this width; narrower, the preview replaces the list. */
 const SIDE_BY_SIDE_MIN_WIDTH_PX = 640;
+
+function ArtifactHistoryItemGroup(props: React.ComponentProps<HappierArtifactRevisionListProps['host']['ItemGroup']>) {
+    return <ItemGroup title={props.title} children={props.children} />;
+}
 
 /**
  * An artifact's History (lab A6): earlier versions newest first → preview → Restore. Restore is the one
@@ -98,32 +103,24 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
     const versionNumber = (revision: Revision) => revision.bodyVersion;
 
     const list = (
-        <View testID="artifact-history:versions" style={sideBySide ? styles.listColumn : null}>
-            <ItemGroup title={t('artifacts.browser.history.versionsLabel')}>
-                <Item
-                    testID="artifact-history:current"
-                    title={t('artifacts.browser.history.current')}
-                    subtitle={artifact ? formatRelativeTimeShort(artifact.updatedAt, Date.now()) : undefined}
-                    titleAccessory={<Text style={styles.now}>{t('artifacts.browser.history.now')}</Text>}
-                    showChevron={false}
-                />
-                {earlier.map((revision) => (
-                    <Item
-                        key={revision.bodyVersion}
-                        testID={`artifact-history:version:${revision.bodyVersion}`}
-                        title={t('artifacts.browser.history.version', { n: versionNumber(revision) })}
-                        subtitle={formatRelativeTimeShort(revision.createdAt, Date.now())}
-                        detail={formatByteSize(revision.sizeBytes)}
-                        selected={revision.bodyVersion === selected}
-                        onPress={() => setSelected(revision.bodyVersion)}
-                        showChevron={!sideBySide}
-                    />
-                ))}
-            </ItemGroup>
-            <Text style={styles.keeps}>
-                {earlier.length === 0 ? t('artifacts.browser.history.empty') : t('artifacts.browser.history.keeps', { count: state.retentionCount })}
-            </Text>
-        </View>
+        <HappierArtifactRevisionList
+            sideBySide={sideBySide}
+            title={t('artifacts.browser.history.versionsLabel')}
+            currentTitle={t('artifacts.browser.history.current')}
+            currentSubtitle={artifact ? formatRelativeTimeShort(artifact.updatedAt, Date.now()) : undefined}
+            currentLabel={t('artifacts.browser.history.now')}
+            retentionLabel={earlier.length === 0 ? t('artifacts.browser.history.empty') : t('artifacts.browser.history.keeps', { count: state.retentionCount })}
+            revisions={earlier.map(revision => ({
+                bodyVersion: revision.bodyVersion,
+                title: t('artifacts.browser.history.version', { n: versionNumber(revision) }),
+                subtitle: formatRelativeTimeShort(revision.createdAt, Date.now()),
+                detail: formatByteSize(revision.sizeBytes),
+            }))}
+            selectedVersion={selected}
+            onSelectVersion={setSelected}
+            colors={{ secondary: theme.colors.text.secondary, tertiary: theme.colors.text.tertiary }}
+            host={{ Item, ItemGroup: ArtifactHistoryItemGroup, Text }}
+        />
     );
 
     const preview = chosen ? (
@@ -210,9 +207,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     stack: {
         flex: 1,
     },
-    listColumn: {
-        width: 300,
-    },
     previewColumn: {
         flex: 1,
         minWidth: 0,
@@ -229,17 +223,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 12.5,
         color: theme.colors.text.tertiary,
         fontVariant: ['tabular-nums'],
-    },
-    now: {
-        fontSize: 11,
-        fontWeight: '600',
-        color: theme.colors.text.secondary,
-    },
-    keeps: {
-        fontSize: 12,
-        color: theme.colors.text.tertiary,
-        marginTop: 8,
-        paddingHorizontal: 4,
     },
     footer: {
         flexDirection: 'row',

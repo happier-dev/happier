@@ -8,6 +8,7 @@ import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CardGrid, CardGridCell } from '@/components/ui/cardGrid/CardGrid';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -29,6 +30,12 @@ import { runWidgetSetupCommand, widgetProvidedContext, type WidgetSurfaceContext
 import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
 import { t } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useWidgetMovementAdmission } from '@/components/widgets/surface/useWidgetMovementAdmission';
+import { SessionSurfaceEntityDragHandle, SessionSurfaceEntityFeedback, SessionSurfaceEntityTargetFeedback, useSessionSurfaceEntityDrag, useSessionSurfaceGeometryRefresh } from '@/components/sessions/board/SessionSurfaceEntityDrag';
+import { resolveEntityFlatRowPosition } from '@/components/ui/treeDragDrop/geometry/entityFlatListStrategy';
+import { resolveWidgetAreaEntityDrop } from './widgetAreaEntityDrop';
+import type { EntityDropEffectV1, EntityDropAdmissionV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { useWidgetAreaLayout, type WidgetAreaLayout, type WidgetAreaPort, type WidgetAreaWriteOutcome } from './useWidgetAreaLayout';
 
@@ -42,7 +49,7 @@ type WidgetAreaWrite = WidgetAreaLayout<WidgetSurfaceContext>['write'];
 export type WidgetAreaGeometry = 'grid' | 'column';
 
 const GEOMETRY_PLACEMENT: Readonly<Record<WidgetAreaGeometry, WidgetFramePlacement>> = { grid: 'home', column: 'companion' };
-/** Every action sits in the ⋯ menu: the header shows one quiet "⋯". */
+/** Configuration stays in the quiet ⋯ menu; movement also has the shared grip. */
 const ALWAYS_OVERFLOW = Number.POSITIVE_INFINITY;
 const ADD_TARGET_PX = resolveMinimumInteractiveTargetSize(Platform.OS);
 
@@ -100,9 +107,25 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
     const addAnchorRef = React.useRef<View | null>(null);
     const [addOpen, setAddOpen] = React.useState(false);
     const [notice, setNotice] = React.useState<string | null>(null);
+    const [organizing, setOrganizing] = React.useState(false);
     const state = layout.state;
     const ready = state.status === 'ready' ? state : null;
     const canAdd = ready?.canEdit === true;
+    const viewer = useActiveServerAccountScope();
+    const focused = useIsFocused();
+    const current = ready !== null && focused && viewer?.serverId === ready.surface.serverId && viewer.accountId === ready.surface.accountId;
+    const movement = useWidgetMovementAdmission(current ? ready?.surface ?? null : null, ready?.placements, props.port.movement);
+    const drop = useSessionSurfaceEntityDrag(current && ready ? {
+        scope: ready.surface, title: props.surfaceName, getItem: () => null, isCurrent: () => current,
+        admitWidgetMovement: movement.admit, ...(props.port.movement ? { widgetMovement: props.port.movement } : {}),
+        target: { acceptedKinds: ['widget-area-instance', 'home-section', 'work-board-widget', 'session-board-item', 'companion-item'],
+            listDestinations: () => [{ destination: { anchorId: null, placement: 'after' }, label: props.surfaceName, group: props.surfaceName }],
+            resolve: ({ item, destination }) => resolveWidgetAreaEntityDrop({ item, destination, surface: ready.surface,
+                placements: ready.placements, canEdit: ready.canEdit, preview: { verb: t('entityDragDrop.organize.title'), target: props.surfaceName } }),
+            execute: async () => ({ status: 'refused', reason: { code: 'unsupported_widget_surface', message: t('entityDragDrop.surface.widgetMoveUnavailable') } }),
+        },
+    } : null);
+    useSessionSurfaceGeometryRefresh(drop.refresh);
     const layoutWrite = layout.write;
     const write = React.useCallback(async (operation: Parameters<WidgetAreaWrite>[0]): Promise<WidgetAreaWriteOutcome> => {
         const outcome = await layoutWrite(operation);
@@ -112,26 +135,31 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
     const closeAdd = React.useCallback(() => setAddOpen(false), []);
 
     return (
-        <View testID={props.testID} style={styles.area}>
+        <View ref={drop.ref} onLayout={drop.onLayout} testID={props.testID} style={styles.area}>
             <WidgetAreaHeader
                 title={props.title}
                 meta={props.meta}
                 testID={props.testID}
                 // The Add keeps its place while the layout first loads, so nothing moves on arrival.
                 add={state.status === 'loading' || canAdd ? (
-                    <View ref={addAnchorRef} collapsable={false}>
-                        <IconButton
-                            testID={`${props.testID}.add`}
-                            iconName="plus"
-                            variant="plain"
-                            accessibilityLabel={t('widgetAdd.areaAdd', { surface: props.surfaceName })}
-                            minimumInteractiveTargetSize={ADD_TARGET_PX}
-                            disabled={!canAdd}
-                            selected={addOpen}
-                            expanded={addOpen}
-                            hasPopup="dialog"
-                            onPress={() => setAddOpen((open) => !open)}
-                        />
+                    <View style={styles.header}>
+                        {canAdd ? <RoundButton size="small" display="secondary" testID={`${props.testID}.organize`}
+                            title={t(organizing ? 'common.done' : 'entityDragDrop.organize.title')}
+                            onPress={() => { setOrganizing(value => !value); drop.runtime.cancel('organize-changed'); }} /> : null}
+                        <View ref={addAnchorRef} collapsable={false}>
+                            <IconButton
+                                testID={`${props.testID}.add`}
+                                iconName="plus"
+                                variant="plain"
+                                accessibilityLabel={t('widgetAdd.areaAdd', { surface: props.surfaceName })}
+                                minimumInteractiveTargetSize={ADD_TARGET_PX}
+                                disabled={!canAdd}
+                                selected={addOpen}
+                                expanded={addOpen}
+                                hasPopup="dialog"
+                                onPress={() => setAddOpen((open) => !open)}
+                            />
+                        </View>
                     </View>
                 ) : null}
             />
@@ -157,8 +185,11 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
                     {...(canAdd ? { action: { label: t('widgetAdd.areaEmptyAction'), onPress: () => setAddOpen(true), testID: `${props.testID}.emptyAdd` } } : {})}
                 />
             ) : ready ? (
-                <WidgetAreaPlacements {...props} context={ready.context} surface={ready.surface} placements={ready.placements} canEdit={ready.canEdit} write={write} />
+                <WidgetAreaPlacements {...props} context={ready.context} surface={ready.surface} placements={ready.placements} canEdit={ready.canEdit}
+                    current={current} organizing={organizing} admitWidgetMovement={movement.admit} write={write} />
             ) : null}
+            {ready ? <SessionSurfaceEntityFeedback kind="widget-area-instance" scope={ready.surface} address={null} widgetSurface={ready.surface} testID={`${props.testID}.move`} /> : null}
+            <SessionSurfaceEntityTargetFeedback drag={drop} testID={props.testID} />
             {ready && addOpen ? (
                 <WidgetAreaAddPopover
                     anchorRef={addAnchorRef}
@@ -190,6 +221,9 @@ type PlacementsProps = WidgetAreaProps & Readonly<{
     surface: WidgetSurfaceRefV1;
     placements: WidgetAreaLayoutV1['instances'];
     canEdit: boolean;
+    current: boolean;
+    organizing: boolean;
+    admitWidgetMovement(effect: EntityDropEffectV1): EntityDropAdmissionV1;
     write: WidgetAreaWrite;
 }>;
 
@@ -241,6 +275,21 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     });
     const definition = useWidgetDefinitionFlows({ instance, scope: surface, anchorRef: edit.anchorRef, editInputs: edit.editInputs, testID });
     const title = instance.displayName ?? candidate?.title ?? t('sessionBoard.item.pluginUnavailable.title');
+    const drag = useSessionSurfaceEntityDrag(props.current && props.canEdit ? {
+        scope: surface, title, isCurrent: () => props.current && props.canEdit && props.placements.some(entry => entry.instance.id === instance.id),
+        getItem: () => ({ kind: 'widget-area-instance', scope: { serverId: surface.serverId, accountId: surface.accountId }, ref: { surface, instanceId: instance.id } }),
+        admitWidgetMovement: props.admitWidgetMovement,
+        ...(props.port?.movement ? { widgetMovement: props.port.movement } : {}),
+        getWidgetAreaTarget: () => ({ surface, itemId: instance.id, itemIds: props.placements.map(entry => entry.instance.id) }),
+        pointerDestination: (bounds, pointer) => resolveEntityFlatRowPosition(instance.id, bounds, pointer),
+        target: { acceptedKinds: ['widget-area-instance', 'home-section', 'work-board-widget', 'session-board-item', 'companion-item'],
+            listDestinations: () => (['before', 'after'] as const).map(placement => ({ destination: { anchorId: instance.id, placement },
+                label: t(placement === 'before' ? 'entityDragDrop.preview.moveAbove' : 'entityDragDrop.preview.moveBelow', { target: title }), group: props.surfaceName })),
+            resolve: ({ item, destination }) => resolveWidgetAreaEntityDrop({ item, destination, surface, placements: props.placements,
+                canEdit: props.canEdit, preview: { verb: t('entityDragDrop.organize.title'), target: title } }),
+            execute: async () => ({ status: 'refused', reason: { code: 'unsupported_widget_surface', message: t('entityDragDrop.surface.widgetMoveUnavailable') } }),
+        },
+    } : null);
     const renaming = useWidgetFrameRename({
         title,
         testID,
@@ -261,7 +310,10 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             onFocus={() => setMenuFocused(true)}
             onBlur={() => setMenuFocused(false)}
         >
-            <ItemRowActions
+            <SessionSurfaceEntityDragHandle drag={drag} title={title} testID={`${testID}.move`}
+                renderTrigger={({ toggle, grip }) => <View style={styles.header}>
+                    {props.organizing || !alwaysVisible ? grip : null}
+                    <ItemRowActions
                 title={title}
                 compactThreshold={ALWAYS_OVERFLOW}
                 compactActionIds={[]}
@@ -269,6 +321,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 overflowTriggerAccessibilityLabel={`${t('settingsOverview.homeSectionOptions')}: ${title}`}
                 actions={[
                     ...buildWidgetInstanceActions({ editInputs: edit.editInputs, onRename: renaming.begin, onAbout: definition.about }),
+                    { id: 'moveTo', title: t('entityDragDrop.organize.title'), icon: 'arrows-down-up', onPress: toggle },
                     { id: 'moveUp', title: t('common.moveUp'), icon: 'caret-up', disabled: props.index === 0,
                         onPress: () => { void write({ actionId: 'widgets.instance.move', instanceId: instance.id, toIndex: props.index - 1 }); } },
                     { id: 'moveDown', title: t('common.moveDown'), icon: 'caret-down', disabled: props.index === props.count - 1,
@@ -287,7 +340,8 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                     { id: 'remove', title: t('common.remove'), icon: 'trash', destructive: true,
                         onPress: () => { void write({ actionId: 'widgets.instance.remove', instanceId: instance.id }); } },
                 ]}
-            />
+                    />
+                </View>} />
         </View>
     ) : null;
 
@@ -310,7 +364,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     }), [candidate, edit.onRepairInputs, focused, instance, providedContext, runtime, surface, testID]);
 
     return (
-        <View testID={testID} style={styles.cell} {...hover.hoverProps}>
+        <View ref={drag.ref} onLayout={drag.onLayout} testID={testID} style={styles.cell} {...hover.hoverProps}>
             <WidgetFrame
                 testID={`${testID}.frame`}
                 frameStyle={frameStyle}
@@ -324,6 +378,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             />
             {edit.popover}
             {definition.panel}
+            <SessionSurfaceEntityTargetFeedback drag={drag} testID={testID} />
         </View>
     );
 });

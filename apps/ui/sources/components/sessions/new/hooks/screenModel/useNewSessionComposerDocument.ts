@@ -586,6 +586,8 @@ export function useNewSessionComposerDocument(params: Readonly<{
         },
         readSnapshot,
         readScope: () => draftScope ?? composerAccountLifetime?.scope ?? null,
+        readAttachmentComposition: () => !composerPluginPresentation.scopeSignal.aborted && composerPluginPresentation.attachmentEntriesById
+            ? { composerAttachmentsById: composerPluginPresentation.attachmentEntriesById, localize: composerPluginPresentation.localizePluginText } : null,
         isPresented: () => layoutPresented && params.isPresented !== false,
         applyNewSessionDirectoryIntent: (intent, expectedScope) => {
             if (!params.setDirectoryIntent || !readSnapshot().state.editable) return false;

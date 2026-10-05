@@ -43,7 +43,8 @@ afterEach(() => {
 });
 
 describe('EntityDragCarriedPreview refusal settlement', () => {
-    it.each([false, true])('keeps the owner reason through return feedback (reduced motion: %s)', async (reducedMotion) => {
+    it.each(['spring', 'reduced', 'interrupted'] as const)('keeps the owner reason through %s return feedback', async (mode) => {
+        const reducedMotion = mode === 'reduced';
         setReducedMotionPreferenceOverride(reducedMotion);
         const runtime = createEntityDragDropRuntime();
         const scope = { serverId: 'home-a', accountId: 'account-a' };
@@ -80,9 +81,20 @@ describe('EntityDragCarriedPreview refusal settlement', () => {
         if (!reducedMotion) expect(motion.springs.slice(-2)).toEqual([10 - positionStyle.left, 20 - positionStyle.top]);
         expect(await carry.release()).toBeNull();
         expect(execute).toHaveBeenCalledTimes(1);
-        await act(async () => { for (const complete of motion.completions.splice(0)) complete(true); });
-        expect(runtime.getSnapshot().phase).toBe('idle');
-        expect(screen.findHostByTestId('carried-card')).toBeNull();
+        const completions = motion.completions.splice(0);
+        if (mode === 'interrupted') {
+            await act(async () => {
+                runtime.registerSource(source);
+                carry = runtime.begin('source')!;
+                carry.move({ x: 250, y: 250 });
+            });
+        }
+        await act(async () => { for (const complete of completions) complete(true); });
+        expect(runtime.getSnapshot().phase).toBe(mode === 'interrupted' ? 'carrying' : 'idle');
+        if (mode === 'interrupted') {
+            expect(screen.findHostByTestId('carried-card')?.props.dataSet.outcome).toBe('allowed');
+            await act(async () => { runtime.cancel(); });
+        } else expect(screen.findHostByTestId('carried-card')).toBeNull();
         unsubscribe();
         await screen.unmount();
     });

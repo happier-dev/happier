@@ -78,4 +78,24 @@ describe('PutUnderSessionModal captured scope', () => {
         expect(onClose).toHaveBeenCalled();
         expect(relationWrites).toEqual([]);
     });
+
+    it('rechecks current lead permissions before treating a displayed current lead as a no-op', async () => {
+        const onClose = vi.fn();
+        const screen = await renderScreen(<PutUnderSessionModal sessionId="self" serverId={account.home.id} onClose={onClose} />);
+        await vi.waitFor(() => {
+            const sections = screen.root.findByType(SelectionList).props.rootStep.sections;
+            expect(sections.some((section: { options?: readonly { id: string; disabled?: boolean }[] }) =>
+                section.options?.some(option => option.id === 'lead' && !option.disabled))).toBe(true);
+        });
+        await act(async () => {
+            const sessions = getStorage().getState().sessions;
+            const lead = sessions.lead!;
+            getStorage().setState({ sessions: { ...sessions, lead: { ...lead,
+                access: { ...lead.access!, capabilities: { ...lead.access!.capabilities, submitAgentInput: false } } } } });
+            screen.root.findByType(SelectionList).props.onSelect('lead');
+        });
+        expect(onClose).not.toHaveBeenCalled();
+        expect(screen.findByTestId('session-put-under-error')).not.toBeNull();
+        expect(relationWrites).toEqual([]);
+    });
 });

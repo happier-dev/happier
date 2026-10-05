@@ -651,7 +651,7 @@ describe('QualifiedPoolDetailView', () => {
         });
         const now = itemProps(screen, 'connected-services-pool-detail:now');
         expect(now.title).toMatch(/^connectedServicesPool\.usingSince\(name=work@example\.com,time=/);
-        expect(now.subtitle).toBe('connectedServicesPool.leadInOrder connectedServicesPool.nextOnRunOut(name=work@example.com,next=backup@example.com)');
+        expect(now.subtitle).toBe('connectedServicesPool.leadInOrder connectedServicesPool.fallbackDescription');
 
         await pressRow(screen, 'connected-services-pool-detail:now:switch');
         expect(setActiveAccount).toHaveBeenCalledWith(expect.objectContaining({ group, account: expect.objectContaining({ accountId: 'backup' }) }));
@@ -836,15 +836,18 @@ describe('QualifiedPoolDetailView', () => {
 
     it('patches automatic fallback, strategy and the switch-early threshold', async () => {
         const { screen, group } = await renderPoolDetail();
+        const strategy = itemProps(screen, 'connected-services-pool-detail:strategy');
+        expect(strategy.value).toBe('expiry_first');
+        expect(strategy.options.map((option: { id: string }) => option.id)).toContain('expiry_first');
         await act(async () => {
             switchByTestId(screen, 'connected-services-pool-detail:auto-switch:toggle').props.onValueChange?.(true);
         });
         await flush();
         expect(patch.mock.calls[0]?.[0]).toMatchObject({ group, policy: { autoSwitch: true } });
 
-        await act(async () => { itemProps(screen, 'connected-services-pool-detail:strategy').onChange?.('manual'); });
+        await act(async () => { itemProps(screen, 'connected-services-pool-detail:strategy').onChange?.('expiry_first'); });
         await flush();
-        expect(patch.mock.calls[1]?.[0]).toMatchObject({ policy: { strategy: 'manual' } });
+        expect(patch.mock.calls[1]?.[0]).toMatchObject({ policy: { strategy: 'expiry_first' } });
 
         await act(async () => { itemProps(screen, 'connected-services-pool-detail:soft-switch-threshold').onCommit('25'); });
         await flush();

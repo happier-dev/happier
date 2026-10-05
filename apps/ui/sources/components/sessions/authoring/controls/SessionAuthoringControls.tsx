@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import type { WorkflowEngineSelectionV1, WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowRoleV1 } from '@happier-dev/protocol';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
@@ -365,6 +366,7 @@ export type SessionAuthoringControlsProps = Readonly<{
     /** Atomic engine selection (Agent, model, mode and effort/config). */
     onChangeFields?: (fields: Partial<WorkflowSessionAuthoringSelection>) => void;
     engine?: WorkflowEngineSelectionV1;
+    workflowRoles?: readonly WorkflowRoleV1[];
     onChangeEngine?: (engine: WorkflowEngineSelectionV1) => void;
     onChangeField: (
         field: SessionAuthoringFieldId,
@@ -449,15 +451,16 @@ const EMPTY_FACTS: SessionAuthoringControlFacts = {};
 
 export function SessionAuthoringControls(props: SessionAuthoringControlsProps): React.ReactElement {
     const testIDPrefix = props.testIDPrefix ?? 'session-authoring-control';
-    const facts = props.facts ?? {};
+    const facts = props.facts ?? EMPTY_FACTS;
     const overlayAnchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
     const { theme } = useUnistyles();
 
     const { agentId, controls } = useResolvedSessionAuthoringControls(props.values, facts, props.metadata);
     const roleSelection = React.useMemo(() => props.onChangeEngine === undefined ? undefined : {
         value: props.engine && 'role' in props.engine ? props.engine.role : null,
+        workflowRoles: props.workflowRoles,
         onChange: (role: string) => { if (!props.disabled) props.onChangeEngine?.({ role }); },
-    }, [props.disabled, props.engine, props.onChangeEngine]);
+    }, [props.disabled, props.engine, props.onChangeEngine, props.workflowRoles]);
     const enginePicker = useSessionAuthoringEnginePicker({ values: props.values, facts,
         disabled: props.disabled, onChangeFields: props.onChangeFields, roleSelection });
     const engineField = props.onChangeFields === undefined ? undefined
@@ -483,6 +486,7 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
             style={presentation === 'fields' ? styles.fields : styles.root}
         >
             {props.fields.map((field) => {
+                if (engineField !== undefined && (field === 'acpSessionModeId' || field === 'sessionConfigOptionOverrides')) return null;
                 if (engineField !== undefined && (field === 'agentTarget' || field === 'modelSelection')) {
                     if (field !== engineField) return null;
                     const modelControl = resolveSessionAuthoringFieldControl({ field: 'modelSelection', values: props.values, controls, facts, agentId });
@@ -493,7 +497,9 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                         controlId="engine" title={t('workflows.page.sections.agentTitle')}
                         options={[]} pickerOptions={enginePicker.options}
                         selectedOptionId={enginePicker.selectedOptionId ?? ''}
-                        valueLabel={props.engine && 'role' in props.engine ? props.engine.role : [enginePicker.label, modelLabel].filter(Boolean).join(' · ')}
+                        valueLabel={props.engine && 'role' in props.engine
+                            ? props.workflowRoles?.flatMap(role => role.roleId === roleSelection?.value && 'name' in role ? [role.name] : [])[0] ?? props.engine.role
+                            : [enginePicker.label, modelLabel].filter(Boolean).join(' · ')}
                         disabled={props.disabled} presentation={presentation}
                         changed={isChanged('agentTarget') || isChanged('modelSelection')}
                         onSelect={enginePicker.onSelect} testID={`${testIDPrefix}-${engineField}`}

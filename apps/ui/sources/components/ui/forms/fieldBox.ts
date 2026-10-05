@@ -32,4 +32,4 @@ export function resolveFieldBoxColors(theme: FieldBoxTheme, state: FieldBoxState
     } as const;
 }
 
-export const fieldBoxShapeStyle = HAPPIER_FIELD_BOX_SHAPE;
+export const fieldBoxShapeStyle: typeof HAPPIER_FIELD_BOX_SHAPE = HAPPIER_FIELD_BOX_SHAPE;

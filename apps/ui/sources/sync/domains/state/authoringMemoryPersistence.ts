@@ -12,7 +12,11 @@ import {
 
 import { getPersistenceStorage } from './persistenceStorage';
 
-const AuthoringMemoryProjectionSchema = z.object({
+const AuthoringMemoryProjectionSchema: z.ZodObject<{
+    recentMachinePaths: z.ZodArray<typeof LegacyRecentMachinePathSchema>;
+    lastUsedProfile: typeof LegacyLastUsedProfileSchema;
+    lastEngineSelectionsByScopeV1: typeof LegacyRememberedEngineSelectionsByScopeV1Schema;
+}, z.core.$strict> = z.object({
     // A persisted projection is admitted as a whole, unlike legacy import's
     // malformed-sibling recovery and truncation.
     recentMachinePaths: z.array(LegacyRecentMachinePathSchema),

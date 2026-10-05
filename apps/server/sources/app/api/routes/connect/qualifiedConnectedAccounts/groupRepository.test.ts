@@ -127,11 +127,18 @@ describe("qualified Connected Account group repository", () => {
         expect(toQualifiedConnectedAccountGroup(row())).toMatchObject({
             ref: groupRef,
             incarnation: "group-row",
+            policy: { strategy: "expiry_first" },
             activeConnectedAccountId: accountRef.accountId,
             members: [{
                 connectedAccountId: accountRef.accountId,
             }],
         });
+    });
+
+    it("preserves an explicit predecessor pool strategy", () => {
+        const current = row();
+        current.policyJson = JSON.stringify({ strategy: "least_limited" });
+        expect(toQualifiedConnectedAccountGroup(current).policy.strategy).toBe("least_limited");
     });
 
     it("exposes an active-since timestamp only for the active member it describes", () => {

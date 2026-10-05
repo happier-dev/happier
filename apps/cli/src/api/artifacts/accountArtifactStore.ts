@@ -22,6 +22,7 @@ import {
   ArtifactRevisionListResponseV1Schema,
   ArtifactStorageUsageV1Schema,
   prepareArtifactHeaderForRevisionV1,
+  prepareArtifactHeaderForBodyV1,
   withArtifactExcerptV1,
   artifactKindRequiresTextBodyV1,
   createArtifactPublicLinkActionsV1,
@@ -58,6 +59,7 @@ import {
 } from '@/api/encryption';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { deriveKey } from '@/utils/deriveKey';
+import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 
 export type AccountArtifactRevision = Readonly<{ headerVersion: number; bodyVersion: number }>;
 export type AccountArtifactHtmlPreview = Readonly<{ previewUrl?: string; previewError?: 'artifact_html_preview_unavailable' }>;
@@ -560,7 +562,7 @@ export function createAccountArtifactStore(params: Readonly<{
       const content = await prepareWriteContent(codec, input);
       requireBodyForArtifactKind(input.header, content.body);
       input.signal?.throwIfAborted();
-      const header = codec.encode(withArtifactExcerptV1(input.header, content.body));
+      const header = codec.encode(withArtifactExcerptV1(prepareArtifactHeaderForBodyV1(input.header, content.body), content.body));
       const body = codec.encode({ body: content.body });
       const response = content.blob?.content
         ? await axios.post(`${resolveServerHttpBaseUrl()}${ARTIFACT_UPLOAD_PATH_V1}`, Buffer.from(encodeArtifactUploadFrameV1({
@@ -590,7 +592,7 @@ export function createAccountArtifactStore(params: Readonly<{
       const blob: ArtifactBlobWriteV1 | null | undefined = content.blob
         ?? (ArtifactBlobReferenceV1Schema.safeParse(decodeBody(codec, stored.body)).success ? null : undefined);
       input.signal?.throwIfAborted();
-      const header = codec.encode(withArtifactExcerptV1(input.header, content.body));
+      const header = codec.encode(withArtifactExcerptV1(prepareArtifactHeaderForBodyV1(input.header, content.body), content.body));
       const body = codec.encode({ body: content.body });
       const response = blob?.content
         ? await axios.post(`${resolveServerHttpBaseUrl()}${ARTIFACT_UPLOAD_PATH_V1}`, Buffer.from(encodeArtifactUploadFrameV1({
@@ -641,4 +643,20 @@ export function createCredentialedAccountArtifactStore(credentials: StoredCreden
     credentials,
     getAccountEncryptionMode: () => accountModeApi.getAccountEncryptionMode(),
   });
+}
+
+/** Layout owners require readable acknowledged content, not the generic create receipt. */
+export function createAcknowledgedAccountArtifactTransport(
+  transport: Pick<ReturnType<typeof createAccountArtifactStore>, 'read' | 'create' | 'update'>,
+): HomeHubArtifactTransportV1 {
+  return {
+    read: transport.read,
+    update: transport.update,
+    create: async input => {
+      const created = await transport.create(input);
+      const acknowledged = await transport.read(created.artifactId, { signal: input.signal });
+      if (!acknowledged) throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
+      return acknowledged;
+    },
+  };
 }

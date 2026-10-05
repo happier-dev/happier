@@ -6830,6 +6830,8 @@ function SessionViewLoadedContent({
     };
     const activeComposerPresentationTarget = useStableComposerPresentationTarget(activeComposerRef, {
         readScope: () => composerPresentationAccountLifetime?.scope ?? null,
+        readAttachmentComposition: () => !composerPluginActionScopeSignal.aborted && composerAttachmentAvailabilityEntriesById
+            ? { composerAttachmentsById: composerAttachmentAvailabilityEntriesById, localize: composerPluginPresentation.localizePluginText } : null,
         readRevision: readActiveComposerPresentationRevision,
         replace: (text, expectedRevision) => {
             const currentRevision = readActiveComposerPresentationRevision();
@@ -6892,6 +6894,8 @@ function SessionViewLoadedContent({
     });
     const sessionComposerPresentationTarget = useStableComposerPresentationTarget(sessionComposerRef, {
         readScope: () => composerPresentationAccountLifetime?.scope ?? null,
+        readAttachmentComposition: () => !composerPluginActionScopeSignal.aborted && composerAttachmentAvailabilityEntriesById
+            ? { composerAttachmentsById: composerAttachmentAvailabilityEntriesById, localize: composerPluginPresentation.localizePluginText } : null,
         readRevision: () => existingSessionComposerOwner.read().revision,
         replace: (text, expectedRevision) => {
             const snapshot = readSessionComposerSnapshot();

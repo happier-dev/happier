@@ -11,6 +11,10 @@
  *   adapters     → presentation + plugin-sdk/ui
  */
 export type { HappierLayoutChangeEvent, HappierTextSelection } from './portableTypes.js';
+export { HappierArtifactPreviewCard, type HappierArtifactPreview, type HappierArtifactPreviewCardProps, type HappierArtifactPreviewCardHost } from './artifacts/ArtifactPreviewCard.js';
+export { HappierHtmlSandboxFrame, type HappierHtmlSandboxFrameProps, type HappierHtmlSandboxFrameHost } from './artifacts/HtmlSandboxFrame.js';
+export { HappierPublicLinkCard, type HappierPublicLinkCardProps } from './artifacts/PublicLinkCard.js';
+export { HappierArtifactRevisionList, type HappierArtifactRevisionListProps, type HappierArtifactRevisionRow } from './artifacts/ArtifactRevisionList.js';
 export { HappierSetupSteps, type HappierSetupStep, type HappierSetupStepsProps } from './content/SetupSteps.js';
 export { HappierFieldStepper } from './form/FieldStepper.js';
 export type { HappierFieldStepperBounds } from './form/fieldValueDraft.js';

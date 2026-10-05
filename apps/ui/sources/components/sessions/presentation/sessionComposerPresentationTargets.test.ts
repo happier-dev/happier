@@ -4,7 +4,7 @@ import type {
     ComposerTransactionV1,
     ComposerTransactionResultV1,
 } from '@happier-dev/protocol';
-import { createActionExecutor, buildComposerReferenceMentionPayloadV1, readHappierStructuredInputV1FromMeta, type PluginProjectionV2, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor, PluginContributesV2Schema, buildComposerReferenceMentionPayloadV1, readHappierStructuredInputV1FromMeta, type PluginProjectionV2, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -20,6 +20,7 @@ import {
 import type { releaseComposerContent, claimComposerContent } from '@/sync/domains/transfers/runtime/transferRuntime';
 import type { PluginUiComposerAttachmentProjection } from '@/sync/domains/plugins/ui/projection';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { renderHook } from '@/dev/testkit';
 
 const persistentValues = vi.hoisted(() => new Map<string, string>());
 const activeScopeState = vi.hoisted(() => ({
@@ -82,12 +83,23 @@ import {
     subscribeComposerPresentationTarget,
     type ComposerPresentationDocumentMutation,
     type ComposerPresentationTarget,
+    useStableComposerPresentationTarget,
 } from './sessionComposerPresentationTargets';
 import { applyCurrentSessionPresentationCommand } from './applyCurrentSessionPresentationCommand';
 import { executePromptPickerOpenAction } from '@/components/sessions/agentInput/commandMenu/promptPickerActionRuntime';
 import { executeComposerIngressAction } from '@/sync/ops/actions/composerIngressActionRuntime';
 import { resolveComposerEntityDrop, type ComposerEntityDropContext } from '@/components/sessions/composer/composerEntityDrop';
 import { buildComposerSnapshotStructuredInputMetaOverrides, placePositionlessComposerReferences } from '@/components/sessions/composer/composerScopeAdapters';
+import { createPluginUiClientExecutableRegistrationIndex } from '@/components/plugins/reactNative/clientExecutableContributions';
+import { triageEntryDragSourceRuntime, TriageEntryDragReferenceV1Schema } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-entity-drag-drop-native';
+import { TriageConfiguredSourceInstanceV1Schema, TriageSourceDescriptorV1Schema } from '@happier-dev/triage-protocol/v1';
+// Cross-owner regression fixtures keep both real implementations live; only
+// configured Source transport answers are supplied at the external boundary.
+import { resolveTriageEntryForDispatch, type TriageEntryDispatchDepsV1 } from '../../../../../../packages/plugins/triage/src/composer/resolveForDispatch';
+import { createTestkitCorpusCollections } from '../../../../../../packages/plugins/triage/src/corpus/testkit/corpusCollections.test-support';
+import { toCorpusStoredValue } from '../../../../../../packages/plugins/triage/src/corpus/collections/rowCodec';
+import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../../../../../../packages/plugins/triage/src/corpus/collections/ids';
+import { testkitSnapshot, testkitViewer } from '../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support';
 
 function createAttachmentProjectionEntry(input: Readonly<{
     pluginId: string;
@@ -213,10 +225,110 @@ function createDocumentTarget(
 }
 
 describe('composer presentation targets', () => {
-    const cleanups: Array<() => void> = [];
+    const cleanups: Array<() => void | Promise<void>> = [];
 
-    afterEach(() => {
-        while (cleanups.length > 0) cleanups.pop()?.();
+    it('admits the real Triage drag value through its current occurrence, stores a host-minted attachment and resolves current context at dispatch', async () => {
+        const scope = { serverId: 'triage-home', accountId: 'triage-account' };
+        activeScopeState.value = scope;
+        const pluginId = 'happier.triage';
+        const occurrenceId = 'triage-live';
+        const index = createPluginUiClientExecutableRegistrationIndex();
+        const target = { artifactId: 'triage-runtime', exportName: 'activate', platform: 'web' as const };
+        const contributes = PluginContributesV2Schema.parse({ dragSources: [{ id: 'entry-reference', title: 'Entry',
+            composerAttachment: 'entry', referenceSchema: TriageEntryDragReferenceV1Schema.jsonSchema,
+            client: { artifactId: target.artifactId, exportName: target.exportName }, platforms: ['web'] }] });
+        const controller = new AbortController();
+        const registration = index.createScope({ pluginId, contributes, target, occurrenceId, pluginVersion: '0.0.0',
+            executionOrigin: null,
+            lifecycle: { signal: controller.signal, isCurrent: () => !controller.signal.aborted } });
+        registration.api.dragSources.register('entry-reference', triageEntryDragSourceRuntime);
+        registration.commit();
+        cleanups.push(() => { void registration.unwind(); });
+        const entry = createAttachmentProjectionEntry({ pluginId, localId: 'entry', typeLabel: 'Entry', occurrenceId });
+        const composition = { composerAttachmentsById: { [entry.id]: entry } };
+        const document = createDocumentTarget(createSnapshot({ ref: { kind: 'newSession', instanceId: 'triage-input' },
+            text: 'Investigate this', selection: { start: 1, end: 4 }, capabilities: { text: true, references: false, attachments: true, submit: true } }));
+        cleanups.push(registerComposerPresentationTarget(document.readCurrent().ref, { ...document, readScope: () => scope, readAttachmentComposition: () => composition }));
+        const source = { id: `${pluginId}/entry-reference`, pluginId, pluginVersion: '0.0.0', occurrenceId, definition: contributes.dragSources[0]! };
+        const projection: PluginProjectionV2 = { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, toolsById: {}, commandsById: {},
+            resourcesById: {}, settingsById: {}, diagnostics: [], familiesById: { dragSources: { family: 'dragSources', entriesById: { [source.id]: source } } } };
+        const reference = { entryRef: { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '42' },
+            sourceInstance: { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },
+            lastKnownLocator: { v: 1, displayPath: 'example/repository #42' }, title: 'Attached title', subtitle: 'example/repository' };
+        const item = { kind: 'plugin', scope, contribution: { pluginId, localId: 'entry-reference' }, reference } as const;
+        const context: ComposerEntityDropContext = { scope, ref: document.readCurrent().ref, snapshot: document.readCurrent(), sessions: [], workspace: null,
+            referenceHost: { projection, machineId: 'machine-a', serverId: scope.serverId, isCurrent: () => true },
+            attachmentComposition: composition, dragSourceReader: index, platform: 'web', preview: { verb: 'Attach', target: 'Composer' }, reason: code => code };
+        const admission = resolveComposerEntityDrop(item, context);
+        expect(admission.status).toBe('allowed');
+        if (admission.status !== 'allowed') return;
+        expect(admission.effect.input).toMatchObject({ attachmentContributor: entry.identity, transaction: { expectedRevision: 1, operations: [{ kind: 'attachment.add', attachmentLocalId: 'entry' }] } });
+        expect(await executeComposerIngressAction({ actionId: 'composer.transaction.apply', input: admission.effect.input,
+            context: { surface: 'ui', serverId: scope.serverId, runtimeAccountId: scope.accountId } })).toMatchObject({ status: 'applied' });
+        expect(document.readCurrent()).toMatchObject({ text: 'Investigate this', selection: { start: 1, end: 4 }, references: [],
+            attachments: [{ instanceId: 'host-created-issue-42', attachment: entry.identity, value: { v: 1, entryRef: reference.entryRef, sourceInstance: reference.sourceInstance } }] });
+        const corpus = createTestkitCorpusCollections();
+        corpus.control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: 'a'.repeat(43), sourceQualifiedId: 'happier.example.source/example-forge', lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
+            configured: TriageConfiguredSourceInstanceV1Schema.parse({ v: 1, instance: reference.sourceInstance, localInstanceKey: 'example/repository',
+                binding: { purpose: 'triage-source', account: { service: { pluginId: 'happier.example.source', localId: 'accounts' }, accountId: 'connected-account' } },
+                configuration: { v: 1, token: 'fixture-routing-token' }, locator: { v: 1, displayLabel: 'example/repository' } }) }));
+        const getHandle = Object.freeze({ transport: 'source-get' });
+        // Branded targeted-operation handles are created outside this process;
+        // this fixture supplies that boundary while keeping resolution real.
+        const admitted = [{ contributor: { pluginId: 'happier.example.source', contributionId: 'example-forge', immutableGenerationId: 'source-current' },
+            descriptor: TriageSourceDescriptorV1Schema.parse({ v: 1, purpose: 'triage-source', displayName: 'Example forge', kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }] }),
+            operations: { listInstances: {}, scan: {}, get: getHandle } }] as unknown as Awaited<ReturnType<TriageEntryDispatchDepsV1['readAdmittedSources']>>;
+        let title = 'Changed before send';
+        const dispatchDeps: TriageEntryDispatchDepsV1 = { sourceInstances: corpus.collections.sourceInstances, sessionLinks: corpus.collections.sessionLinks,
+            readAdmittedSources: async () => admitted,
+            executeGet: async (operation, input) => {
+                expect(operation).toBe(getHandle);
+                expect(input.instance.instance).toEqual(reference.sourceInstance);
+                return { kind: 'present', localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '42' },
+                    locator: reference.lastKnownLocator, snapshot: testkitSnapshot({ title }), viewer: testkitViewer() };
+            } };
+        expect((await resolveTriageEntryForDispatch({ attachments: document.readCurrent().attachments }, dispatchDeps)).attachments[0])
+            .toMatchObject({ status: 'ready', context: expect.stringContaining(title) });
+        title = 'Changed before retry';
+        expect((await resolveTriageEntryForDispatch({ attachments: document.readCurrent().attachments }, dispatchDeps)).attachments[0])
+            .toMatchObject({ status: 'ready', context: expect.stringContaining(title) });
+        expect(resolveComposerEntityDrop(item, { ...context, attachmentComposition: { composerAttachmentsById: { [entry.id]: { ...entry, occurrenceId: 'replacement' } } } }).status).toBe('refused');
+        expect(resolveComposerEntityDrop({ ...item, reference: { ...reference, actionId: 'session.send' } }, context).status).toBe('refused');
+        controller.abort();
+        expect(resolveComposerEntityDrop(item, context).status).toBe('refused');
+        activeScopeState.value = { ...scope, accountId: 'replacement-account' };
+        expect(await executeComposerIngressAction({ actionId: 'composer.transaction.apply', input: admission.effect.input,
+            context: { surface: 'ui', serverId: scope.serverId, runtimeAccountId: scope.accountId } })).toEqual({ status: 'composerUnavailable' });
+        expect(document.readCurrent().attachments).toHaveLength(1);
+    });
+
+    it('admits attachment selection only from the exact mounted current composition without changing text or selection', async () => {
+        const scope = { serverId: 'attachment-home', accountId: 'attachment-account' };
+        activeScopeState.value = scope;
+        const entry = createAttachmentProjectionEntry({ pluginId: 'acme.issues', localId: 'issue', typeLabel: 'Issue', valueValidator: value => !!value && typeof value === 'object' && 'issueId' in value });
+        const document = createDocumentTarget(createSnapshot({ ref: { kind: 'newSession', instanceId: 'attachment-input' }, text: 'Keep this text', selection: { start: 2, end: 5 } }));
+        let composition: Readonly<{ composerAttachmentsById: Readonly<Record<string, PluginUiComposerAttachmentProjection>> }> | null = { composerAttachmentsById: { [entry.id]: entry } };
+        const hook = await renderHook(() => useStableComposerPresentationTarget(document.readCurrent().ref, {
+            ...document, readScope: () => scope, readAttachmentComposition: () => composition,
+        }));
+        cleanups.push(() => hook.unmount());
+        cleanups.push(registerComposerPresentationTarget(document.readCurrent().ref, hook.getCurrent()));
+        const input = { scope, ref: document.readCurrent().ref, attachmentContributor: entry.identity, transaction: { expectedRevision: 1, operations: [{
+            kind: 'attachment.add', attachmentLocalId: 'issue', value: { key: 'issue-42', value: { issueId: '42' }, presentation: { label: 'Issue 42' } },
+        }] } };
+        const execute = (value: unknown) => executeComposerIngressAction({ actionId: 'composer.transaction.apply', input: value,
+            context: { surface: 'ui', serverId: scope.serverId, runtimeAccountId: scope.accountId } });
+        expect(await execute(input)).toEqual({ status: 'applied', revision: 2, attachmentInstanceIds: ['host-created-issue-42'] });
+        expect(document.readCurrent()).toMatchObject({ text: 'Keep this text', selection: { start: 2, end: 5 }, attachments: [{
+            instanceId: 'host-created-issue-42', attachment: entry.identity, value: { issueId: '42' },
+        }] });
+        composition = null;
+        expect(await execute({ ...input, transaction: { ...input.transaction, expectedRevision: 2 } })).toMatchObject({ status: 'invalidOperation' });
+        expect(document.readCurrent().revision).toBe(2);
+    });
+
+    afterEach(async () => {
+        while (cleanups.length > 0) await cleanups.pop()?.();
         releaseComposerContentSpy
             .mockReset()
             .mockImplementation(async () => ({ success: true } as const));

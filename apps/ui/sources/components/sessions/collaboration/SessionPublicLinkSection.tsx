@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierPublicLinkCard } from '@happier-dev/plugin-ui/presentation';
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
@@ -34,74 +35,9 @@ const QR_SIZE_PX = 168;
  */
 const LazyQRCode = React.lazy(() => import('@/components/qr/QRCode').then((module) => ({ default: module.QRCode })));
 
-const styles = StyleSheet.create((theme) => ({
-    card: {
-        marginHorizontal: 12,
-        marginBottom: 12,
-        padding: 12,
-        gap: 10,
-        borderRadius: 12,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-    },
-    top: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    title: {
-        ...Typography.default('semiBold'),
-        ...ITEM_TITLE_TEXT_METRICS.compact,
-        color: theme.colors.text.primary,
-        flex: 1,
-    },
-    status: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-    statusText: {
-        ...Typography.default('semiBold'),
-        ...ITEM_SUBTITLE_TEXT_METRICS.compact,
-        color: theme.colors.text.secondary,
-    },
-    statusOn: { color: theme.colors.state.success.foreground },
-    url: {
-        minHeight: 34,
-        paddingLeft: 10,
-        paddingRight: 4,
-        borderRadius: 9,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-    },
-    urlText: {
-        ...Typography.mono(),
-        ...ITEM_SUBTITLE_TEXT_METRICS.compact,
-        color: theme.colors.text.primary,
-        flex: 1,
-        minWidth: 0,
-    },
-    meta: {
-        ...Typography.default(),
-        ...ITEM_SUBTITLE_TEXT_METRICS.compact,
-        color: theme.colors.text.secondary,
-    },
-    actions: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-    grow: { flex: 1 },
-    qr: { alignItems: 'center', paddingVertical: 4 },
-    options: { gap: 10 },
-    optionLabel: {
-        ...Typography.default('semiBold'),
-        ...ITEM_SUBTITLE_TEXT_METRICS.compact,
-        color: theme.colors.text.secondary,
-    },
-    optionGroup: { gap: 6 },
-    consent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    consentText: { flex: 1, minWidth: 0, gap: 2 },
-    consentTitle: {
-        ...Typography.default(),
-        ...ITEM_TITLE_TEXT_METRICS.compact,
-        color: theme.colors.text.primary,
-    },
+const styles = StyleSheet.create({
     line: { marginHorizontal: 4 },
-}));
+});
 
 type Expiry = '7' | '30' | 'never';
 type Uses = 'unlimited' | '10' | '50';
@@ -326,20 +262,33 @@ export function SessionPublicLinkCard(props: Readonly<{
 
     const on = publicShare !== null;
     return (
-        <View testID={props.testID} style={styles.card}>
-            <View style={styles.top}>
-                <Icon name="link" size={15} color={theme.colors.text.secondary} />
-                <Text style={styles.title}>{t('session.sharing.publicLink')}</Text>
-                {on || props.loaded ? (
-                    <View style={styles.status}>
-                        {on ? <StatusDot color={theme.colors.state.success.foreground} size={6} /> : null}
-                        <Text testID="session-public-link-status" style={[styles.statusText, on ? styles.statusOn : null]}>
-                            {on ? t('session.collaboration.pane.linkOn') : t('session.collaboration.pane.linkOff')}
-                        </Text>
-                    </View>
-                ) : null}
-            </View>
-            {props.failed ? (
+        <HappierPublicLinkCard
+            testID={props.testID}
+            published={on}
+            loaded={props.loaded}
+            configuring={configuring}
+            shareUrl={shareUrl}
+            title={t('session.sharing.publicLink')}
+            status={on ? t('session.collaboration.pane.linkOn') : t('session.collaboration.pane.linkOff')}
+            hiddenLabel={t('session.collaboration.pane.linkHidden')}
+            detail={publicShare ? describeSessionPublicLink(publicShare, props.grantsLabel) : ''}
+            description={props.description ?? t('session.sharing.publicLinkDescription')}
+            expiresLabel={t('session.sharing.expiresIn')}
+            usesLabel={t('session.sharing.maxUsesLabel')}
+            consentTitle={t('session.sharing.requireConsent')}
+            consentDescription={t('session.sharing.requireConsentDescription')}
+            replacementNote={t('session.collaboration.pane.newLinkReplaces')}
+            colors={{ border: theme.colors.border.default, inset: theme.colors.surface.inset, surface: theme.colors.surface.base,
+                text: theme.colors.text.primary, secondary: theme.colors.text.secondary, success: theme.colors.state.success.foreground }}
+            typography={{ title: { ...Typography.default('semiBold'), ...ITEM_TITLE_TEXT_METRICS.compact },
+                subtitle: { ...Typography.default(), ...ITEM_SUBTITLE_TEXT_METRICS.compact },
+                emphasizedSubtitle: { ...Typography.default('semiBold'), ...ITEM_SUBTITLE_TEXT_METRICS.compact },
+                mono: { ...Typography.mono(), ...ITEM_SUBTITLE_TEXT_METRICS.compact },
+                consentTitle: { ...Typography.default(), ...ITEM_TITLE_TEXT_METRICS.compact } }}
+            Text={Text}
+            linkMark={<Icon name="link" size={15} color={theme.colors.text.secondary} />}
+            statusMark={<StatusDot color={theme.colors.state.success.foreground} size={6} />}
+            notices={<>{props.failed ? (
                 <SurfaceStateCard
                     testID="session-public-link-retry"
                     size="line"
@@ -358,141 +307,97 @@ export function SessionPublicLinkCard(props: Readonly<{
                     title={`${t('approvals.title')} · ${t('approvals.status.open')}`}
                     action={{ label: t('approvals.title'), onPress: props.onOpenPendingApproval }}
                 />
+            ) : null}</>}
+            copyFeedback={<CopiedPill visible={copyFeedback.isCopied('public-link')} testID="session-public-link-copy-feedback" />}
+            copyControl={<ToolbarButton
+                testID="session-public-link-copy"
+                label={t('common.copy')}
+                icon={<Icon name="copy" size={14} color={theme.colors.text.secondary} />}
+                onPress={() => { void copy(); }}
+            />}
+            qr={showQr && shareUrl ? (
+                <React.Suspense fallback={<ActivitySpinner size="small" />}>
+                    <LazyQRCode data={shareUrl} size={QR_SIZE_PX} />
+                </React.Suspense>
             ) : null}
-            {on && !configuring ? (
-                <>
-                    {shareUrl ? (
-                        <View style={styles.url}>
-                            <Text testID="session-public-link-url" style={styles.urlText} numberOfLines={1} selectable>{shareUrl}</Text>
-                            <CopiedPill visible={copyFeedback.isCopied('public-link')} testID="session-public-link-copy-feedback" />
-                            <ToolbarButton
-                                testID="session-public-link-copy"
-                                label={t('common.copy')}
-                                icon={<Icon name="copy" size={14} color={theme.colors.text.secondary} />}
-                                onPress={() => { void copy(); }}
-                            />
-                        </View>
-                    ) : (
-                        <Text testID="session-public-link-hidden" style={styles.meta}>{t('session.collaboration.pane.linkHidden')}</Text>
-                    )}
-                    <Text testID="session-public-link-detail" style={styles.meta}>{describeSessionPublicLink(publicShare, props.grantsLabel)}</Text>
-                    {showQr && shareUrl ? (
-                        <View style={styles.qr} testID="session-public-link-qr-code">
-                            <React.Suspense fallback={<ActivitySpinner size="small" />}>
-                                <LazyQRCode data={shareUrl} size={QR_SIZE_PX} />
-                            </React.Suspense>
-                        </View>
-                    ) : null}
-                    <View style={styles.actions}>
-                        {shareUrl ? (
-                            <ToolbarButton
-                                testID="session-public-link-qr"
-                                label={showQr ? t('session.collaboration.pane.hideQrCode') : t('session.collaboration.pane.qrCode')}
-                                icon={<Icon name="qr-code" size={14} color={theme.colors.text.secondary} />}
-                                active={showQr}
-                                onPress={() => setShowQr((current) => !current)}
-                            />
-                        ) : null}
-                        <ToolbarButton
-                            testID="session-public-link-new"
-                            label={t('session.collaboration.pane.newLink')}
-                            icon={<Icon name="arrow-clockwise" size={14} color={theme.colors.text.secondary} />}
-                            disabled={mutationsDisabled}
-                            onPress={() => setConfiguring(true)}
-                        />
-                        <View style={styles.grow} />
-                        <ToolbarButton
-                            testID="session-public-link-turn-off"
-                            label={t('session.collaboration.pane.turnOff')}
-                            tone="danger"
-                            disabled={mutationsDisabled}
-                            busy={revoking}
-                            onPress={() => { void turnOff(); }}
-                        />
-                    </View>
-                </>
+            qrControl={shareUrl ? (
+                <ToolbarButton
+                    testID="session-public-link-qr"
+                    label={showQr ? t('session.collaboration.pane.hideQrCode') : t('session.collaboration.pane.qrCode')}
+                    icon={<Icon name="qr-code" size={14} color={theme.colors.text.secondary} />}
+                    active={showQr}
+                    onPress={() => setShowQr((current) => !current)}
+                />
             ) : null}
-            {!on && !configuring && props.loaded ? (
-                <>
-                    <Text style={styles.meta}>{props.description ?? t('session.sharing.publicLinkDescription')}</Text>
-                    <View style={styles.actions}>
-                        <ToolbarButton
-                            testID="session-public-link-create"
-                            label={t('session.sharing.createPublicLink')}
-                            tone="primary"
-                            disabled={mutationsDisabled}
-                            onPress={() => setConfiguring(true)}
-                        />
-                    </View>
-                </>
-            ) : null}
-            {configuring ? (
-                <View style={styles.options} testID="session-public-link-options">
-                    <View style={styles.optionGroup}>
-                        <Text style={styles.optionLabel}>{t('session.sharing.expiresIn')}</Text>
-                        <SegmentedTabBar<Expiry>
-                            role="radiogroup"
-                            tabs={[
-                                { id: '7', label: t('session.sharing.days7') },
-                                { id: '30', label: t('session.sharing.days30') },
-                                { id: 'never', label: t('session.sharing.never') },
-                            ]}
-                            activeTabId={expiry}
-                            onSelectTab={setExpiry}
-                            testIDPrefix="session-public-link-expiry"
-                            accessibilityLabel={t('session.sharing.expiresIn')}
-                            disabled={busy}
-                        />
-                    </View>
-                    <View style={styles.optionGroup}>
-                        <Text style={styles.optionLabel}>{t('session.sharing.maxUsesLabel')}</Text>
-                        <SegmentedTabBar<Uses>
-                            role="radiogroup"
-                            tabs={[
-                                { id: 'unlimited', label: t('session.sharing.unlimited') },
-                                { id: '10', label: t('session.sharing.uses10') },
-                                { id: '50', label: t('session.sharing.uses50') },
-                            ]}
-                            activeTabId={uses}
-                            onSelectTab={setUses}
-                            testIDPrefix="session-public-link-uses"
-                            accessibilityLabel={t('session.sharing.maxUsesLabel')}
-                            disabled={busy}
-                        />
-                    </View>
-                    <View style={styles.consent}>
-                        <View style={styles.consentText}>
-                            <Text style={styles.consentTitle}>{t('session.sharing.requireConsent')}</Text>
-                            <Text style={styles.meta}>{t('session.sharing.requireConsentDescription')}</Text>
-                        </View>
-                        <Switch
-                            testID="session-public-link-consent"
-                            accessibilityLabel={t('session.sharing.requireConsent')}
-                            value={consent}
-                            onValueChange={setConsent}
-                            disabled={busy}
-                        />
-                    </View>
-                    {on ? <Text style={styles.meta}>{t('session.collaboration.pane.newLinkReplaces')}</Text> : null}
-                    <View style={styles.actions}>
-                        <View style={styles.grow} />
-                        <ToolbarButton
-                            testID="session-public-link-options-cancel"
-                            label={t('common.cancel')}
-                            disabled={busy}
-                            onPress={() => setConfiguring(false)}
-                        />
-                        <ToolbarButton
-                            testID="session-public-link-options-create"
-                            label={on ? t('session.sharing.regeneratePublicLink') : t('session.sharing.createPublicLink')}
-                            tone="primary"
-                            disabled={mutationsDisabled}
-                            busy={creating}
-                            onPress={() => { void create(); }}
-                        />
-                    </View>
-                </View>
-            ) : null}
-        </View>
+            newControl={<ToolbarButton
+                testID="session-public-link-new"
+                label={t('session.collaboration.pane.newLink')}
+                icon={<Icon name="arrow-clockwise" size={14} color={theme.colors.text.secondary} />}
+                disabled={mutationsDisabled}
+                onPress={() => setConfiguring(true)}
+            />}
+            turnOffControl={<ToolbarButton
+                testID="session-public-link-turn-off"
+                label={t('session.collaboration.pane.turnOff')}
+                tone="danger"
+                disabled={mutationsDisabled}
+                busy={revoking}
+                onPress={() => { void turnOff(); }}
+            />}
+            createControl={<ToolbarButton
+                testID="session-public-link-create"
+                label={t('session.sharing.createPublicLink')}
+                tone="primary"
+                disabled={mutationsDisabled}
+                onPress={() => setConfiguring(true)}
+            />}
+            expiryControl={<SegmentedTabBar<Expiry>
+                role="radiogroup"
+                tabs={[
+                    { id: '7', label: t('session.sharing.days7') },
+                    { id: '30', label: t('session.sharing.days30') },
+                    { id: 'never', label: t('session.sharing.never') },
+                ]}
+                activeTabId={expiry}
+                onSelectTab={setExpiry}
+                testIDPrefix="session-public-link-expiry"
+                accessibilityLabel={t('session.sharing.expiresIn')}
+                disabled={busy}
+            />}
+            usesControl={<SegmentedTabBar<Uses>
+                role="radiogroup"
+                tabs={[
+                    { id: 'unlimited', label: t('session.sharing.unlimited') },
+                    { id: '10', label: t('session.sharing.uses10') },
+                    { id: '50', label: t('session.sharing.uses50') },
+                ]}
+                activeTabId={uses}
+                onSelectTab={setUses}
+                testIDPrefix="session-public-link-uses"
+                accessibilityLabel={t('session.sharing.maxUsesLabel')}
+                disabled={busy}
+            />}
+            consentControl={<Switch
+                testID="session-public-link-consent"
+                accessibilityLabel={t('session.sharing.requireConsent')}
+                value={consent}
+                onValueChange={setConsent}
+                disabled={busy}
+            />}
+            cancelControl={<ToolbarButton
+                testID="session-public-link-options-cancel"
+                label={t('common.cancel')}
+                disabled={busy}
+                onPress={() => setConfiguring(false)}
+            />}
+            submitControl={<ToolbarButton
+                testID="session-public-link-options-create"
+                label={on ? t('session.sharing.regeneratePublicLink') : t('session.sharing.createPublicLink')}
+                tone="primary"
+                disabled={mutationsDisabled}
+                busy={creating}
+                onPress={() => { void create(); }}
+            />}
+        />
     );
 }

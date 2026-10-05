@@ -3,6 +3,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL
     createActionExecutor, ArtifactActionOutputSchemasV1, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, withArtifactExcerptV1,
     isApprovalRequiredByActionsSettings, normalizeActionsSettingsV1, type ActionExecutorContext } from '@happier-dev/protocol';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import * as credentialStorage from '@/auth/storage/tokenStorage';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import type { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest } from '@/sync/domains/artifacts/artifactTypes';
@@ -30,6 +31,55 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 afterEach(() => { runtimeFetch.mockReset(); vi.restoreAllMocks(); });
 
 describe('scoped Account workflow Artifact operations', () => {
+    it.each([
+        ['create', 'credential'], ['update', 'credential'], ['create', 'caller'], ['update', 'caller'],
+    ] as const)('keeps the %s acknowledgement after %s retirement without publishing stale content', async (operation, retirement) => {
+        const previousState = storage.getState();
+        const home = await upsertAndActivateServer({ serverUrl: `https://artifact-retired-${operation}.test`, scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        let retire: Parameters<typeof credentialStorage.subscribeHomeCredentialMutations>[0] | undefined;
+        // Device credential subscription is the retirement boundary; codecs and Account fencing remain real.
+        vi.spyOn(credentialStorage, 'subscribeHomeCredentialMutations').mockImplementation(listener => { retire = listener; return () => {}; });
+        const artifactId = '11111111-1111-4111-8111-111111111111';
+        const caller = new AbortController();
+        const header = { title: 'Acknowledged', kind: 'home-hub-layout.v1', v: 1 };
+        const body = 'acknowledged body';
+        const before: Artifact = { id: artifactId, ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: 'plain',
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent({ title: 'Before' }),
+            body: encodePlainArtifactStoredContent({ body: 'before' }), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        storage.setState({ settingsScope: { serverId: home.id, accountId: 'artifact-account' }, artifacts: {} });
+        runtimeFetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/health' || path === '/v1/auth/ping') return json({});
+            if (path === '/v1/features') return json({ features: {}, capabilities: { accountStoredContentCompatibility: {
+                v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, declarationTransport: 'http-header-and-socket-auth-v1',
+            } } });
+            if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (path === `/v1/artifacts/${artifactId}` && init?.method !== 'POST') return json(before);
+            if (init?.method === 'POST' && (path === '/v1/artifacts' || path === `/v1/artifacts/${artifactId}`)) {
+                if (retirement === 'credential') retire?.({ kind: 'credentials_removed', serverId: home.id, serverUrl: home.serverUrl });
+                else caller.abort();
+                if (operation === 'create') return json({ ...before, header: encodePlainArtifactStoredContent(header),
+                    body: encodePlainArtifactStoredContent({ body }), headerVersion: 2, bodyVersion: 2 });
+                return json({ success: true, headerVersion: 2, bodyVersion: 2 });
+            }
+            throw new Error(`Unexpected route ${path}`);
+        });
+        const account = await captureLazyActionAccountContext(home.id, caller.signal);
+        try {
+            if (operation === 'create') await expect(account.createArtifactDocument({ artifactId, header, body }))
+                .resolves.toMatchObject({ artifactId, revision: { headerVersion: 2, bodyVersion: 2 }, artifact: { rawHeader: header, body } });
+            else await expect(account.updateArtifactDocument({ artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, header, body }))
+                .resolves.toMatchObject({ ok: true, revision: { headerVersion: 2, bodyVersion: 2 } });
+            expect(account.accountLifetime.isCurrent()).toBe(false);
+            expect(storage.getState().artifacts[artifactId]).toBeUndefined();
+            await expect(account.fetchArtifact(artifactId)).rejects.toMatchObject(retirement === 'credential'
+                ? { code: 'action_account_scope_changed' } : { name: 'AbortError' });
+        } finally { account.dispose(); storage.setState(previousState); }
+    });
+
     it('admits a typed binary body through the captured public-link keyholding resource', async () => {
         const home = await upsertAndActivateServer({ serverUrl: 'https://artifact-binary-resource.test', scope: 'tab' });
         const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
@@ -197,11 +247,21 @@ describe('scoped Account workflow Artifact operations', () => {
             const caller = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
             expect(await execute('artifact.create', { artifactId, header: { title: 'First' }, body: 'initial' }, caller))
                 .toEqual({ ok: true, result: { artifactId, revision: { headerVersion: 1, bodyVersion: 1 } } });
+            const openedEnvelope = async () => {
+                const row = stored!;
+                if (mode === 'plain') return decodePlainArtifactStoredContent(row.body!);
+                const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
+                const encryption = await createEncryptionFromAuthCredentials((await TokenStorage.getCredentialsForServerUrl(home.serverUrl))!);
+                const key = await encryption!.decryptEncryptionKey(row.dataEncryptionKey);
+                return new ArtifactEncryption(key!).decryptBody(row.body!);
+            };
+            expect(await openedEnvelope()).toEqual({ body: 'initial', provenance: { savedBy: { kind: 'person', accountId: 'artifact-account' } } });
             expect(stored?.dataEncryptionKey === ARTIFACT_PLAIN_DATA_KEY_MARKER).toBe(mode === 'plain');
             expect(await execute('artifact.get', { artifactId }, caller)).toMatchObject({ ok: true, result: { artifact: { artifactId, body: 'initial', header: { title: 'First' } } } });
             expect(await execute('artifact.list', {}, caller)).toMatchObject({ ok: true, result: { items: [{ artifactId, header: { title: 'First' } }] } });
             expect(await execute('artifact.update', { artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, header: { title: 'Second' }, body: 'changed' }, caller))
                 .toEqual({ ok: true, result: { artifactId, revision: { headerVersion: 2, bodyVersion: 2 } } });
+            expect(await openedEnvelope()).toEqual({ body: 'changed', provenance: { savedBy: { kind: 'person', accountId: 'artifact-account' } } });
             expect(await execute('artifact.update', { artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, header: {}, body: 'stale' }, caller))
                 .toMatchObject({ ok: false, errorCode: 'version_mismatch' });
             expect(await execute('artifact.delete', { artifactId, expectedRevision: { headerVersion: 2, bodyVersion: 2 } }, caller))
@@ -214,7 +274,7 @@ describe('scoped Account workflow Artifact operations', () => {
             storage.setState({ sessions: { 'publication-session': createSessionFixture({ id: 'publication-session', serverId: home.id,
                 metadata: { ...createSessionFixture().metadata!, path: '/workspace', machineId: 'publication-machine' } }) },
                 machineListByServerId: { [home.id]: [createMachineFixture({ id: 'publication-machine' })] } });
-            const download = vi.fn(async (request: { signal?: AbortSignal; destination: { writeBytes: (bytes: Uint8Array) => Promise<void>; close: () => Promise<void> } }) => {
+            const download = vi.fn(async (request: { signal?: AbortSignal | null; destination: { writeBytes: (bytes: Uint8Array) => Promise<void>; close: () => Promise<void> } }) => {
                 await request.destination.writeBytes(new TextEncoder().encode('<h1>Published</h1>'));
                 await request.destination.close();
                 return { ok: true as const, name: 'result.html', sizeBytes: 18 };
@@ -241,6 +301,7 @@ describe('scoped Account workflow Artifact operations', () => {
             expect(download).not.toHaveBeenCalled();
             expect(await publication('artifact.publish_from_file', { path: 'result.html' }, sessionCaller))
                 .toMatchObject({ ok: true, result: { revision: { headerVersion: 1, bodyVersion: 1 }, previewUrl: expect.stringContaining('#d=') } });
+            expect(await openedEnvelope()).toMatchObject({ provenance: { savedBy: { kind: 'agent', accountId: 'artifact-account', sessionId: 'publication-session' } } });
             expect(download).toHaveBeenCalledWith(expect.objectContaining({ serverId: home.id, machineId: 'publication-machine', rootPath: '/workspace', confinedToWorkingDirectory: true }));
             const published = stored;
             const publishedRead = await publication('artifact.get', { artifactId: published!.id }, caller);
@@ -394,31 +455,37 @@ describe('scoped Account workflow Artifact operations', () => {
         });
         const context = await captureLazyActionAccountContext(home.id);
         try {
-            const header = { kind: 'workflow-definition.v1', definitionId: 'workflow-id', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Workflow' } };
+            const workflowBody = (text: string) => JSON.stringify({ kind: 'workflow-definition.v1', definition: { version: 1,
+                defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+                blocks: [{ kind: 'step', id: 'review', document: { text, references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
+            } });
+            const body = workflowBody('Review');
+            const artifactId = '11111111-1111-4111-8111-111111111111';
+            const header = { kind: 'workflow-definition.v1', definitionId: artifactId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Workflow' } };
             const port = context.workflowArtifacts;
-            expect(await port.read('workflow-id')).toBeNull();
-            await port.create({ artifactId: 'workflow-id', header, body: 'definition body' });
-            expect(stored?.id).toBe('workflow-id');
+            expect(await port.read(artifactId)).toBeNull();
+            await port.create({ artifactId, header, body });
+            expect(stored?.id).toBe(artifactId);
             expect(stored?.dataEncryptionKey === ARTIFACT_PLAIN_DATA_KEY_MARKER).toBe(mode === 'plain');
             const encryption = (await context.resolveAccountEncryption()).encryption;
             const key = encryption ? await encryption.decryptEncryptionKey(stored!.dataEncryptionKey) : null;
             const storedHeader = mode === 'plain' ? decodePlainArtifactStoredContent(stored!.header)
                 : await new ArtifactEncryption(key!).decryptHeaderRaw(stored!.header);
-            const expectedHeader = withArtifactExcerptV1(header, 'definition body');
+            const expectedHeader = withArtifactExcerptV1({ ...header, previewSteps: ['Review'] }, body);
             expect(storedHeader).toEqual(expectedHeader);
-            expect(await port.read('workflow-id')).toEqual({ artifactId: 'workflow-id', ownerAccountId: 'artifact-account', access: 'owner', header: expectedHeader, body: 'definition body', revision: { headerVersion: 1, bodyVersion: 1 } });
+            expect(await port.read(artifactId)).toEqual({ artifactId, ownerAccountId: 'artifact-account', access: 'owner', header: expectedHeader, body, revision: { headerVersion: 1, bodyVersion: 1 } });
             const page = await port.list({ limit: 1, cursor: 'incoming-cursor' });
-            expect(page.items[0]).toMatchObject({ artifactId: 'workflow-id', ownerAccountId: 'artifact-account', access: 'owner', header: expectedHeader, headerVersion: 1, updatedAt: 9 });
+            expect(page.items[0]).toMatchObject({ artifactId, ownerAccountId: 'artifact-account', access: 'owner', header: expectedHeader, headerVersion: 1, updatedAt: 9 });
             expect(page.nextCursor).toBe(context.encodeArtifactListCursor(page.items[0]!));
             expect(requests.find((url) => url.searchParams.has('cursor'))?.searchParams.get('cursor')).toBe('incoming-cursor');
             expect(requests.find((url) => url.searchParams.has('limit'))?.searchParams.get('limit')).toBe('1');
             const nextHeader = { ...header, revision: { headerVersion: 2, bodyVersion: 2 } };
-            expect(await port.update({ artifactId: 'workflow-id', expectedRevision: header.revision, header: nextHeader, body: 'definition body' })).toEqual({ ok: true, revision: nextHeader.revision });
-            expect(await port.update({ artifactId: 'workflow-id', expectedRevision: header.revision, header: nextHeader, body: 'overwrite' })).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
+            expect(await port.update({ artifactId, expectedRevision: header.revision, header: nextHeader, body })).toEqual({ ok: true, revision: nextHeader.revision });
+            expect(await port.update({ artifactId, expectedRevision: header.revision, header: nextHeader, body: workflowBody('Overwrite') })).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
             await expect(port.read('transport-error')).rejects.toMatchObject({ status: 403 });
             await expect(port.read('locked')).rejects.toMatchObject({ code: 'content_unavailable' });
-            expect(await port.delete('workflow-id')).toEqual({ ok: true });
-            expect(await port.read('workflow-id')).toBeNull();
+            expect(await port.delete(artifactId)).toEqual({ ok: true });
+            expect(await port.read(artifactId)).toBeNull();
         } finally { context.dispose(); }
     });
 });

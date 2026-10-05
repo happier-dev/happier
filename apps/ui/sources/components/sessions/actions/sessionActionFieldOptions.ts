@@ -7,10 +7,10 @@ import type { InputTypePickerHostContext } from './InputTypePickerHostProvider';
 
 export type InputFieldOptionsContext = Readonly<{ actionId?: string; consumer?: InputOptionsConsumerV1; draftInput?: Readonly<Record<string, unknown>> }>;
 export type ResolveSessionActionFieldOptions = ((
-    field: Pick<ActionInputFieldHint, 'optionsSourceId' | 'options' | 'inputType'> & { path?: string },
+    field: Pick<ActionInputFieldHint, 'optionsSourceId' | 'options' | 'inputType' | 'connectedAccountOptions'> & { path?: string },
     context?: InputFieldOptionsContext,
 ) => readonly ActionFieldOption[]) & Readonly<{
-    state?: (field: Pick<ActionInputFieldHint, 'path' | 'optionsSourceId' | 'options' | 'inputType'>, context?: InputFieldOptionsContext) => InputFieldOptionsState;
+    state?: (field: Pick<ActionInputFieldHint, 'path' | 'optionsSourceId' | 'options' | 'inputType' | 'connectedAccountOptions'>, context?: InputFieldOptionsContext) => InputFieldOptionsState;
     retry?: () => void;
     pickerContext?: InputTypePickerHostContext;
 }>;

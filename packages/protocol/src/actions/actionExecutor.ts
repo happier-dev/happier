@@ -5068,6 +5068,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const field = await resolveInputOptionsConsumerField({ consumer, fieldPath, deps, context: ctx });
             if (!field) return { ok: false, errorCode: 'input_type_consumer_unavailable', error: 'input_type_consumer_unavailable' };
             if ('ok' in field) return field;
+            if (field.connectedAccountOptions && consumer.kind === 'widget') {
+              const options = await deps.widgetConnectedAccountOptions?.({ consumer, fieldPath, context: ctx });
+              if (!options) return { ok: false, errorCode: 'widget_connected_account_options_unavailable', error: 'widget_connected_account_options_unavailable' };
+              if ('ok' in options) return options;
+              return { ok: true, result: { actionId: consumingActionId, fieldPath, optionsSourceId: null,
+                options: filterResolvedActionOptions([...options], data) } };
+            }
             const staticOptions = serializeActionFieldOptions(field);
             if (staticOptions.length > 0) return { ok: true, result: { actionId: consumingActionId, fieldPath,
               optionsSourceId: null, options: filterResolvedActionOptions(staticOptions, data) } };

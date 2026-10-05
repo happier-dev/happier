@@ -3,7 +3,7 @@ import { ArtifactHeader, ArtifactBody } from '../domains/artifacts/artifactTypes
 import { AES256Encryption } from './encryptor';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
-import { ArtifactBodyV1Schema } from '@happier-dev/protocol';
+import { ArtifactBodyEnvelopeV1Schema } from '@happier-dev/protocol';
 
 const ARTIFACT_HEADER_DEFAULT_VERSION = 1;
 const ARTIFACT_HEADER_MAX_VERSION = 1;
@@ -150,8 +150,8 @@ export class ArtifactEncryption {
             if (typeof body !== 'object' || body === null || Array.isArray(body)) {
                 return null;
             }
-            const parsed = ArtifactBodyV1Schema.nullable().safeParse(Reflect.get(body, 'body'));
-            return parsed.success ? { body: parsed.data } : null;
+            const parsed = ArtifactBodyEnvelopeV1Schema.safeParse(body);
+            return parsed.success ? parsed.data : null;
         } catch (error) {
             console.error('Failed to decrypt artifact body:', error);
             return null;

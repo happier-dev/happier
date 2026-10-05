@@ -3,7 +3,7 @@ import type { ComposerRefV1, ActionId } from '@happier-dev/protocol';
 import type { EntityDragKindV1, EntityDragScopeV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 import { useEntityDragDropRuntime, useEntityDropTarget, useEntityDropTargetState, TreeDropOutline,
     type WindowBounds } from '@/components/ui/treeDragDrop';
-import { readMountedComposerPresentationSnapshot } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { readMountedComposerPresentationSnapshot, readMountedComposerAttachmentComposition } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { readComposerSessionSuggestionItems } from '@/sync/domains/input/suggestionSession';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
@@ -16,6 +16,8 @@ import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/
 import { resolveDestinationRefFromHref } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
+import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
+import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 
 export function describeComposerEntityDropReason(code: string): string {
     if (code === 'scopeMismatch') return t('entityDragDrop.surface.scopeMismatch');
@@ -39,6 +41,11 @@ export function ComposerEntityDropTarget(props: Readonly<{
     const runtime = useEntityDragDropRuntime();
     const navigation = useOptionalWorkspaceNavigation();
     const executor = React.useMemo(() => createDefaultActionExecutor(), []);
+    const platform = resolvePluginUiClientExecutablePlatform();
+    const projection = props.referenceHost?.projection ?? null;
+    // Carry frames reuse the canonical normalized map; they do not normalize
+    // every plugin family or recompile attachment schemas while hovering.
+    const dragSources = React.useMemo(() => normalizePluginUiProjection(projection, platform).dragSourcesById, [projection, platform]);
     const acceptedKinds: EntityDragKindV1[] = [];
     if (props.kinds.includes('session')) acceptedKinds.push('session');
     if (props.kinds.includes('file')) acceptedKinds.push('repository-file', 'destination');
@@ -48,6 +55,9 @@ export function ComposerEntityDropTarget(props: Readonly<{
                 acceptedKinds.push(`plugin:${record.contribution.pluginId}/${record.contribution.localId}`);
             }
         }
+    }
+    for (const source of Object.values(dragSources)) {
+        if (source.definition.composerAttachment) acceptedKinds.push(`plugin:${source.pluginId}/${source.definition.id}`);
     }
     const isCurrent = () => {
         const current = getActiveServerAccountScope();
@@ -69,6 +79,9 @@ export function ComposerEntityDropTarget(props: Readonly<{
                 }) : [],
                 workspace: props.fileScope ?? (sessionId ? resolveWorkspaceTargetForSession({ serverId: props.scope.serverId, sessionId }) : null),
                 referenceHost: props.referenceHost,
+                platform,
+                dragSources,
+                attachmentComposition: readMountedComposerAttachmentComposition({ scope: props.scope, ref: props.refValue }),
                 resolveDestinationFile: href => {
                     if (!navigation?.catalog) return null;
                     const destination = resolveDestinationRefFromHref(navigation.catalog, href);

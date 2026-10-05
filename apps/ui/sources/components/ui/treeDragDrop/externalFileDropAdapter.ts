@@ -10,7 +10,9 @@ export type WebFileDragEvent = Readonly<{
     target?: EventTarget | null;
     currentTarget?: EventTarget | null;
     relatedTarget?: EventTarget | null;
-    nativeEvent?: object;
+    clientX?: number;
+    clientY?: number;
+    nativeEvent?: object & Readonly<{ clientX?: number; clientY?: number }>;
     preventDefault?: () => void;
     stopPropagation?: () => void;
 }>;
@@ -57,11 +59,32 @@ let depth = 0;
 let bindingCount = 0;
 let cancelled = false;
 let detachCancellation: (() => void) | null = null;
+export type ExternalFileDragPointer = Readonly<{ x: number; y: number }> | null;
+let pointer: ExternalFileDragPointer = null;
+const pointerListeners = new Set<() => void>();
+
+/** A presentation projection of this boundary's active drag, not another drag lifecycle. */
+export const readExternalFileDragPointer = () => pointer;
+export function subscribeExternalFileDragPointer(listener: () => void) {
+    pointerListeners.add(listener);
+    return () => { pointerListeners.delete(listener); };
+}
+function projectPointer(next: ExternalFileDragPointer) {
+    if (pointer?.x === next?.x && pointer?.y === next?.y) return;
+    pointer = next;
+    pointerListeners.forEach(listener => listener());
+}
+function projectEventPointer(event: WebFileDragEvent) {
+    const x = event.clientX ?? event.nativeEvent?.clientX;
+    const y = event.clientY ?? event.nativeEvent?.clientY;
+    if (typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y)) projectPointer({ x, y });
+}
 
 function retire() {
     const previous = active;
     active = null;
     depth = 0;
+    projectPointer(null);
     previous?.read().onFileDragActiveChange?.(false);
 }
 
@@ -125,6 +148,7 @@ export function createExternalFileDropBinding(read: () => ExternalFileDropTarget
                 cancelled = false;
                 if (!read().enabled) { retire(); return; }
                 activate(binding);
+                projectEventPointer(event);
                 depth += 1;
             },
             onDragLeave(event: WebFileDragEvent) {
@@ -148,6 +172,7 @@ export function createExternalFileDropBinding(read: () => ExternalFileDropTarget
                     return;
                 }
                 activate(binding);
+                projectEventPointer(event);
                 if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
             },
             onDrop(event: WebFileDragEvent) {

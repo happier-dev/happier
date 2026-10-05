@@ -66,6 +66,10 @@ describe('hosted public React drag primitives', () => {
         await vi.waitFor(() => expect(runtime.getSnapshot().outcome).toEqual({ status: 'applied' }));
         expect(writes).toEqual([{ issue: 'x' }]);
         buttons().find(button => button.textContent === 'Issue')!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+        expect(runtime.getSnapshot().phase).not.toBe('carrying');
+        element.focus();
+        expect(document.activeElement).toBe(element);
+        element.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
         await vi.waitFor(() => expect(runtime.getSnapshot().phase).toBe('carrying'));
         expect(writes).toHaveLength(1);
         element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));

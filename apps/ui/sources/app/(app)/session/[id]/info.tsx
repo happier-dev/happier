@@ -109,13 +109,13 @@ import { createSessionActionInfoItemProps } from '@/components/sessions/actions/
 import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { sessionTagKey } from '@/components/sessions/shell/sessionTagUtils';
-import { useSessionListMoveSheet } from '@/components/sessions/shell/move-sheet/useSessionListMoveSheet';
-import type { SessionListMoveSheetTarget } from '@/components/sessions/shell/move-sheet/buildSessionListMoveSheetTargets';
+import { openSessionFolderSelection } from '@/components/sessions/organization/SessionFolderSelection';
 import {
     buildSessionFolderWorkspaceTargets,
     normalizeSessionFolderWorkspaceRef,
     normalizeSessionFolders,
     type SessionFolderWorkspaceRefV1,
+    type SessionFolderMoveTarget,
 } from '@/sync/domains/session/folders';
 import {
     requireSessionOrganizationMutationScope,
@@ -152,11 +152,6 @@ type RawJsonSnapshot = Readonly<{
     section: RawJsonSectionId;
     code: string;
 }>;
-
-const SESSION_INFO_IDLE_MOVE_RESULT = Object.freeze({
-    instruction: Object.freeze({ kind: 'idle' as const }),
-    visual: Object.freeze({ kind: 'none' as const }),
-});
 
 function SessionMachinePoolOriginItem(props: Readonly<{
     serverId: string | null;
@@ -210,25 +205,23 @@ function resolveSessionInfoWorkspaceRef(
 function buildSessionInfoMoveTargets(params: Readonly<{
     sessionFolders: unknown;
     workspace: SessionFolderWorkspaceRefV1 | null;
-}>): SessionListMoveSheetTarget[] {
+}>): SessionFolderMoveTarget[] {
     if (!params.workspace) return [];
     const normalized = normalizeSessionFolders(params.sessionFolders);
-    const targets: SessionListMoveSheetTarget[] = [{
+    const targets: SessionFolderMoveTarget[] = [{
         id: 'session-info-move-folder:root',
-        kind: 'root',
-        label: t('sessionsList.moveToWorkspaceRoot'),
+        folderId: null,
+        title: t('sessionsList.moveToWorkspaceRoot'),
+        depth: 0,
         disabled: false,
-        result: SESSION_INFO_IDLE_MOVE_RESULT,
     }];
     targets.push(...buildSessionFolderWorkspaceTargets({
         folders: normalized,
         workspace: params.workspace,
-    }).map<SessionListMoveSheetTarget>((folder) => ({
+    }).map<SessionFolderMoveTarget>((folder) => ({
+            ...folder,
             id: `session-info-move-folder:${folder.folderId}`,
-            kind: 'folder' as const,
-            label: folder.title,
             disabled: false,
-            result: SESSION_INFO_IDLE_MOVE_RESULT,
         })));
     return targets;
 }
@@ -289,7 +282,6 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         workspaceRefs: Array.isArray(workspaceRefsV1) ? workspaceRefsV1 : [],
     }), [metadata, sessionServerId, workspaceRefsV1]);
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
-    const { openMoveSheet } = useSessionListMoveSheet();
     const collaborationAdmitted = useSessionCollaborationDestinationAdmitted(sessionServerId ?? '');
     const collaborationTarget = React.useMemo(
         () => normalizeSessionAddress(sessionServerId, session.id),
@@ -778,14 +770,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
 
     const handleMoveToFolder = useCallback(async () => {
         if (!sessionFoldersEnabled || moveTargets.length === 0) return;
-        const selectedTarget = await openMoveSheet({
+        const selectedTarget = await openSessionFolderSelection({
             sourceLabel: sessionName,
             targets: moveTargets,
         });
         if (!selectedTarget) return;
-        const folderId = selectedTarget.kind === 'root'
-            ? null
-            : selectedTarget.id.replace('session-info-move-folder:', '');
+        const folderId = selectedTarget.folderId;
         await executeSessionAction({
             actionId: SESSION_ACTION_MOVE_TO_FOLDER_ID,
             target: sessionActionTarget,
@@ -803,7 +793,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 },
             },
         });
-    }, [getSessionOrganizationMutationScopeOrThrow, moveTargets, openMoveSheet, scopedMutationServerId, session.id, sessionActionTarget, sessionFoldersEnabled, sessionName]);
+    }, [getSessionOrganizationMutationScopeOrThrow, moveTargets, scopedMutationServerId, session.id, sessionActionTarget, sessionFoldersEnabled, sessionName]);
     const [movingToFolder, performMoveToFolder] = useHappyAction(handleMoveToFolder);
 
     const handleStopAndMaybeArchive = useCallback(async () => {

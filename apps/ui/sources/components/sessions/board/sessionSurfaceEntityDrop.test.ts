@@ -28,6 +28,18 @@ function board(widget = false) {
     });
 }
 describe('qualified Session surface entity drops', () => {
+    it('routes a qualified Project-area copy to Board and Companion through the existing movement Action', () => {
+        const ref = { surface: { ...scope, owner: { kind: 'project' as const, projectId: 'portable-source' } }, instanceId: 'configured-one' };
+        const carried: EntityDragItemV1 = { kind: 'widget-area-instance', scope, ref };
+        expect(resolveSessionBoardEntityDrop({ item: carried, scope, address, board: board(), viewId: 'b', preview })).toMatchObject({
+            status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref,
+                to: { surface: { ...scope, owner: { kind: 'sessionBoard', sessionId: address.sessionId } }, tabId: 'b', index: 1 } } },
+        });
+        expect(resolveSessionCompanionEntityDrop({ item: carried, scope, address, board: board(), items: [], ready: true, preview })).toMatchObject({
+            status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref,
+                to: { surface: { ...scope, owner: { kind: 'companion', sessionId: address.sessionId } }, index: 0 } } },
+        });
+    });
     it('moves a WorkBoard configured copy to Board or Companion through the qualified widget Action', () => {
         const carried: EntityDragItemV1 = { kind: 'work-board-widget', scope, boardId: 'launch', instanceId: 'configured-one' };
         const ref = { surface: { ...scope, owner: { kind: 'workBoard', boardId: 'launch' } }, instanceId: 'configured-one' };

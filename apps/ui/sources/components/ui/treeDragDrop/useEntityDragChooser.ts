@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EntityDragCarry, EntityDragDropRuntime, EntityDropDestination } from './entityDragDropTypes';
-import { useEntityDragSourceState } from './entityDragDropHooks';
+import { useEntityDragDestinations, useEntityDragSourceState } from './entityDragDropHooks';
 
 /** Keep one staged carry through async admission and selection; dismiss never dispatches it. */
 export function useEntityDragChooser(runtime: EntityDragDropRuntime, sourceId: string, onApplied?: () => void) {
     const [open, setOpen] = useState(false);
     const state = useEntityDragSourceState(runtime, sourceId);
+    const destinations = useEntityDragDestinations(runtime, sourceId, open && state.phase === 'carrying');
     const carry = useRef<EntityDragCarry | null>(null);
     const applied = useRef(onApplied); applied.current = onApplied;
     const onOpenChange = useCallback((value: boolean) => {
@@ -36,5 +37,5 @@ export function useEntityDragChooser(runtime: EntityDragDropRuntime, sourceId: s
         onOpenChange(true);
         return true;
     }, [onOpenChange]);
-    return { open: open && state.phase === 'carrying', onOpenChange, select, onMenuKeyDown };
+    return { open: open && state.phase === 'carrying', destinations, onOpenChange, select, onMenuKeyDown };
 }

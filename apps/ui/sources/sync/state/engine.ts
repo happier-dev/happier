@@ -33,7 +33,7 @@ export function createUiSessionStateEngine(params: Readonly<{
 	    ) => Promise<unknown>;
 	    metadataPreprocess?: UiSessionStateMetadataPreprocess;
 	    metadataPostprocess?: UiSessionStateMetadataPostprocess;
-	}>) {
+	}>): ReturnType<typeof createSessionStateSyncEngine> {
     const basePort = createUiSessionStateMetadataUpdatePort({
         updateSessionMetadataWithRetry: params.updateSessionMetadataWithRetry,
     });

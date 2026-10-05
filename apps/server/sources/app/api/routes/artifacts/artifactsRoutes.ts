@@ -141,7 +141,8 @@ export function artifactsRoutes(app: Fastify) {
         preHandler: app.authenticate,
         schema: {
             params: z.object({ id: z.string(), bodyVersion: z.coerce.number().int().min(1) }),
-            body: z.object({ header: z.string(), expectedHeaderVersion: z.number().int().min(1), expectedBodyVersion: z.number().int().min(1) }).strict(),
+            body: z.object({ header: z.string(), body: z.string().optional(),
+                expectedHeaderVersion: z.number().int().min(1), expectedBodyVersion: z.number().int().min(1) }).strict(),
             response: {
                 200: z.union([
                     z.object({ success: z.literal(true), headerVersion: z.number(), bodyVersion: z.number() }),
@@ -157,6 +158,7 @@ export function artifactsRoutes(app: Fastify) {
     }, async (request, reply) => {
         const result = await restoreArtifactBodyRevision({ actorUserId: request.userId, artifactId: request.params.id,
             bodyVersion: request.params.bodyVersion, header: privacyKit.decodeBase64(request.body.header),
+            ...(request.body.body !== undefined ? { body: privacyKit.decodeBase64(request.body.body) } : {}),
             expectedRevision: { headerVersion: request.body.expectedHeaderVersion,
                 bodyVersion: request.body.expectedBodyVersion } });
         if (!result.ok) {

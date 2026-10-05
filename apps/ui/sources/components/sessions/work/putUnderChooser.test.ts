@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import type { SessionReportsToEligibilitySnapshot } from '@/sync/ops/relations/sessionReportsToEligibility';
+import { createSessionReportsToEligibilitySnapshot } from '@/sync/ops/relations/sessionReportsToEligibility';
 
 import { describeSessionListDropReason } from '@/components/sessions/shell/dropPreview/sessionListDropPresentation';
 
@@ -19,7 +19,7 @@ describe('buildPutUnderChooserSections (K1c)', () => {
         session('peer', { updatedAt: 3 }),
         session('readonly', { updatedAt: 2 }),
     ].map((item) => [item.id, item]));
-    const facts: SessionReportsToEligibilitySnapshot = {
+    const facts = createSessionReportsToEligibilitySnapshot({
         serverId: 'home', accountId: 'account', sessionId: 'self', currentLeadSessionId: 'lead',
         candidates: [
             { sessionId: 'lead', allowed: true },
@@ -27,7 +27,7 @@ describe('buildPutUnderChooserSections (K1c)', () => {
             { sessionId: 'readonly', allowed: false, reason: 'read' },
         ],
         isCurrent: () => true, dispose: () => {},
-    } as SessionReportsToEligibilitySnapshot;
+    });
 
     it('lists Sessions that cannot take reports in their own section, each with the owner reason', () => {
         const sections = buildPutUnderChooserSections({ sessions, sessionId: 'self', facts, describeName: (s) => s.id });

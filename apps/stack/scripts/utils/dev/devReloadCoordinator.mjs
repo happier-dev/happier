@@ -49,20 +49,21 @@ function normalizeDescriptors(descriptors) {
       target: existing.target === 'shared' || descriptor.target === 'shared' ? 'shared' : existing.target,
       paths: mergedPaths,
       readSignature: () => readDevReloadWatchChangeSignature(mergedPaths),
-      readSignatureAsync: () => readDevReloadWatchChangeSignatureAsync(mergedPaths),
+      readSignatureAsync: (_descriptor, options) => readDevReloadWatchChangeSignatureAsync(mergedPaths, options),
     });
   }
   return Array.from(byId.values());
 }
 
 async function readDescriptorSignaturesAsync(descriptors) {
+  const pathSamples = new Map();
   const pairs = await Promise.all(descriptors.map(async (descriptor) => {
     try {
       const signature = typeof descriptor.readSignatureAsync === 'function'
-        ? await descriptor.readSignatureAsync(descriptor)
+        ? await descriptor.readSignatureAsync(descriptor, { pathSamples })
         : typeof descriptor.readSignature === 'function'
           ? descriptor.readSignature(descriptor)
-          : await readDevReloadWatchChangeSignatureAsync(descriptor.paths);
+          : await readDevReloadWatchChangeSignatureAsync(descriptor.paths, { pathSamples });
       return [descriptor.id, signature ?? null];
     } catch (error) {
       return [descriptor.id, `error:${error instanceof Error ? error.message : String(error)}`];
@@ -178,8 +179,10 @@ export function startDevReloadCoordinator(
 ) {
   if (!enabled) return null;
 
-  const normalizedDescriptors = normalizeDescriptors(descriptors);
   const executorsByTarget = createExecutorMap(executors);
+  const normalizedDescriptors = normalizeDescriptors(descriptors).filter((descriptor) => (
+    Array.from(executorsByTarget.keys()).some((target) => descriptorAffectsTarget(descriptor, target))
+  ));
   if (!normalizedDescriptors.length || !executorsByTarget.size) return null;
 
   const watchPaths = Array.from(new Set(

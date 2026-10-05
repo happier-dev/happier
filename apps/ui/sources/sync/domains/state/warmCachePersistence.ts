@@ -6,6 +6,7 @@ import {
     normalizeLinkedExternalSessionMetadataV1,
     parseSessionRuntimeActivityProjectionFields,
     PluginAgentExternalSessionLinkDataSchema,
+    type PluginAgentExternalSessionLinkData,
     PluginProjectionV2Schema,
     PrimaryTurnStatusV1Schema,
     RuntimeDescriptorV1Schema,
@@ -235,6 +236,8 @@ const EMPTY_PLUGIN_UI_PROJECTION_WARM_CACHE_ENTRIES = EMPTY_WARM_CACHE_ENTRIES a
     PluginUiProjectionCacheEntryV1
 >;
 
+const sessionListExternalSessionLinkDataSchema: z.ZodType<PluginAgentExternalSessionLinkData> = PluginAgentExternalSessionLinkDataSchema;
+
 export const SessionListCacheEntryV1Schema = z.object({
     sessionId: z.string().min(1),
     seq: z.number().int().nonnegative().optional(),
@@ -294,7 +297,7 @@ export const SessionListCacheEntryV1Schema = z.object({
             remoteSessionId: z.string().min(1),
             source: ExternalSessionsSourceSchema,
             runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
-            linkData: PluginAgentExternalSessionLinkDataSchema.optional(),
+            linkData: sessionListExternalSessionLinkDataSchema.optional(),
             codexBackendMode: z.never().optional(),
         }).passthrough(),
     ).nullable().optional(),

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
 
-import { derivePoolUsage, resolvePoolNextMember } from './derivePoolUsage';
+import { derivePoolUsage, resolvePoolManualSwitchSuggestion } from './derivePoolUsage';
 
 const NOW = 1_000_000_000;
 const MIN = 60_000;
@@ -81,29 +81,24 @@ describe('derivePoolUsage', () => {
     });
 });
 
-describe('resolvePoolNextMember', () => {
+describe('resolvePoolManualSwitchSuggestion', () => {
     const members = [
         { accountId: 'work', enabled: true, priority: 100 },
         { accountId: 'personal', enabled: true, priority: 200 },
         { accountId: 'lab', enabled: true, priority: 300 },
         { accountId: 'off', enabled: false, priority: 400 },
     ];
-    const lowest = { work: 42, personal: 6, lab: 96, off: 100 } as Record<string, number | null>;
     const room = { work: 'room', personal: 'room', lab: 'room', off: 'room' } as const;
 
-    it('in order: the next member that is on and not waiting', () => {
-        expect(resolvePoolNextMember({ strategy: 'priority', activeAccountId: 'work', members, roomByAccountId: { ...room, personal: 'waiting' }, lowestRemainingByAccountId: lowest })).toBe('lab');
+    it('skips the current, disabled and waiting members', () => {
+        expect(resolvePoolManualSwitchSuggestion({ activeAccountId: 'work', members, roomByAccountId: { ...room, personal: 'waiting' } })).toBe('lab');
     });
 
-    it('least limited: the member that is on with the most left', () => {
-        expect(resolvePoolNextMember({ strategy: 'least_limited', activeAccountId: 'work', members, roomByAccountId: room, lowestRemainingByAccountId: lowest })).toBe('lab');
-    });
-
-    it('manual: the next member in order, for a switch by hand', () => {
-        expect(resolvePoolNextMember({ strategy: 'manual', activeAccountId: 'work', members, roomByAccountId: room, lowestRemainingByAccountId: lowest })).toBe('personal');
+    it('suggests the first available member in user order, without ranking quota', () => {
+        expect(resolvePoolManualSwitchSuggestion({ activeAccountId: 'work', members, roomByAccountId: room })).toBe('personal');
     });
 
     it('nothing when no other member is on', () => {
-        expect(resolvePoolNextMember({ strategy: 'priority', activeAccountId: 'work', members: members.map((m) => (m.accountId === 'work' ? m : { ...m, enabled: false })), roomByAccountId: room, lowestRemainingByAccountId: lowest })).toBeNull();
+        expect(resolvePoolManualSwitchSuggestion({ activeAccountId: 'work', members: members.map((m) => (m.accountId === 'work' ? m : { ...m, enabled: false })), roomByAccountId: room })).toBeNull();
     });
 });

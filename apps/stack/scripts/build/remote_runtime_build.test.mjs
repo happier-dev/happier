@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ import { WORKSPACE_BUILD_MODE_ENV } from '../../../../scripts/workspaces/ensureW
 import { resolveRemoteCommandPolicy } from '../utils/dev_targets/remote_commands.mjs';
 import { resolveMutagenSessionName } from '../utils/dev_targets/mutagen_project.mjs';
 import { REMOTE_DOCTOR_RUNTIME_TARGET_PREFIX } from '../utils/dev_targets/remote_commands.mjs';
+import { collectRuntimeComponentSourceFingerprints } from './runtime_artifact_identity.mjs';
 
 test('build placement rejects a mismatched worker and accepts an observed matching WSL worker', () => {
   const config = { runtimePlacement: { build: { mode: 'prefer-target', target: 'worker' } }, targets: [
@@ -39,6 +40,7 @@ test('admitted source transfer stays independent of later producer edits and a d
     await writeFile(join(repoDir, 'apps/cli/package.json'), JSON.stringify({ name: '@happier-dev/cli', dependencies: { '@happier-dev/example': '0.0.0' }, bundledDependencies: ['@happier-dev/example'] }));
     await mkdir(join(repoDir, 'packages/example/native/empty'), { recursive: true });
     await writeFile(join(repoDir, 'packages/example/native/addon.node'), Buffer.from([0, 255, 10, 128]));
+    await symlink('addon.node', join(repoDir, 'packages/example/native/current.node'));
     await writeFile(join(repoDir, 'packages/example/tsconfig.json'), JSON.stringify({ extends: './tsconfig.tests.json' }));
     await writeFile(join(repoDir, 'packages/example/tsconfig.tests.json'), JSON.stringify({ compilerOptions: { strict: true } }));
     const input = join(repoDir, 'apps/server/sources/index.ts');
@@ -76,6 +78,20 @@ test('admitted source transfer stays independent of later producer edits and a d
     assert.deepEqual(JSON.parse(await readFile(join(captured, 'packages/example/tsconfig.tests.json'), 'utf8')), { compilerOptions: { strict: true } });
     assert.deepEqual(await readFile(join(captured, 'packages/example/native/addon.node')), Buffer.from([0, 255, 10, 128]));
     assert.equal((await stat(join(captured, 'packages/example/native/empty'))).isDirectory(), true);
+    assert.deepEqual(await collectRuntimeComponentSourceFingerprints({
+      selection: options.selection,
+      sourceMetadata: { ...request.sourceMetadata, repoDir: captured },
+      identityRepoDir: repoDir,
+      includeRuntimeSupportInputs: true,
+    }), request.expectedInputs);
+    await rm(join(captured, 'packages/example/native/current.node'));
+    await symlink('other.node', join(captured, 'packages/example/native/current.node'));
+    assert.notDeepEqual(await collectRuntimeComponentSourceFingerprints({
+      selection: options.selection,
+      sourceMetadata: { ...request.sourceMetadata, repoDir: captured },
+      identityRepoDir: repoDir,
+      includeRuntimeSupportInputs: true,
+    }), request.expectedInputs);
     assert.ok(request.expectedInputs.server);
     assert.equal(request.env[WORKSPACE_BUILD_MODE_ENV], 'qa-runtime');
     assert.notEqual(request.workspaceDir + '/repo', target.repoDir);

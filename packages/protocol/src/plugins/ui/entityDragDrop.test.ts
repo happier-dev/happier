@@ -31,6 +31,17 @@ describe('transient entity identity', () => {
         expect(EntityDragItemV1Schema.safeParse({ ...session, bearerToken: 'secret' }).success).toBe(false);
         expect(EntityDragItemV1Schema.safeParse({ ...session, scope: { ...scope, grant: 'input' } }).success).toBe(false);
     });
+    it('carries only current Project/plugin-area widget references qualified to the carried Account', () => {
+        for (const owner of [{ kind: 'project', projectId: 'source-a' }, { kind: 'pluginArea', pluginId: 'example', pageId: 'overview', area: 'pinned' }]) {
+            const item = { kind: 'widget-area-instance', scope, ref: { surface: { ...scope, owner }, instanceId: 'copy' } };
+            expect(EntityDragItemV1Schema.safeParse(item).success).toBe(true);
+            expect(EntityDragItemV1Schema.safeParse({ ...item, ref: { ...item.ref, surface: { ...item.ref.surface, accountId: 'another' } } }).success).toBe(false);
+            expect(EntityDragItemV1Schema.safeParse({ ...item, ref: { ...item.ref, surface: { ...item.ref.surface, serverId: 'another' } } }).success).toBe(false);
+            expect(EntityDragItemV1Schema.safeParse({ ...item, ref: { ...item.ref, authority: 'editor' } }).success).toBe(false);
+        }
+        expect(EntityDragItemV1Schema.safeParse({ kind: 'widget-area-instance', scope,
+            ref: { surface: { ...scope, owner: { kind: 'home' } }, instanceId: 'copy' } }).success).toBe(false);
+    });
     it('qualifies contributed kinds and rejects executable or OS bytes in JSON references/effects', () => {
         const plugin = { kind: 'plugin', scope, contribution: { pluginId: 'example.entities', localId: 'pull-request' }, reference: { repositoryId: 'repo', number: 4 } };
         const parsed = EntityDragItemV1Schema.parse(plugin);

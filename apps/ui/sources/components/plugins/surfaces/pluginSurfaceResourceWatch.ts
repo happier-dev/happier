@@ -1,4 +1,5 @@
 import {
+    PluginUiArtifactDigestV1Schema,
     PluginUiDisposeHostResourceRequestV1Schema,
     PluginUiResourceSubscriptionRequestV1Schema,
     type PluginUiJsonValueV1,
@@ -100,7 +101,7 @@ type ActiveWatch = {
     readonly resourceId: string;
     readonly deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
     readonly controller: AbortController;
-    lastDigest: PluginSurfaceResourceDigest;
+    lastDigest: PluginSurfaceResourceDigest | null;
     closed: boolean;
     releaseStore?: () => void;
 };
@@ -329,9 +330,16 @@ function createContextualResourceWatchOwner(input: Readonly<{
                     if (snapshot.error) {
                         watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', snapshot.error.code ?? 'plugin_resource_unavailable'));
                         retire(watch.subscriptionId);
-                    } else if (snapshot.digest !== undefined && watch.lastDigest !== snapshot.digest) {
-                        watch.lastDigest = snapshot.digest;
-                        watch.deliver(invalidatedEvent(watch.subscriptionId, snapshot.digest));
+                    } else {
+                        // The generic store admits opaque digests; this strict Protocol crossing does not.
+                        const digest = PluginUiArtifactDigestV1Schema.safeParse(snapshot.digest);
+                        if (!digest.success) {
+                            watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', 'plugin_resource_digest_invalid'));
+                            retire(watch.subscriptionId);
+                        } else if (watch.lastDigest !== digest.data) {
+                            watch.lastDigest = digest.data;
+                            watch.deliver(invalidatedEvent(watch.subscriptionId, digest.data));
+                        }
                     }
                 };
                 watch.releaseStore = entry.subscribe(changed, true);
@@ -342,8 +350,13 @@ function createContextualResourceWatchOwner(input: Readonly<{
                         retire(params.subscriptionId);
                         return { ok: false, terminal: true, reason: snapshot.error?.code ?? 'plugin_resource_unavailable' };
                     }
-                    watch.lastDigest = snapshot.digest ?? null;
-                    return { ok: true, digest: watch.lastDigest };
+                    const digest = PluginUiArtifactDigestV1Schema.safeParse(snapshot.digest);
+                    if (!digest.success) {
+                        retire(params.subscriptionId);
+                        return { ok: false, terminal: true, reason: 'plugin_resource_digest_invalid' };
+                    }
+                    watch.lastDigest = digest.data;
+                    return { ok: true, digest: digest.data };
                 } catch {
                     retire(params.subscriptionId);
                     return { ok: false, terminal: true, reason: 'plugin_resource_aborted' };

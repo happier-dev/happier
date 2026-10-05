@@ -22,6 +22,7 @@ import { testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testki
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import { TESTKIT_LINK_DISPLAY } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { projectTriageDispatchContext, resolveTriageEntryForDispatch } from './resolveForDispatch.js';
+import { triageEntryDragSourceRuntime } from '../ui/list/entryDragDrop.js';
 
 /**
  * Fresh exact resolution immediately before an Agent dispatch
@@ -178,6 +179,24 @@ function attachment(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('resolving an attached Triage entry for dispatch', () => {
+    it('maps the real Collection drag value to identity-only attachment context and reads the current entry at each dispatch', async () => {
+        let title = 'Current first dispatch';
+        const harness = createHarness({ get: async () => ({ kind: 'present', localRef: LOCAL_REF, locator: testkitLocator(), snapshot: testkitSnapshot({ title }), viewer: testkitViewer() }) });
+        const author = triageEntryDragSourceRuntime.toComposerAttachment?.({ entryRef: ENTRY_REF,
+            sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_A }, lastKnownLocator: testkitLocator(),
+            title: 'Stale attach-time title', subtitle: 'example/repository' });
+        expect(author).toBeDefined();
+        expect(author).not.toBeNull();
+        if (!author) return;
+        expect(author.value).not.toHaveProperty('title');
+        const request = { attachments: [{ instanceId: 'host-drag-instance', key: author.key, value: author.value }] };
+        const first = await resolveTriageEntryForDispatch(request, harness.deps);
+        expect(first.attachments[0]).toMatchObject({ status: 'ready', context: expect.stringContaining(title) });
+        title = 'Changed before retry';
+        const second = await resolveTriageEntryForDispatch(request, harness.deps);
+        expect(second.attachments[0]).toMatchObject({ status: 'ready', context: expect.stringContaining(title) });
+        expect(harness.calls).toHaveLength(2);
+    });
     it('preserves every schema-admitted Tier-A fact instead of applying a second 2 KiB projection cap', () => {
         const context = projectTriageDispatchContext({
             entryRef: ENTRY_REF,

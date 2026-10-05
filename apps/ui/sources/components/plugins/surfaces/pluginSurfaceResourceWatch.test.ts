@@ -8,6 +8,7 @@ import type { ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
 import { createElement } from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { useLivePluginResource, type PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
+import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { PluginHostApiProviderInternal } from '../../../../../../packages/plugin-ui/src/hostApi/context';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -18,11 +19,15 @@ import type {
     MachinePluginUiResourceWatchOpenResult,
 } from '@/sync/ops/machineContributionRegistryProjection';
 
-import { createBoundPluginSurfaceController } from './boundPluginSurfaceController';
 import {
     createPluginContextualResourceWatchClient,
     type PluginSurfaceResourceWatchTransport,
 } from './pluginSurfaceResourceWatch';
+
+// The real watch owner remains beneath this genuine daemon RPC boundary.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: async () => { throw new Error('Unexpected daemon RPC in an injected watch transport test'); },
+}));
 
 const surfaceContext: PluginUiSurfaceContextV1 = {
     pluginId: 'acme.preview',
@@ -139,10 +144,11 @@ function createFakeDaemon(): FakeDaemon {
     };
 }
 
-function createMountedSurface(
+async function createMountedSurface(
     daemon: FakeDaemon,
     resourceContext?: PluginResourceContextV1,
 ) {
+    const { createBoundPluginSurfaceController } = await import('./boundPluginSurfaceController');
     const facts = {
         pluginId: surfaceContext.pluginId,
         contributionId: surfaceContext.contributionId,
@@ -181,9 +187,72 @@ function createMountedSurface(
 }
 
 describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
+    it.each(['opaque', 'missing'] as const)('refuses a %s shared Resource digest at the strict watch crossing without narrowing the generic store', async (kind) => {
+        let digest: string | undefined = kind === 'opaque' ? 'opaque-resource-version' : undefined;
+        const externalWatches: { signal: AbortSignal; disposed: boolean }[] = [];
+        const store = createPluginUiResourceStore({ pluginId: 'acme.preview', client: {
+            readResource: async () => {
+                const content = { contentType: 'application/json', digest: digest ?? '', bytes: new TextEncoder().encode('1') };
+                // This genuine external read boundary also supplies a malformed remote payload; no internal store is mocked.
+                if (digest === undefined) Reflect.deleteProperty(content, 'digest');
+                return content;
+            },
+            watchResource: async (_resource, _listener, options) => {
+                if (!options?.signal) throw new Error('Expected the actual store-owned external watch signal');
+                const watch = { signal: options.signal, disposed: false };
+                externalWatches.push(watch);
+                return { dispose() { watch.disposed = true; } };
+            },
+        } });
+        const daemon = createFakeDaemon();
+        const client = createPluginContextualResourceWatchClient({ pluginId: 'acme.preview',
+            resource: { machineId: 'machine-1', expectedCallerOccurrenceId: 'occurrence-7', store },
+            subscriptionIdPrefix: 'shared-digest', transport: daemon.transport });
+        const events: ResourceSubscriptionEvent[] = [];
+        const entry = store.getEntry('live-status');
+        let subscription: Readonly<{ dispose(): void }> | undefined;
+        try {
+            await expect(client.watchResource('live-status', event => { events.push(event); }))
+                .rejects.toMatchObject({ code: 'plugin_resource_digest_invalid', retryable: false });
+            expect(entry.getSnapshot().digest).toBe(digest);
+            expect(entry.getSnapshot().value).toBeDefined();
+            expect(events.filter(event => event.kind === 'invalidated')).toHaveLength(0);
+            expect(externalWatches.length).toBeGreaterThan(0);
+            expect(externalWatches.every(watch => watch.signal.aborted || watch.disposed)).toBe(true);
+
+            events.length = 0;
+            digest = DIGEST_A;
+            await entry.refresh();
+            expect(events).toHaveLength(0);
+            subscription = await client.watchResource('live-status', event => { events.push(event); });
+            expect(subscription).toMatchObject({ admittedDigest: DIGEST_A });
+            await vi.waitFor(() => { expect(externalWatches.filter(watch => !watch.signal.aborted && !watch.disposed)).toHaveLength(1); });
+            events.length = 0;
+            digest = DIGEST_B;
+            await entry.refresh();
+            expect(events).toEqual([expect.objectContaining({ kind: 'invalidated', digest: DIGEST_B })]);
+
+            digest = kind === 'opaque' ? 'next-opaque-version' : undefined;
+            await entry.refresh();
+            expect(events).toHaveLength(2);
+            expect(events[1]).toMatchObject({ kind: 'error', code: 'unavailable', diagnostics: ['plugin_resource_digest_invalid'] });
+            expect(entry.getSnapshot().digest).toBe(digest);
+            expect(entry.getSnapshot().value).toBeDefined();
+            expect(externalWatches.every(watch => watch.signal.aborted || watch.disposed)).toBe(true);
+            events.length = 0;
+            digest = DIGEST_A;
+            await entry.refresh();
+            expect(events).toHaveLength(0);
+            subscription = await client.watchResource('live-status', event => { events.push(event); });
+            expect(subscription).toMatchObject({ admittedDigest: DIGEST_A });
+            expect(daemon.opens).toHaveLength(0);
+        } finally { subscription?.dispose(); store.dispose(); }
+        expect(externalWatches.every(watch => watch.signal.aborted || watch.disposed)).toBe(true);
+    });
+
     it('suspends the actual daemon pump for a retained authored Resource and resumes fresh', async () => {
         const daemon = createFakeDaemon();
-        const mounted = createMountedSurface(daemon);
+        const mounted = await createMountedSurface(daemon);
         let digest = DIGEST_A;
         // Only snapshot RPC bytes are supplied at the external host boundary;
         // subscription admission, registry, store and long-poll pump stay real.
@@ -331,7 +400,7 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
 
     it('forwards the exact host-stamped surface context to a targeted Resource watch', async () => {
         const daemon = createFakeDaemon();
-        const mounted = createMountedSurface(daemon, TARGETED_RESOURCE_CONTEXT);
+        const mounted = await createMountedSurface(daemon, TARGETED_RESOURCE_CONTEXT);
 
         const subscription = await mounted.adapter.api.watchResource(
             'live-status',
@@ -351,7 +420,7 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
 
     it('aborts a targeted Resource watch when its host context retires', async () => {
         const daemon = createFakeDaemon();
-        const mounted = createMountedSurface(daemon, TARGETED_RESOURCE_CONTEXT);
+        const mounted = await createMountedSurface(daemon, TARGETED_RESOURCE_CONTEXT);
         await mounted.adapter.api.watchResource(
             'live-status',
             () => undefined,
@@ -374,7 +443,7 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
     it('aborts a targeted Resource watch establishment when its host context retires', async () => {
         const daemon = createFakeDaemon();
         daemon.parkOpen();
-        const mounted = createMountedSurface(daemon, TARGETED_RESOURCE_CONTEXT);
+        const mounted = await createMountedSurface(daemon, TARGETED_RESOURCE_CONTEXT);
         const pending = mounted.adapter.api.watchResource(
             'live-status',
             () => undefined,
@@ -395,7 +464,7 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
         // a browser-only static, so the composition may not depend on it.
         const daemon = createFakeDaemon();
         daemon.parkOpen();
-        const mounted = createMountedSurface(daemon, TARGETED_RESOURCE_CONTEXT);
+        const mounted = await createMountedSurface(daemon, TARGETED_RESOURCE_CONTEXT);
         const author = new AbortController();
         const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
         Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
@@ -426,7 +495,7 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
 
     it('delivers a daemon invalidation to the author listener through the public host API', async () => {
         const daemon = createFakeDaemon();
-        const mounted = createMountedSurface(daemon);
+        const mounted = await createMountedSurface(daemon);
         const events: ResourceSubscriptionEvent[] = [];
 
         expect(mounted.controller.hostApi.installedMethods).toContain('watchResource');
@@ -460,7 +529,8 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
         mounted.controller.dispose();
     });
 
-    it('does not advertise watchResource on a mount that cannot address the daemon', () => {
+    it('does not advertise watchResource on a mount that cannot address the daemon', async () => {
+        const { createBoundPluginSurfaceController } = await import('./boundPluginSurfaceController');
         const controller = createBoundPluginSurfaceController({
             facts: {
                 pluginId: surfaceContext.pluginId,
@@ -482,7 +552,7 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
 
     it('rejects a cross-plugin subscription before any daemon call', async () => {
         const daemon = createFakeDaemon();
-        const mounted = createMountedSurface(daemon);
+        const mounted = await createMountedSurface(daemon);
         await expect(mounted.adapter.api.watchResource(
             { pluginId: 'other.plugin', localId: 'live-status' },
             () => undefined,
@@ -503,7 +573,7 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
             supported: true,
             result: { ok: false, code: 'plugin_resource_watch_unavailable', reason: 'not_found' },
         });
-        const mounted = createMountedSurface(daemon);
+        const mounted = await createMountedSurface(daemon);
         await expect(mounted.adapter.api.watchResource('packaged-doc', () => undefined))
             .rejects.toMatchObject({ code: 'unavailable' });
         expect(daemon.closes).toHaveLength(0);
@@ -593,7 +663,7 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
 
     it('resynchronizes through a re-open when the daemon no longer knows the subscription', async () => {
         const daemon = createFakeDaemon();
-        const mounted = createMountedSurface(daemon);
+        const mounted = await createMountedSurface(daemon);
         const events: ResourceSubscriptionEvent[] = [];
         await mounted.adapter.api.watchResource('live-status', (event) => { events.push(event); });
 
@@ -619,7 +689,7 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
 
     it('terminates the subscription when the generation the mount is bound to is replaced', async () => {
         const daemon = createFakeDaemon();
-        const mounted = createMountedSurface(daemon);
+        const mounted = await createMountedSurface(daemon);
         const events: ResourceSubscriptionEvent[] = [];
         await mounted.adapter.api.watchResource('live-status', (event) => { events.push(event); });
 

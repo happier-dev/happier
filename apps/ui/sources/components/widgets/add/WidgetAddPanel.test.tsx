@@ -256,11 +256,11 @@ describe('WidgetAddPanel Set up step', () => {
         const original = sections[0]!.entries[0]!;
         const pending = { ...original.setup!(), submit: async () => ({ ok: true as const, approvalPending: true as const }) };
         const screen = await renderPanel({ view: 'gallery', sections: [{ ...sections[0]!, entries: [{ ...original, setup: () => pending }] }] });
-        screen.pressByTestId('add.entry.summary');
+        await act(async () => { screen.pressByTestId('add.entry.summary'); });
         await flushHookEffects({ cycles: 2 });
-        screen.pressByTestId('add.setup.field.period.segment:1');
+        await act(async () => { screen.pressByTestId('add.setup.field.period.segment:1'); });
         await flushHookEffects({ cycles: 2 });
-        screen.pressByTestId('add.setup.submit');
+        await act(async () => { screen.pressByTestId('add.setup.submit'); });
         await flushHookEffects({ cycles: 3 });
         expect(screen.findAllByTestId('add.setup')).toHaveLength(0);
         expect(screen.getTextContent()).toContain('widgetAdd.areaApprovalPending');

@@ -561,10 +561,12 @@ export type ConnectedServiceQuotaLimitSelectionV1 = z.infer<
     typeof ConnectedServiceQuotaLimitSelectionV1Schema
 >;
 
+export const ConnectedServiceAuthGroupStrategyV1Schema = z.enum(['expiry_first', 'priority', 'least_limited', 'manual']);
+
 export const ConnectedServiceAuthGroupPolicyV1Schema = z
     .object({
         v: z.literal(1).default(1),
-        strategy: z.enum(['priority', 'least_limited', 'manual']).default('least_limited'),
+        strategy: ConnectedServiceAuthGroupStrategyV1Schema.default('expiry_first'),
         autoSwitch: z.boolean().default(false),
         // Absence remains false, preserving predecessor persisted policies.
         autoUseQuotaResetsWhenExhausted: z.boolean().optional(),
@@ -608,7 +610,7 @@ export type ConnectedServiceAuthGroupPolicyV1 = z.infer<typeof ConnectedServiceA
 export const ConnectedServiceAuthGroupPolicyPatchV1Schema = z
     .object({
         v: z.literal(1).optional(),
-        strategy: z.enum(['priority', 'least_limited', 'manual']).optional(),
+        strategy: ConnectedServiceAuthGroupStrategyV1Schema.optional(),
         autoSwitch: z.boolean().optional(),
         autoUseQuotaResetsWhenExhausted: z.boolean().optional(),
         autoDisablePlanInvalidAccounts: z.boolean().optional(),

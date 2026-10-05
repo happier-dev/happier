@@ -214,6 +214,35 @@ describe('captureLazyActionAccountContext encryption on demand', () => {
 });
 
 describe('captureActionAccountContext transport authority', () => {
+    it.each(['response', 'release'] as const)('preserves a mutation acknowledgement when retirement arrives during %s', async retirement => {
+        const response = new Response(JSON.stringify({ committed: true }), { status: 200 });
+        if (retirement === 'response') boundary.endpointFetch.mockImplementation(async () => {
+            retireActiveServerAccountScopeLifetime();
+            return response;
+        });
+        else {
+            boundary.endpointFetch.mockResolvedValue(response);
+            boundary.releaseTransport.mockImplementation(async () => { retireActiveServerAccountScopeLifetime(); });
+        }
+        const context = await captureLazyActionAccountContext('home-a');
+        try {
+            await expect(context.request('/v1/artifacts', { method: 'POST', body: '{}' })).resolves.toBe(response);
+            expect(context.accountLifetime.isCurrent()).toBe(false);
+            await expect(context.request('/v1/artifacts', { method: 'POST', body: '{}' })).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+        } finally { context.dispose(); }
+    });
+
+    it('does not return read content when its Account retires while awaiting the response', async () => {
+        boundary.endpointFetch.mockImplementation(async () => {
+            retireActiveServerAccountScopeLifetime();
+            return new Response(JSON.stringify({ private: true }), { status: 200 });
+        });
+        const context = await captureLazyActionAccountContext('home-a');
+        try {
+            await expect(context.request('/v1/artifacts')).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+        } finally { context.dispose(); }
+    });
+
     it('does not retire the mounted Home lifetime while the next Home is only staged', async () => {
         const mountedA = captureActiveServerAccountScopeLifetime();
         expect(mountedA?.isCurrent()).toBe(true);

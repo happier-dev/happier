@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from '@/components/sessions/agentInput/agentInputTestHelpers';
+let AgentInputChipPickerPopover: typeof import('@/components/sessions/agentInput/components/AgentInputChipPickerPopover').AgentInputChipPickerPopover;
 
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
@@ -42,8 +43,8 @@ installAgentInputCommonModuleMocks({
         });
     },
     reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'ios' }, {
             View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
                 React.createElement('View', props, props.children),
             Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -52,7 +53,6 @@ installAgentInputCommonModuleMocks({
                 React.createElement('Pressable', props, props.children),
             ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
                 React.createElement('ScrollView', props, props.children),
-            Platform: { OS: 'web', select: (value: any) => value.default ?? value.web },
             useWindowDimensions: () => ({ width: 900, height: 700 }),
             Dimensions: { get: () => ({ width: 900, height: 700, scale: 1, fontScale: 1 }) },
         });
@@ -123,13 +123,6 @@ vi.mock('@/components/sessions/new/components/NewSessionConnectedServicesSelecti
         });
     },
 }));
-// The popover shell is a platform boundary (portal + window measurement). The
-// option descriptors it is handed are the behaviour under test.
-vi.mock('@/components/sessions/agentInput/components/AgentInputSelectionListPopover', () => ({
-    AgentInputSelectionListPopover: (props: Record<string, unknown>) =>
-        React.createElement('AgentInputSelectionListPopoverStub', props, null),
-}));
-
 vi.mock('@/keyboard', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/keyboard')>();
     return {
@@ -240,21 +233,16 @@ async function renderControls(overrides: Partial<React.ComponentProps<
 
 /** Invokes the option a reader would tap inside the opened picker. */
 function selectOption(screen: Awaited<ReturnType<typeof renderControls>>['screen'], optionId: string) {
-    const popovers = screen.root.findAll(
-        (node) => Boolean(node.props?.open) && node.props?.rootStep !== undefined,
-        { deep: true },
-    );
-    const rootStep = popovers.at(-1)?.props?.rootStep as {
-        sections: Array<{ options: Array<{ id: string; onSelect?: () => void }> }>;
-    } | undefined;
-    if (!rootStep) throw new Error('no open picker');
-    const option = rootStep.sections.flatMap((section) => section.options).find((entry) => entry.id === optionId);
-    if (!option?.onSelect) throw new Error(`option ${optionId} is not selectable`);
-    option.onSelect();
+    const popover = screen.root.findAllByType(AgentInputChipPickerPopover).find(node => node.props.open);
+    if (!popover) throw new Error('no open picker');
+    const option = popover.props.options.find((entry: { id: string }) => entry.id === optionId);
+    if (!option || option.disabled) throw new Error(`option ${optionId} is not selectable`);
+    popover.props.onSelect(optionId);
 }
 
 // Module transform is paid once, outside any single case's time budget.
 beforeAll(async () => {
+    ({ AgentInputChipPickerPopover } = await import('@/components/sessions/agentInput/components/AgentInputChipPickerPopover'));
     await import('./SessionAuthoringControls');
 }, 300_000);
 
@@ -345,14 +333,8 @@ describe('SessionAuthoringControls', () => {
         });
 
         await act(async () => { screen.pressByTestId('session-authoring-control-modelSelection'); });
-        const rootStep = screen.root.findAll(
-            (node) => Boolean(node.props?.open) && node.props?.rootStep !== undefined,
-            { deep: true },
-        ).at(-1)?.props?.rootStep as { sections: Array<{ options: Array<{ id: string }> }> };
-        const modelId = rootStep.sections
-            .flatMap((section) => section.options)
-            .map((option) => option.id)
-            .find((id) => id !== 'default');
+        const picker = screen.root.findAllByType(AgentInputChipPickerPopover).find(node => node.props.open)!;
+        const modelId = (picker.props.options as ReadonlyArray<{ id: string }>).find(option => option.id !== 'default')?.id;
         expect(modelId).toBeTruthy();
 
         await act(async () => { selectOption(screen, modelId as string); });
@@ -772,11 +754,8 @@ describe('SessionAuthoringControls', () => {
             facts: { targetIsWindows: true, windowsTerminalAvailable: false },
         });
         await act(async () => { unavailable.screen.pressByTestId('session-authoring-control-windowsRemoteSessionLaunchMode'); });
-        const unavailableStep = unavailable.screen.root.findAll(
-            (node) => Boolean(node.props?.open) && node.props?.rootStep !== undefined,
-            { deep: true },
-        ).at(-1)?.props?.rootStep as { sections: Array<{ options: Array<{ id: string; disabled?: boolean; subtitle?: string }> }> };
-        expect(unavailableStep.sections.flatMap((section) => section.options).find((option) => option.id === 'windows_terminal'))
+        const unavailablePicker = unavailable.screen.root.findAllByType(AgentInputChipPickerPopover).find(node => node.props.open)!;
+        expect((unavailablePicker.props.options as ReadonlyArray<{ id: string; disabled?: boolean; subtitle?: string }>).find(option => option.id === 'windows_terminal'))
             .toMatchObject({ disabled: true, subtitle: expect.stringContaining('machine.windows.windowsTerminalUnavailableSuffix') });
         await unavailable.screen.unmount();
 

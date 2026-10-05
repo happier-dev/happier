@@ -205,7 +205,7 @@ export const HomeHub = React.memo(function HomeHub() {
             isCurrent: () => { const current = getActiveServerAccountScope(); return current?.serverId === accountScope.serverId && current.accountId === accountScope.accountId; },
         } : null, [accountScope, focused, layout.status, guidance.kind, admitWidgetMovement]);
     const homeDrop = useSessionSurfaceEntityDrag(widgetDrag && surface ? { ...widgetDrag, title: t('common.home'), getItem: () => null,
-        target: { acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget'],
+        target: { acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget', 'widget-area-instance'],
             listDestinations: () => [{ destination: { index: 0 }, label: t('common.home'), group: t('common.home') }],
             resolve: ({ item }) => {
                 const ref = widgetEntitySourceRef(item);

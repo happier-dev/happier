@@ -16,6 +16,7 @@ import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHead
 import type { ConnectedAccountIdentityPresenter } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { getPoolStrategyPresentation } from '@/sync/domains/connectedServices/connectedServicePoolPolicy';
 
 import { ConnectedServiceMark, formatAgentNames } from '../ConnectedServiceMark';
 import type {
@@ -81,12 +82,6 @@ export type ConnectedServicesIndexViewProps = Readonly<{
     /** "New pool" (a menu of services when there are several); absent when no service can hold one. */
     renderNewPool?: ((renderTrigger: (onPress: () => void) => React.ReactElement) => React.ReactNode) | null;
 }>;
-
-function describePoolRule(strategy: string): string {
-    if (strategy === 'least_limited') return t('connectedServicesSettings.poolRuleMostLeft');
-    if (strategy === 'manual') return t('connectedServicesSettings.poolRuleManual');
-    return t('connectedServicesSettings.poolRuleInOrder');
-}
 
 /**
  * All services (lab `csvc` C1 list, C2 grid): the collection's unselected detail. A summary line, then
@@ -176,7 +171,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             subtitle: [
                 sheet.label,
                 t('connectedServicesSettings.accountCount', { count: members.length }),
-                describePoolRule(pool.policy.strategy),
+                getPoolStrategyPresentation(pool.policy.strategy).summary,
             ].join(' · '),
             activeTitle: active?.title ?? null,
             activeSinceMs: since,

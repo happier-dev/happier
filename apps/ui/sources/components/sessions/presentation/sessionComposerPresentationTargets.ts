@@ -161,6 +161,11 @@ type ComposerPresentationAttachmentAuthorityResolver = (input: Readonly<{
     admittedContributor: ComposerPresentationAdmittedContributor | null;
 }>) => ComposerPresentationAttachmentAuthority | null;
 
+export type ComposerPresentationAttachmentComposition = Readonly<{
+    composerAttachmentsById: Readonly<Record<string, PluginUiComposerAttachmentProjection>>;
+    localize?: PluginLocalizedTextResolver;
+}>;
+
 /**
  * Scope-local adapter port. This is deliberately an adapter over incumbent
  * draft owners, not another persisted composer store. The legacy revision /
@@ -185,6 +190,8 @@ export type ComposerPresentationTarget = Readonly<{
      */
     isPresented?: () => boolean;
     readSnapshot?: () => ComposerSnapshotV1;
+    /** Current composition from this mounted input's incumbent plugin presentation owner. */
+    readAttachmentComposition?: () => ComposerPresentationAttachmentComposition | null;
     commitDocument?: (input: Readonly<{
         expectedRevision: number;
         mutation: ComposerPresentationDocumentMutation;
@@ -284,6 +291,9 @@ export function useStableComposerPresentationTarget(
                 } : {}),
                 ...(target.readSnapshot ? {
                     readSnapshot: () => readCurrent().readSnapshot!(),
+                } : {}),
+                ...(target.readAttachmentComposition ? {
+                    readAttachmentComposition: () => readCurrent().readAttachmentComposition?.() ?? null,
                 } : {}),
                 ...(target.commitDocument ? {
                     commitDocument: (input) => readCurrent().commitDocument!(input),
@@ -792,10 +802,7 @@ function readAttachmentTypeLabel(
     return resolved.length > 0 ? resolved : null;
 }
 
-function createAttachmentAuthorityResolver(input: Readonly<{
-    composerAttachmentsById: Readonly<Record<string, PluginUiComposerAttachmentProjection>>;
-    localize?: PluginLocalizedTextResolver;
-}>): ComposerPresentationAttachmentAuthorityResolver {
+function createAttachmentAuthorityResolver(input: ComposerPresentationAttachmentComposition): ComposerPresentationAttachmentAuthorityResolver {
     const authoritiesByQualifiedId = new Map<string, ComposerPresentationAttachmentAuthority>();
     for (const [mapKey, entry] of Object.entries(input.composerAttachmentsById)) {
         const identity = entry.identity;
@@ -1529,15 +1536,33 @@ export function readMountedComposerPresentationSnapshot(request: Readonly<{
     return readScopedMountedComposerTarget(request.ref, request.scope)?.readSnapshot?.() ?? null;
 }
 
+export function readMountedComposerAttachmentComposition(request: Readonly<{
+    ref: ComposerRefV1;
+    scope: ServerAccountScope;
+}>): ComposerPresentationAttachmentComposition | null {
+    try { return readScopedMountedComposerTarget(request.ref, request.scope)?.readAttachmentComposition?.() ?? null; }
+    catch { return null; }
+}
+
 /** Agent/UI parity uses the same transaction core, with actual mounted placement required. */
 export function applyMountedComposerPresentationTransaction(request: ComposerPresentationTransactionRequest & Readonly<{
     scope: ServerAccountScope;
     signal?: AbortSignal;
+    attachmentContributor?: PluginContributionIdentityV1;
 }>): ComposerTransactionResultV1 {
     const target = readScopedMountedComposerTarget(request.ref, request.scope);
     if (!target || request.signal?.aborted) return { status: 'composerUnavailable' };
+    const composition = readMountedComposerAttachmentComposition(request);
+    const selected = request.attachmentContributor;
+    const entry = selected ? composition?.composerAttachmentsById[buildQualifiedPluginContributionKey(selected)] : null;
+    // The request selects a current declaration only. Generation and authority
+    // come from the mounted composition, never from the caller or carry.
+    const admitted = entry && selected && entry.identity.pluginId === selected.pluginId && entry.identity.localId === selected.localId
+        ? { identity: entry.identity, occurrenceId: entry.occurrenceId } : null;
+    const attachmentAuthorityResolver = admitted && composition && entry
+        ? createAttachmentAuthorityResolver({ ...composition, composerAttachmentsById: { [entry.id]: entry } }) : null;
     return applyComposerPresentationTransactionAtOwner({
-        request, target, attachmentAuthorityResolver: null, admittedContributor: null,
+        request, target, attachmentAuthorityResolver, admittedContributor: admitted,
         isTargetCurrent: candidate => !request.signal?.aborted
             && readScopedMountedComposerTarget(request.ref, request.scope) === candidate,
     });

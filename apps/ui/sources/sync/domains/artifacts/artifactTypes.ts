@@ -1,4 +1,4 @@
-import type { ArtifactBodyV1, ArtifactBlobWriteV1 } from '@happier-dev/protocol';
+import type { ArtifactBodyV1, ArtifactBlobWriteV1, ArtifactBodyEnvelopeV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol';
 
 export type ArtifactBodyInput = ArtifactBodyV1 | null | Readonly<{ bytes: Uint8Array; mime: string }>;
 
@@ -51,16 +51,14 @@ export interface ArtifactHeader {
 /**
  * Decrypted artifact body
  */
-export interface ArtifactBody {
-    body: ArtifactBodyV1 | null;
-}
+export type ArtifactBody = ArtifactBodyEnvelopeV1;
 
 export type ArtifactLockedReason =
     | 'encryption_material_unavailable'
     | 'decryption_failed'
     | 'invalid_stored_content';
 
-interface DecryptedArtifactBase {
+export interface DecryptedArtifactBase {
     /** HTTP grant projection; content-only socket events do not carry authority. */
     access?: 'owner' | 'view' | 'edit' | 'admin';
     ownerAccountId?: string;
@@ -72,6 +70,7 @@ interface DecryptedArtifactBase {
     sessions?: string[];  // Optional array of session IDs linked to this artifact
     draft?: boolean;      // Optional draft flag - hides artifact from visible list when true
     body?: ArtifactBodyV1 | null;  // Only loaded when viewing full artifact
+    provenance?: ArtifactRevisionProvenanceV1;
     headerVersion: number;
     bodyVersion?: number;
     seq: number;

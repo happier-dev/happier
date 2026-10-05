@@ -466,6 +466,11 @@ function buildUsageWindowMeter(
         meterId,
         label: resolveClaudeUsageWindowLabel(meterId),
         providerLimitId: meterId,
+        ...(meterId === 'seven_day' || meterId.startsWith('seven_day_')
+            ? { windowDurationMs: 7 * 24 * 60 * 60 * 1000 }
+            : meterId === 'five_hour' || meterId.startsWith('five_hour_')
+                ? { windowDurationMs: 5 * 60 * 60 * 1000 }
+                : {}),
         modelId: window ? readScopedUsageWindowModelId(window) : null,
         used,
         limit,

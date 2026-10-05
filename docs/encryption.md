@@ -1342,6 +1342,17 @@ using the key-holder's kind-owned header projection for the restored body,
 and preserves historical rows subject to the operator's retention count
 (default 10).
 
+The development restore request may additionally carry a key-holder-sealed body
+envelope for the selected revision. Omitting it retains the previous restore
+contract. Plaintext replacements must preserve the selected body content; E2EE
+replacements remain opaque to the Home. Both paths retain the selected blob
+identity and use the existing grant, mode, quota and header/body CAS owner.
+Revision actor/restore metadata inside this envelope is unfinished development
+work: public Artifact links currently expose the live original envelope to their
+key holders, so this metadata must not be described as private from those
+recipients. Its publication treatment requires a product decision before the
+provenance feature can be completed.
+
 The Account encryption transition carries every retained body through the
 same signed Artifact migration item, checking the complete revision set and
 source body bytes before replacing the head, key and history atomically.

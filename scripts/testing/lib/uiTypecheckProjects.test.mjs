@@ -19,6 +19,14 @@ function readProject(name, packageDir = uiDir) {
   return project;
 }
 
+function isSharedDeclaration(file) {
+  if (!file.endsWith('.d.ts')) return false;
+  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+  return !ts.isExternalModule(source) || source.statements.some((statement) =>
+    ts.isModuleDeclaration(statement) && (ts.isStringLiteral(statement.name)
+      || Boolean(statement.flags & ts.NodeFlags.GlobalAugmentation)));
+}
+
 function assertProjectCoverage(packageDir, sourceNames) {
   const original = readProject('tsconfig.json', packageDir);
   const sources = sourceNames.map((name) => readProject(name, packageDir));
@@ -37,7 +45,7 @@ function assertProjectCoverage(packageDir, sourceNames) {
     assert.deepEqual(strictOptions(project.options), strictOptions(original.options));
   }
   assert.deepEqual([...counts.keys()].sort(), [...originalRoots].sort());
-  for (const [file, count] of counts) assert.equal(count, file.endsWith('.d.ts') ? projects.length : 1, file);
+  for (const [file, count] of counts) assert.equal(count, isSharedDeclaration(file) ? projects.length : 1, file);
   for (const source of sources) {
     assert.equal(source.options.composite, true);
     assert.equal(source.options.emitDeclarationOnly, true);
@@ -151,7 +159,9 @@ test('native UI projects redirect direct and transitive imports across the compl
       '--pretty', 'false', ...extra], { encoding: 'utf8', cwd: fixtureDir });
   try {
     const names = ['foundation', 'core', 'source', 'test'];
-    const files = { foundation: ['foundation.ts', 'flags.json'], core: ['left.ts', 'right.ts'],
+    const moduleDeclaration = 'sources/activity/adapters/desktop/runtime/desktopActivityOverlayQaFixtures.d.ts';
+    const downstreamImplementation = 'sources/activity/adapters/desktop/runtime/desktopActivityOverlayBridge.ts';
+    const files = { foundation: ['foundation.ts', 'flags.json'], core: ['left.ts', 'right.ts', downstreamImplementation],
       source: ['entry.ts'], test: ['entry.test.ts'] };
     for (let index = 0; index < names.length; index++) {
       const name = names[index];
@@ -161,15 +171,21 @@ test('native UI projects redirect direct and transitive imports across the compl
         compilerOptions: { ...actual.compilerOptions, types: [], paths: {}, rootDir: '.',
           outDir: `./cache/${name}`, tsBuildInfoFile: `./cache/${name}.tsbuildinfo` },
         ...(index ? { references: [{ path: `./tsconfig.${names[index - 1]}.json` }] } : {}),
-        files: [...files[name], 'ambient.d.ts'], include: [], exclude: [],
+        files: [...files[name], 'ambient.d.ts'],
+        include: name === 'foundation' || name === 'core' ? actual.include
+          : name === 'source' ? [moduleDeclaration] : [], exclude: [],
       }));
     }
     write('ambient.d.ts', 'declare const fixtureAmbient: string;\n');
+    // A module declaration belongs to the downstream source project, not the
+    // shared ambient roots: its type import must not pull core into foundation.
+    write(moduleDeclaration, "import type { bridge } from './desktopActivityOverlayBridge'; export declare const fixtureBridge: typeof bridge;\n");
+    write(downstreamImplementation, "export { left as bridge } from '../../../../../left';\n");
     write('flags.json', '{"enabled":true}');
     write('foundation.ts', "import flags from './flags.json'; export const label: string = 'ok'; export const enabled = flags.enabled;\n");
     write('left.ts', "import { label } from './foundation'; import { right } from './right'; export function left(): string { return label + right; }\n");
     write('right.ts', "import { left } from './left'; export const right: number = 'bad'; export const invoke = () => left();\n");
-    write('entry.ts', "import { left } from './left'; import { label } from './foundation'; export const value = left() + label + fixtureAmbient;\n");
+    write('entry.ts', "import { left } from './left'; import { label } from './foundation'; import { fixtureBridge } from './sources/activity/adapters/desktop/runtime/desktopActivityOverlayQaFixtures'; export const value = left() + label + fixtureAmbient + fixtureBridge();\n");
     write('entry.test.ts', "import { value } from './entry'; import { left } from './left'; import { label } from './foundation'; const result: number = value + left() + label;\n");
     const foundation = run('foundation');
     assert.equal(foundation.status, 0, foundation.stdout + foundation.stderr);

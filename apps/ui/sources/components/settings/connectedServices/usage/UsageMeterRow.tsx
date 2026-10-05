@@ -82,7 +82,7 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
         ? ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remaining({ percent: `${remaining}%` })
         : null;
     const value = left === null
-        ? t('connectedServicesCollection.meterNotReported')
+        ? t('common.unavailable')
         : props.estimated ? t('connectedServicesCollection.meterEstimated', { value: left }) : left;
     const countdown = formatResetCountdown(props.now, props.resetsAt, ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER);
     const relative = countdown === null
@@ -100,7 +100,7 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
         ? props.label
         : remaining !== null && countdown
         ? `${props.label}, ${ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remainingWithReset({ percent: `${remaining}%`, reset: countdown })}`
-        : `${props.label}, ${value}`;
+        : `${props.label}, ${value}${resetAt ? `, ${resetAt}` : ''}`;
     const valueStyle = [
         styles.value,
         remaining === null ? styles.valueUnknown : null,
@@ -148,9 +148,9 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
                     <View style={styles.valuePlaceholder} />
                 </View>
             ) : remaining === null ? (
-                // Not reported: the words take the value and reset columns, so the row keeps its place.
+                // Unknown usage spans both columns so the unavailable label and any reset remain readable.
                 <Text style={[styles.value, styles.valueUnknown, { width: USAGE_METER_METRICS.valueWidthPx + USAGE_METER_METRICS.gapPx + resetWidth, textAlign: 'left' }]} numberOfLines={1}>
-                    {value}
+                    {resetAt ? `${value} · ${resetAt}` : value}
                 </Text>
             ) : (
                 <>

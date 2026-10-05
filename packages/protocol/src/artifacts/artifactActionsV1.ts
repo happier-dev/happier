@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { ArtifactCallerAccessV1Schema } from './artifactAccessV1.js';
 import { StoredContentPublicShareAccessLogResponseV1Schema, StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareV1Schema, StoredContentPublicSharesListResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
-import { ArtifactBodyV1Schema } from './artifactBinaryV1.js';
+import { ArtifactBodyV1Schema, ArtifactRevisionProvenanceV1Schema } from './artifactBinaryV1.js';
 
 /** Ordinary Artifact Action wire epoch V1. Mutation and identity objects are closed. */
 export const ARTIFACT_ACTION_IDS_V1 = [
@@ -82,7 +82,9 @@ export const ArtifactStoredBodyRevisionV1Schema = z.object({
 export const ArtifactRevisionListResponseV1Schema = z.object({
   revisions: z.array(ArtifactStoredBodyRevisionV1Schema), retentionCount: z.number().int().nonnegative(),
 }).strict();
-export const ArtifactBodyRevisionV1Schema = ArtifactStoredBodyRevisionV1Schema.extend({ body: ArtifactBodyV1Schema.nullable() }).strict();
+export const ArtifactBodyRevisionV1Schema = ArtifactStoredBodyRevisionV1Schema.extend({
+  body: ArtifactBodyV1Schema.nullable(), provenance: ArtifactRevisionProvenanceV1Schema.optional(),
+}).strict();
 
 export const ArtifactActionInputSchemasV1 = {
   'artifact.create': ArtifactCreateInputV1Schema,

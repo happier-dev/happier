@@ -154,7 +154,7 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
                     testID={`${testID}:none`}
                     size="line"
                     kind="empty"
-                    title={t('connectedServicesSettings.noLimitsBilledPerUse')}
+                    title={t('common.unavailable')}
                 />
             )}
         </ItemGroup>
@@ -314,8 +314,9 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
     const refresh = quota.refresh;
     const retry = React.useCallback(() => { void refresh(); }, [refresh]);
     const snapshot = quota.snapshot;
+    const now = Date.now();
     const facts: AccountDetailUsageFacts = {
-        meters: snapshot ? projectIndexMeters(snapshot.meters) : [],
+        meters: snapshot ? projectIndexMeters(snapshot.meters, now, pins.pinnedMeterIds) : [],
         fetchedAt: snapshot?.fetchedAt ?? null,
         planLabel: snapshot?.planLabel ?? null,
         subscription,
@@ -325,7 +326,6 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
         refreshing: quota.refreshing,
         refresh: quota.supported === false ? null : retry,
     };
-    const now = Date.now();
     return (
         <AccountDetailFactsSectionsView facts={facts} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={props.legacyServiceId && !props.signedOut ? (
                 <LiveResetsSection

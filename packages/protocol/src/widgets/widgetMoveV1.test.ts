@@ -25,7 +25,7 @@ async function fixture(candidate: WidgetInstanceV1 = instance) {
   const instance = candidate;
   const artifact = createWorkBoardArtifactBoundary();
   const faults: { addRefusal?: boolean; readRefusal?: boolean; lostAddAck?: boolean; lostSourceAck?: boolean; sharedReadOnly?: boolean; beforeAddAck?: () => Promise<void>; beforeRemove?: () => void | Promise<void> } = {};
-  const homeHubArtifacts = createHomeHubArtifactPortV1({ ...artifact.transport,
+  const homeHubArtifacts = createHomeHubArtifactPortV1({ ...artifact.forAccount(home.accountId),
     read: async (id, options) => { const row = await artifact.transport.read(id, options); return row ? { ...row, ownerAccountId: home.accountId } : null; },
     update: async request => { const result = await artifact.transport.update(request); if (result.ok && faults.lostSourceAck) throw new Error('Source lost acknowledgement'); return result; },
   }, { accountId: home.accountId });

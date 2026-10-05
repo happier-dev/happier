@@ -1,6 +1,6 @@
 import { buildQualifiedPluginContributionKey, createActionExecutor, getActionSpec, VoiceTrackedSessionAddressV1Schema, type ActionExecutorDeps, type JsonValue, type PublicActionResultById } from '@happier-dev/protocol';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import { createWidgetActionInputResolverV1, resolveConfiguredWidgetTargetInputV1, resolveWidgetViewerPurposeValuesV1, isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, type WidgetActionInputResolverV1 } from '@happier-dev/protocol/widgets';
+import { createWidgetActionInputResolverV1, resolveConfiguredWidgetTargetInputV1, resolveWidgetViewerPurposeValuesV1, resolveWidgetConnectedAccountOptionsV1, isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, type WidgetActionInputResolverV1 } from '@happier-dev/protocol/widgets';
 import { readInputPath } from '@happier-dev/protocol/inputs';
 import { sameStrictJsonValue } from '@happier-dev/protocol';
 import { storage } from '@/sync/domains/state/storage';
@@ -13,12 +13,34 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 import { readWidgetActionRuntimeV1, readWidgetActionCandidatesV1 } from './widgetCatalogActionDeps';
 import type { LazyActionAccountContext } from './actionAccountContext';
 
-export function createWidgetInputActionDepsV1(account: LazyActionAccountContext | null | undefined, deps: ActionExecutorDeps): Pick<ActionExecutorDeps, 'widgetInputs'> {
+export function createWidgetInputActionDepsV1(account: LazyActionAccountContext | null | undefined, deps: ActionExecutorDeps): Pick<ActionExecutorDeps, 'widgetInputs' | 'widgetConnectedAccountOptions'> {
     if (!account) return {};
     const viewer = { serverId: account.serverId, accountId: account.accountId };
     const isCurrent = () => areServerAccountScopesEqual(getActiveServerAccountScope(), viewer)
         && (account.accountLifetime?.isCurrent() ?? true);
-    const executor = createActionExecutor(deps);
+    const widgetConnectedAccountOptions: NonNullable<ActionExecutorDeps['widgetConnectedAccountOptions']> = async ({ consumer, fieldPath, context }) => {
+        const unavailable = { ok: false as const, errorCode: 'widget_connected_account_options_unavailable', error: 'widget_connected_account_options_unavailable' };
+        account.assertCurrent();
+        if (!isCurrent() || consumer.surface.serverId !== account.serverId || consumer.surface.accountId !== account.accountId) return unavailable;
+        if (consumer.surface.owner.kind === 'sessionBoard') return { ok: false, errorCode: 'widgets_viewer_selection_unavailable', error: 'widgets_viewer_selection_unavailable' };
+        const runtime = await readWidgetActionRuntimeV1(consumer.surface, account, context.signal, consumer.selectedSession);
+        if ('ok' in runtime) return runtime;
+        const reference = consumer.definition;
+        const authored = reference.kind === 'inline' ? reference.definition
+            : reference.kind === 'artifact' ? await deps.widgetDefinitionArtifacts?.get(reference.artifactId, context.signal) : null;
+        if ((reference.kind === 'artifact' || reference.kind === 'inline') && !authored) return unavailable;
+        const definition = authored?.body.kind === 'installed' ? authored.body : reference;
+        const candidate = runtime.candidates.find(candidate => isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), definition));
+        const descriptor = authored && (reference.kind === 'inline' || reference.kind === 'artifact')
+            ? describeAuthoredWidgetDefinitionV1(authored, reference, candidate) : candidate;
+        const profile = storage.getState().profile;
+        account.assertCurrent();
+        context.signal?.throwIfAborted();
+        if (!runtime.isCurrent() || !descriptor || profile?.id !== account.accountId) return unavailable;
+        return resolveWidgetConnectedAccountOptionsV1({ descriptor, resources: Object.values(runtime.projection?.resourcesById ?? {}),
+            profile, path: fieldPath, now: Date.now() }) ?? unavailable;
+    };
+    const executor = createActionExecutor({ ...deps, widgetConnectedAccountOptions });
     type Request = Parameters<WidgetActionInputResolverV1['resolve']>[0];
     const descriptors = new WeakMap<Request, WidgetCandidate>();
     const readContext = (request: Request): Readonly<Record<string, readonly JsonValue[]>> => {
@@ -147,5 +169,5 @@ export function createWidgetInputActionDepsV1(account: LazyActionAccountContext 
             return (getActionSpec('action.options.resolve').outputSchema!.parse(result.result) as PublicActionResultById['action.options.resolve']).options;
         },
     });
-    return { widgetInputs };
+    return { widgetInputs, widgetConnectedAccountOptions };
 }

@@ -1,5 +1,6 @@
 import type { EntityDragItemV1, EntityDropAdmissionV1 } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import type { JsonValue } from './identity.js';
+import type { ComposerAttachmentAuthorValueV1 } from './ui/publicContract.js';
 
 export type {
   EntityDragItemV1,
@@ -21,6 +22,8 @@ export type {
 /** Synchronous client presentation; the host owns source identity and retirement. */
 export interface PluginDragSourceRuntime {
   describe(reference: JsonValue): Readonly<{ title: string; subtitle?: string }> | null;
+  /** Maps to the declared local attachment's author value; the host mints identity and provenance. */
+  toComposerAttachment?(reference: JsonValue): ComposerAttachmentAuthorValueV1 | null;
 }
 
 /** Hover admits an Action request; it cannot execute or grant the Action. */

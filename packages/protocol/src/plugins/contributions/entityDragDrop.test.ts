@@ -8,6 +8,14 @@ const source = { id: 'issue', title: 'Issue', referenceSchema: { type: 'object',
 const target = { id: 'review', title: 'Review', acceptedKinds: ['session', 'plugin:com.acme.entities/issue'], actions: [{ kind: 'host', actionId: 'session.open' }, { kind: 'plugin', action: 'review' }], client, platforms: ['web'] };
 
 describe('declared entity drag/drop contributions', () => {
+  it('admits an exact local composer attachment selection through the canonical catalog', () => {
+    const descriptor = { ...source, composerAttachment: 'entry' };
+    expect(PluginContributesV2Schema.safeParse({ dragSources: [descriptor] }).success).toBe(true);
+    expect(PLUGIN_CONTRIBUTION_CATALOG_V2.find(entry => entry.manifestKey === 'dragSources')?.extractReferences(descriptor)).toContainEqual({
+      targetFamily: 'composerAttachments', reference: 'entry', path: ['composerAttachment'],
+    });
+    expect(PluginContributesV2Schema.safeParse({ dragSources: [{ ...source, composerAttachment: { pluginId: 'other.plugin', localId: 'entry' } }] }).success).toBe(false);
+  });
   it('uses the declared reference schema and exact admitted Action identity', () => {
     const declarations = PluginContributesV2Schema.parse({ dragSources: [source], dropTargets: [target] });
     expect(validatePluginDragSourceReferenceV1(declarations.dragSources[0]!, { issueId: 'one' })).toBe(true);

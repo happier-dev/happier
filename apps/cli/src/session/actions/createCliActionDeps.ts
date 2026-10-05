@@ -186,7 +186,7 @@ import {
 } from '@/api/session/sessionCreationInitialAccess';
 import { getPreferredHostName } from '@/daemon/machine/metadata';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
-import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createCliArtifactActions } from './artifactActions';
 import { createWorkflowDefinitionActions } from './workflowDefinitions';
 import { createCliWorkflowTriggerActions } from './workflowTriggers';
@@ -893,7 +893,7 @@ export function createCliActionDeps(params: Readonly<{
   const homeAccountId = params.credentials ? readAccountIdFromToken(params.credentials.token) : null;
   const todoHomeServerId = params.serverId ?? configuration.activeServerId;
   const todoHomeBaseUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
-  const homeHubArtifactPort = roleArtifactStore && homeAccountId ? createHomeHubArtifactPortV1(roleArtifactStore, {
+  const homeHubArtifactPort = roleArtifactStore && homeAccountId ? createHomeHubArtifactPortV1(createAcknowledgedAccountArtifactTransport(roleArtifactStore), {
     accountId: homeAccountId, readWidgets: signal => readHomeWidgets(signal),
   }) : null;
   const artifactAccessAction = roleArtifactStore ? createArtifactAccessActionsV1({
@@ -2749,11 +2749,11 @@ export function createCliActionDeps(params: Readonly<{
   }) : null;
   const actionDeps: ActionExecutorDeps = {
     ...(roleArtifactStore && homeAccountId ? createCliWidgetAreaActionDepsV1({
-      transport: {
+      transport: createAcknowledgedAccountArtifactTransport({
         read: (id, options) => runWithServerHttpBaseUrl(todoHomeBaseUrl, () => roleArtifactStore.read(id, options)),
         create: args => runWithServerHttpBaseUrl(todoHomeBaseUrl, () => roleArtifactStore.create(args)),
         update: args => runWithServerHttpBaseUrl(todoHomeBaseUrl, () => roleArtifactStore.update(args)),
-      }, scope: { serverId: params.serverId ?? configuration.activeServerId, accountId: homeAccountId },
+      }), scope: { serverId: params.serverId ?? configuration.activeServerId, accountId: homeAccountId },
       // A CLI invocation captures its credentials and explicit Home; only ambient invocations follow active Home changes.
       isCurrent: () => !!params.serverId || configuration.activeServerId === todoHomeServerId,
     }) : {}),

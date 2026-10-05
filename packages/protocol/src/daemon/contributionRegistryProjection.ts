@@ -2630,7 +2630,12 @@ export type PluginProjectionV2 = z.infer<typeof PluginProjectionV2Schema>;
  * The machine-wide describe response. Declared after the projection schemas it
  * carries so the parsed projection is exactly `PluginProjectionV2`.
  */
-export const DaemonContributionRegistryProjectionDescribeResponseSchema = z.object({
+export const DaemonContributionRegistryProjectionDescribeResponseSchema: z.ZodObject<{
+  protocolVersion: z.ZodLiteral<1>;
+  projection: typeof PluginProjectionV2Schema;
+  composerSurfaceCatalog: z.ZodOptional<z.ZodArray<typeof DaemonPluginUiComposerSurfaceCatalogEntryV1Schema>>;
+  automationEligibleEvents: z.ZodOptional<typeof DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema>;
+}, z.core.$loose> = z.object({
   protocolVersion: z.literal(1),
   projection: PluginProjectionV2Schema,
   /**

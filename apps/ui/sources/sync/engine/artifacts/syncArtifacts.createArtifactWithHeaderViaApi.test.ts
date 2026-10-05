@@ -3,12 +3,31 @@ import { describe, expect, it, vi } from 'vitest';
 import { Encryption } from '@/sync/encryption/encryption';
 import type { ArtifactDataKeyCache } from './syncArtifacts';
 import type { ArtifactCreateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { ArtifactBodyV1Schema, decodePlainArtifactStoredContent, encodeBase64, type ArtifactBlobStoredContentV1 } from '@happier-dev/protocol';
+import { ArtifactBodyV1Schema, decodePlainArtifactStoredContent, type ArtifactBlobStoredContentV1 } from '@happier-dev/protocol';
 import { ARTIFACT_UPLOAD_PATH_V1, decodeArtifactUploadMetadataV1 } from '@happier-dev/transfers';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { encodeBase64 } from '@/encryption/base64';
 
 describe('createArtifactWithHeaderViaApi', () => {
+  it('projects Workflow preview labels from generic write content rather than caller-supplied labels', async () => {
+    const artifactId = '11111111-1111-4111-8111-111111111111';
+    const body = JSON.stringify({ kind: 'workflow-definition.v1', definition: { version: 1,
+      defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+      blocks: [{ kind: 'step', id: 'review', document: { text: 'Actual authored step', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
+    } });
+    const request = async (path: string, init?: RequestInit) => {
+      if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+      const input = JSON.parse(String(init?.body)) as ArtifactCreateRequest;
+      expect(decodePlainArtifactStoredContent(input.header)).toMatchObject({ previewSteps: ['Actual authored step'] });
+      return Response.json({ ...input, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 0, updatedAt: 0 });
+    };
+    const { createArtifactWithHeaderViaApi } = await import('./syncArtifacts');
+    await createArtifactWithHeaderViaApi({ credentials: { token: 't' }, artifactId,
+      header: { kind: 'workflow-definition.v1', definitionId: artifactId, revision: { headerVersion: 1, bodyVersion: 1 },
+        metadata: { title: 'Flow' }, previewSteps: ['Stale label'] }, body,
+      encryption: null, artifactDataKeys: new Map(), request, addArtifact: () => {} });
+  });
   it.each(['plain', 'e2ee'] as const)('refuses a reference-only create in %s before any request can persist missing file bytes', async (mode) => {
     const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(9)) : null;
     const artifactDataKeys: ArtifactDataKeyCache = new Map();

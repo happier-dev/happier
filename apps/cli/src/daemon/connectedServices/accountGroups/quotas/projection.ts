@@ -1,6 +1,7 @@
 import type {
   ConnectedServiceQuotaMeterV1,
   ProviderAccountUsageSnapshotV1,
+  ProviderAccountSubscriptionV1,
 } from '@happier-dev/protocol';
 import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
 
@@ -35,10 +36,11 @@ export function normalizeConnectedServiceAuthGroupQuotaMeter(
   meter: ConnectedServiceQuotaMeterV1,
 ): NormalizedQuotaMeter {
   const details = isRecord(meter.details) ? meter.details : {};
+  const meterRecord = meter as unknown as Record<string, unknown>;
   return normalizeQuotaMeter({
     meterId: meter.meterId,
     label: meter.label,
-    limitCategory: readLimitCategory(details.limitCategory),
+    limitCategory: readLimitCategory(meterRecord.limitCategory ?? details.limitCategory),
     remainingPct: meter.remainingPct,
     utilizationPct: meter.utilizationPct,
     used: meter.used,
@@ -72,27 +74,32 @@ export function projectProviderAccountUsageSnapshotToAuthGroupRuntimeState(
   return buildConnectedServiceAuthGroupRuntimeStateFromMeters({
     capturedAtMs: snapshot.fetchedAtMs,
     meters: snapshot.meters,
+    subscription: snapshot.subscription,
   });
 }
 
 export function buildConnectedServiceAuthGroupRuntimeStateFromMeters(input: Readonly<{
   capturedAtMs: number;
   meters: readonly ConnectedServiceQuotaMeterV1[];
+  subscription?: ProviderAccountSubscriptionV1;
 }>): ConnectedServiceAuthGroupMemberRuntimeState {
   const normalizedMeters = input.meters.map(normalizeConnectedServiceAuthGroupQuotaMeter);
   const effectiveMeter = selectEffectiveQuotaMeter(normalizedMeters);
   return {
+    subscription: input.subscription,
     providerResetsAtMs: effectiveMeter?.resetAtMs ?? readProviderResetsAtMs(input),
     quotaSnapshot: {
       capturedAtMs: input.capturedAtMs,
       effectiveMeterId: effectiveMeter?.meterId ?? null,
       effectiveRemainingPercent: effectiveMeter?.remainingPct ?? null,
-      meters: normalizedMeters.map((meter) => ({
+      meters: normalizedMeters.map((meter, index) => ({
         meterId: meter.meterId,
         limitCategory: meter.limitCategory,
         remainingPct: meter.remainingPct,
         resetAtMs: meter.resetAtMs,
         providerLimitId: meter.providerLimitId,
+        windowDurationMs: input.meters[index]?.windowDurationMs ?? null,
+        reliable: meter.reliable && meter.applicable,
       })),
       exhausted: isExhausted(normalizedMeters),
       planUnavailable: input.meters.length > 0 && input.meters.every((meter) => meter.status === 'unavailable'),

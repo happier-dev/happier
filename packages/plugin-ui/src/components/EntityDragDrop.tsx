@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { Platform } from 'react-native';
-import { bindHostedEntityDragSource, bindHostedEntityDropTarget, isSecondaryEntityRowControl } from '@happier-dev/plugin-sdk/ui/client';
+import { bindHostedEntityDragSource, bindHostedEntityDropTarget } from '@happier-dev/plugin-sdk/ui/client';
 import type { PluginHostedEntityDragSourceMount } from '@happier-dev/plugin-sdk/ui/client';
 import type { PluginUiEntityDropDestinationV1 } from '@happier-dev/plugin-sdk/ui';
 
@@ -73,8 +73,8 @@ function HostedDragSource(props: DragSourceProps): ReactElement {
     id: String(index), label: destination.label ?? (destination.admission.status === 'allowed' ? destination.admission.effect.preview.target : destination.admission.reason.message), group: destination.group,
     ...(destination.admission.status === 'refused' ? { refusedReason: destination.admission.reason.message } : {}),
   })) });
-  return <div ref={element} data-testid={props.testID} tabIndex={props.disabled ? undefined : 0} onKeyDown={event => {
-    if ((event.target as Element).closest?.('input,textarea,select,[contenteditable="true"]') || (event.target !== grip.current && isSecondaryEntityRowControl(event.nativeEvent, event.currentTarget))) return;
+  return <div ref={element} data-testid={props.testID} role="group" aria-label={translate('entityDrag.move', 'Move item')} tabIndex={props.disabled ? undefined : 0} onKeyDown={event => {
+    if (event.target !== event.currentTarget && event.target !== grip.current) return;
     const intent = resolveHappierStagedMoveKey({ key: event.key, staged: staged.current, repeat: event.repeat, rtl: element.current?.ownerDocument.dir === 'rtl' });
     if (!intent || !mount.current) return;
     event.preventDefault(); event.stopPropagation();

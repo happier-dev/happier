@@ -8,11 +8,13 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 import type { RoleRailItem } from './rolesRailTypes';
+import type { WorkflowRoleV1 } from '@happier-dev/protocol';
 import { useRoleRailItems } from './useRoleRailItems';
 
 export type RolesRailDetailProps = Readonly<{
     /** The role in effect, or null for none. Controlled: the rail never moves its own check. */
     value: string | null;
+    workflowRoles?: readonly WorkflowRoleV1[];
     onChange: (roleId: string) => void;
     /**
      * The one consequence a caller knows and the rail does not — in a live session, a role on
@@ -29,7 +31,7 @@ export type RolesRailDetailProps = Readonly<{
  * The catalog is read here, in the open leaf, so a closed composer chip never subscribes to it.
  */
 export function RolesRailDetail(props: RolesRailDetailProps) {
-    const roles = useRoleRailItems();
+    const roles = useRoleRailItems(props.workflowRoles);
     return <RolesRailDetailView {...props} roles={roles} />;
 }
 

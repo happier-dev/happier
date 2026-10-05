@@ -20,6 +20,24 @@ function artifact(id: string, header: Record<string, unknown> | null, extra: Par
 }
 
 describe('artifactBrowserModel', () => {
+    it('previews Workflow step labels from its saved header without fetching a body', () => {
+        expect(readArtifactPreview(artifact('workflow', { kind: 'workflow-definition.v1', title: 'Morning triage',
+            previewSteps: ['Read new issues', 'Label and dedupe', 'Ask before posting'] })))
+            .toEqual({ kind: 'workflow', steps: [{ title: 'Read new issues' }, { title: 'Label and dedupe' }, { title: 'Ask before posting' }] });
+        // A display-normalized kind must not give unknown stored metadata domain meaning.
+        expect(readArtifactPreview(artifact('unknown', { kind: 'workflow-definition.v1', previewSteps: ['Wrong'] },
+            { rawHeader: { kind: 'workflow-definition.v1 ', previewSteps: ['Wrong'] } }))).toEqual({ kind: 'none' });
+        expect(readArtifactPreview(artifact('old-workflow', { kind: 'workflow-definition.v1', title: 'Old workflow' })))
+            .toEqual({ kind: 'none' });
+        const header = { kind: 'workflow-definition.v1', previewSteps: ['Displaced'] };
+        const body = JSON.stringify({ kind: 'workflow-definition.v1', definition: { version: 1,
+            defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+            blocks: [{ kind: 'step', id: 'current', document: { text: 'Loaded step\nDetails', references: [], attachments: [] },
+                input: [], result: { kind: 'text' } }] } });
+        expect(readArtifactPreview(artifact('loaded', header, { body })))
+            .toEqual({ kind: 'workflow', steps: [{ title: 'Loaded step' }] });
+        expect(readArtifactPreview(artifact('invalid', header, { body: '{}' }))).toEqual({ kind: 'none' });
+    });
     it('keeps HTML documents and bundles static in the grid, using only the exact stored kind', () => {
         const document = artifact('html', { kind: 'html', title: 'Interactive report', excerpt: '<script>fetch("/api")</script>' }, {
             body: '<h1>Report</h1><script>window.executed = true</script>',

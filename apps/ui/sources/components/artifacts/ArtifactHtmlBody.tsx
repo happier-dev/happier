@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { Platform } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { HappierHtmlSandboxFrame } from '@happier-dev/plugin-ui/presentation';
 import { WebView } from 'react-native-webview';
 
 import type { ArtifactBodyV1 } from '@happier-dev/protocol';
@@ -25,6 +26,7 @@ export function ArtifactHtmlBody(props: Readonly<{
     name: string;
     readPreviewUrl: (artifactId: string, signal?: AbortSignal) => Promise<string>;
 }>) {
+    const { theme } = useUnistyles();
     const key = `${props.artifactId}:${props.headerVersion}:${props.bodyVersion ?? ''}`;
     const [preview, setPreview] = React.useState<Preview>({ key, body: props.body, phase: 'loading' });
     const [attempt, setAttempt] = React.useState(0);
@@ -48,32 +50,37 @@ export function ArtifactHtmlBody(props: Readonly<{
 
     const current = preview.key === key && preview.body === props.body ? preview : null;
     const fail = () => setPreview(value => value === current ? { key, body: props.body, phase: 'failed' } : value);
-    return <View style={stylesheet.frame} testID="artifact:htmlBody">
-        {current?.phase === 'failed' ? <SurfaceStateCard
+    return <HappierHtmlSandboxFrame testID="artifact:htmlBody" title={props.name}
+        backgroundColor={theme.colors.surface.elevated}
+        state={current?.phase === 'ready' ? current : { phase: current?.phase ?? 'loading' }}
+        onError={fail}
+        failure={<SurfaceStateCard
             testID="artifact:htmlPreviewFailed"
             kind="error"
             title={t('artifacts.error')}
             reason={t('artifacts.browser.loadFailedBody')}
             action={{ label: t('common.retry'), testID: 'artifact:htmlPreviewRetry', onPress: () => setAttempt(value => value + 1) }}
             accessibilitySemantics="alert"
-        /> : current?.phase !== 'ready' ? <SurfaceStateCard
+        />}
+        loading={<SurfaceStateCard
             testID="artifact:htmlPreviewLoading" kind="loading" title={t('common.loading')}
-        /> : Platform.OS === 'web' ? <iframe
-            key={current.url}
+        />}
+        host={{ renderFrame: ({ url, title, onError, webStyle, nativeStyle }) => Platform.OS === 'web' ? <iframe
+            key={url}
             data-testid="artifact:htmlPreview"
-            src={current.url}
-            title={props.name}
+            src={url}
+            title={title}
             sandbox="allow-scripts allow-same-origin"
             {...credentiallessIframeAttributes}
             referrerPolicy="no-referrer"
-            onError={fail}
-            style={{ width: '100%', height: '100%', border: 0 }}
+            onError={onError}
+            style={webStyle}
         /> : <WebView
-            key={current.url}
+            key={url}
             testID="artifact:htmlPreview"
-            source={{ uri: current.url }}
-            accessibilityLabel={props.name}
-            style={stylesheet.nativeFrame}
+            source={{ uri: url }}
+            accessibilityLabel={title}
+            style={nativeStyle}
             // Non-whitelisted URLs launch the OS browser before the SDK's guard; route every URL through our guard.
             originWhitelist={['*']}
             incognito
@@ -90,17 +97,10 @@ export function ArtifactHtmlBody(props: Readonly<{
                 if (request.isTopFrame === false) return true;
                 try {
                     const target = new URL(request.url);
-                    return target.origin === current.origin && !target.username && !target.password;
+                    return target.origin === new URL(url).origin && !target.username && !target.password;
                 } catch { return false; }
             }}
-            onError={fail}
-            onHttpError={fail}
-        />}
-    </View>;
+            onError={onError}
+            onHttpError={onError}
+        /> }} />;
 }
-
-const stylesheet = StyleSheet.create((theme) => ({
-    // Match the existing file-preview reading area; loading and error retain its space.
-    frame: { height: 560, minHeight: 0, backgroundColor: theme.colors.surface.elevated },
-    nativeFrame: { flex: 1, backgroundColor: theme.colors.surface.elevated },
-}));

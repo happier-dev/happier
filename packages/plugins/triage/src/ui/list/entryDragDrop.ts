@@ -13,6 +13,7 @@ import {
   TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1,
 } from '../../actions/sessionLinksProtocol.js';
 import { parseTriageComposerEntryAttachmentValue } from '../../composer/attachmentValue.js';
+import { buildTriageEntryAttachmentDraftV1 } from '../../composer/mutationPlan.js';
 
 export const TRIAGE_ENTRY_DRAG_SOURCE_ID_V1 = 'entry-reference';
 export const TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1 = 'entry-session';
@@ -38,6 +39,15 @@ export const TriageEntrySessionDropInputV1Schema = defineProtocolObject({
 }, closed);
 
 export const triageEntryDragSourceRuntime: PluginDragSourceRuntime = {
+  toComposerAttachment(reference) {
+    const parsed = TriageEntryDragReferenceV1Schema.safeParse(reference);
+    if (!parsed.success) return null;
+    return buildTriageEntryAttachmentDraftV1({
+      entryRef: parsed.data.entryRef, sourceInstance: parsed.data.sourceInstance,
+      lastKnownLocator: parsed.data.lastKnownLocator,
+      presentation: { label: parsed.data.title, description: parsed.data.subtitle },
+    })?.value ?? null;
+  },
   describe(reference) {
     const parsed = TriageEntryDragReferenceV1Schema.safeParse(reference);
     if (!parsed.success) return null;

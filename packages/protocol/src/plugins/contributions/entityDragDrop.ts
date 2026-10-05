@@ -15,6 +15,8 @@ export const PluginDragSourceContributionV1Schema = z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   preview: z.object({ subtitle: PluginLocalizedStringV2Schema.optional() }).strict().optional(),
+  /** Selects this plugin's existing attachment declaration; never carries authority. */
+  composerAttachment: asProtocolZod(PluginContributionLocalIdSchema).optional(),
   referenceSchema: PluginJsonSchemaV2Schema.transform((schema, ctx) => {
     try { return normalizePluginJsonSchema(schema); }
     catch (error) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : 'Invalid reference schema' }); return z.NEVER; }

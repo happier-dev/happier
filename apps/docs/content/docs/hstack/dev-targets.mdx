@@ -242,7 +242,9 @@ Runtime surfaces accept `local` or one configured target name. `commands` additi
 In current development source, `build` placement uses a dedicated workspace beneath the target's
 CLI home, separate from its continuously synchronized source mirror and live service outputs.
 Each admitted producer flight captures its current source; later edits do not change that worker
-build. Dependencies and generated outputs remain target-local. Finished component and support
+build, including its referenced TypeScript configs and manifest-declared native resources.
+Dependencies and generated outputs remain target-local; preparation uses the same QA-runtime
+last-green policy as a local named-stack build. Finished component and support
 artifacts return to the producer through the existing manifest and snapshot owners.
 
 The worker must report the same operating system and architecture as the producer. For example,

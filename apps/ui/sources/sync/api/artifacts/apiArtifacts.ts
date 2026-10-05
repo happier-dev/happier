@@ -183,15 +183,15 @@ export async function fetchArtifactStorageUsage(credentials: AuthCredentials,
     return parsed.data;
 }
 
-/** The server copies retained bytes; the key holder supplies only the coherent next header. */
+/** The key holder may reseal the selected body with new restore attribution; its content stays unchanged. */
 export async function restoreArtifactRevision(credentials: AuthCredentials, input: Readonly<{
-    artifactId: string; bodyVersion: number; header: string; expectedRevision: ArtifactRevisionV1;
+    artifactId: string; bodyVersion: number; header: string; body?: string; expectedRevision: ArtifactRevisionV1;
 }>, opts: Pick<ArtifactApiOptions, 'request' | 'signal'> = {}): Promise<ArtifactRevisionV1> {
     opts.signal?.throwIfAborted();
     const response = await (opts.request ?? serverFetch)(`/v1/artifacts/${encodeURIComponent(input.artifactId)}/revisions/${input.bodyVersion}/restore`, {
         method: 'POST', headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ header: input.header, expectedHeaderVersion: input.expectedRevision.headerVersion,
-            expectedBodyVersion: input.expectedRevision.bodyVersion }),
+            expectedBodyVersion: input.expectedRevision.bodyVersion, ...(input.body === undefined ? {} : { body: input.body }) }),
         ...(opts.signal ? { signal: opts.signal } : {}),
     }, { includeAuth: false, retry: 'none' });
     opts.signal?.throwIfAborted();

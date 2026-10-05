@@ -848,7 +848,11 @@ export function snapshotStaticRegistrationValue<
     switch (policyFamily) {
         case 'dragSources': {
             const receiver = requireObject(value, 'Drag source runtime');
-            return Object.freeze({ describe: captureStaticRegistrationMethod(receiver, 'describe', 'Drag source runtime.describe', true) }) as PluginRegistrationValueByFamily[TFamily];
+            const toComposerAttachment = captureStaticRegistrationMethod(receiver, 'toComposerAttachment', 'Drag source runtime.toComposerAttachment', false);
+            return Object.freeze({
+                describe: captureStaticRegistrationMethod(receiver, 'describe', 'Drag source runtime.describe', true),
+                ...(toComposerAttachment === undefined ? {} : { toComposerAttachment }),
+            }) as PluginRegistrationValueByFamily[TFamily];
         }
         case 'dropTargets': {
             const receiver = requireObject(value, 'Drop target runtime');

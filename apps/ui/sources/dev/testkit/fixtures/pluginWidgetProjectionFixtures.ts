@@ -1,6 +1,6 @@
 import type { PluginProjectionV2, PluginJsonSchemaV2, PluginContributionIdentityV1, PluginProjectedResourceV2 } from '@happier-dev/protocol';
 import type { InputHints } from '@happier-dev/protocol/inputs';
-import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { normalizePluginUiInlineSurfaceBindingV1, type PluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import {
     normalizePluginUiProjection,
@@ -45,7 +45,7 @@ export function widgetProjectionEntry(input: WidgetFixtureEntry) {
     const inputSchema = input.inputSchema ?? (sessionWidget ? {
         type: 'object', properties: { session: { type: 'object', properties: { serverId: { type: 'string', minLength: 1 }, sessionId: { type: 'string', minLength: 1 } }, required: ['serverId', 'sessionId'], additionalProperties: false } }, required: ['session'], additionalProperties: false,
     } : undefined);
-    const binding = normalizePluginUiInlineSurfaceBindingV1({
+    const binding: PluginUiInlineSurfaceBindingV1 | null = normalizePluginUiInlineSurfaceBindingV1({
         pluginId: input.pluginId,
         surfaceId: input.localId,
         rendererId: 'widget-native',

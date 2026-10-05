@@ -178,6 +178,13 @@ Declaration: `dist/index.d.ts`
 - type `HappierAgentCursorProps` from `dist/index.d.ts`
 - type `HappierAgentPageRect` from `dist/index.d.ts`
 - type `HappierAgentTarget` from `dist/index.d.ts`
+- type `HappierArtifactPreview` from `dist/index.d.ts`
+- value `HappierArtifactPreviewCard` from `dist/index.d.ts`
+- type `HappierArtifactPreviewCardHost` from `dist/index.d.ts`
+- type `HappierArtifactPreviewCardProps` from `dist/index.d.ts`
+- value `HappierArtifactRevisionList` from `dist/index.d.ts`
+- type `HappierArtifactRevisionListProps` from `dist/index.d.ts`
+- type `HappierArtifactRevisionRow` from `dist/index.d.ts`
 - value `HappierBadge` from `dist/index.d.ts`
 - value `HappierBanner` from `dist/index.d.ts`
 - value `HappierBrandMark` from `dist/index.d.ts`
@@ -287,6 +294,9 @@ Declaration: `dist/index.d.ts`
 - type `HappierFormProps` from `dist/index.d.ts`
 - value `HappierFreshnessLine` from `dist/index.d.ts`
 - value `HappierHeading` from `dist/index.d.ts`
+- value `HappierHtmlSandboxFrame` from `dist/index.d.ts`
+- type `HappierHtmlSandboxFrameHost` from `dist/index.d.ts`
+- type `HappierHtmlSandboxFrameProps` from `dist/index.d.ts`
 - type `HappierIconName` from `dist/index.d.ts`
 - type `HappierIconSize` from `dist/index.d.ts`
 - type `HappierImageSize` from `dist/index.d.ts`
@@ -414,6 +424,8 @@ Declaration: `dist/index.d.ts`
 - type `HappierPressableState` from `dist/index.d.ts`
 - type `HappierPressableStyleState` from `dist/index.d.ts`
 - value `HappierProgress` from `dist/index.d.ts`
+- value `HappierPublicLinkCard` from `dist/index.d.ts`
+- type `HappierPublicLinkCardProps` from `dist/index.d.ts`
 - type `HappierReleaseGlyph` from `dist/index.d.ts`
 - type `HappierReleaseOutcome` from `dist/index.d.ts`
 - value `HappierReleaseOutcomePill` from `dist/index.d.ts`
@@ -1372,6 +1384,13 @@ Declaration: `dist/presentation/index.d.ts`
 - type `HappierAgentCursorProps` from `dist/presentation/index.d.ts`
 - type `HappierAgentPageRect` from `dist/presentation/index.d.ts`
 - type `HappierAgentTarget` from `dist/presentation/index.d.ts`
+- type `HappierArtifactPreview` from `dist/presentation/index.d.ts`
+- value `HappierArtifactPreviewCard` from `dist/presentation/index.d.ts`
+- type `HappierArtifactPreviewCardHost` from `dist/presentation/index.d.ts`
+- type `HappierArtifactPreviewCardProps` from `dist/presentation/index.d.ts`
+- value `HappierArtifactRevisionList` from `dist/presentation/index.d.ts`
+- type `HappierArtifactRevisionListProps` from `dist/presentation/index.d.ts`
+- type `HappierArtifactRevisionRow` from `dist/presentation/index.d.ts`
 - value `HappierBadge` from `dist/presentation/index.d.ts`
 - value `HappierBanner` from `dist/presentation/index.d.ts`
 - value `HappierBrandMark` from `dist/presentation/index.d.ts`
@@ -1481,6 +1500,9 @@ Declaration: `dist/presentation/index.d.ts`
 - type `HappierFormProps` from `dist/presentation/index.d.ts`
 - value `HappierFreshnessLine` from `dist/presentation/index.d.ts`
 - value `HappierHeading` from `dist/presentation/index.d.ts`
+- value `HappierHtmlSandboxFrame` from `dist/presentation/index.d.ts`
+- type `HappierHtmlSandboxFrameHost` from `dist/presentation/index.d.ts`
+- type `HappierHtmlSandboxFrameProps` from `dist/presentation/index.d.ts`
 - type `HappierIconName` from `dist/presentation/index.d.ts`
 - type `HappierIconSize` from `dist/presentation/index.d.ts`
 - type `HappierImageSize` from `dist/presentation/index.d.ts`
@@ -1608,6 +1630,8 @@ Declaration: `dist/presentation/index.d.ts`
 - type `HappierPressableState` from `dist/presentation/index.d.ts`
 - type `HappierPressableStyleState` from `dist/presentation/index.d.ts`
 - value `HappierProgress` from `dist/presentation/index.d.ts`
+- value `HappierPublicLinkCard` from `dist/presentation/index.d.ts`
+- type `HappierPublicLinkCardProps` from `dist/presentation/index.d.ts`
 - type `HappierReleaseGlyph` from `dist/presentation/index.d.ts`
 - type `HappierReleaseOutcome` from `dist/presentation/index.d.ts`
 - value `HappierReleaseOutcomePill` from `dist/presentation/index.d.ts`

@@ -124,6 +124,7 @@ import {
     resolveDurableWorkspaceRefForSessionListHeader,
     type SessionFoldersV1,
 } from '@/sync/domains/session/folders';
+import { openSessionFolderSelection } from '@/components/sessions/organization/SessionFolderSelection';
 import {
     buildSessionOrganizationListViewStateForServers,
     completeSessionOrganizationOrderItemAddresses,
@@ -206,10 +207,6 @@ const EMPTY_KNOWN_TAGS: ReadonlyArray<string> = [];
 const EMPTY_LOCAL_TAG_SELECTIONS: ReadonlyArray<QualifiedTagAddress> = [];
 const EMPTY_MEMORY_MATCHED_SESSION_TARGETS: ReadonlyArray<SessionListMemorySearchTarget> = [];
 const EMPTY_SESSION_FOLDER_MOVE_TARGETS: readonly SessionFolderMoveTarget[] = [];
-const SESSION_LIST_IDLE_MOVE_RESULT = Object.freeze({
-    instruction: Object.freeze({ kind: 'idle' as const }),
-    visual: Object.freeze({ kind: 'none' as const }),
-});
 
 export type RegisterSessionFolderDropTarget = (target: Readonly<{
     type: 'folder' | 'workspace-root';
@@ -1919,30 +1916,22 @@ export function useSessionListViewStateFromPaneState(
         if (!firstMovableItem) return null;
         const destinationWorkspace = firstMovableItem.workspace;
         if (!destinationWorkspace) return null;
-        const folderMoveTargets = resolveFolderMoveTargetsForItem(firstMovableItem);
-        const folderIdByTargetId = new Map<string, string | null>();
-        const moveTargets = folderMoveTargets.map((target): SessionListMoveSheetTarget => {
-            const id = `bulk-move-folder:${target.folderId ?? 'root'}`;
-            folderIdByTargetId.set(id, target.folderId ?? null);
-            return {
-                id,
-                kind: target.folderId == null ? 'root' : 'folder',
-                label: target.folderId == null ? t('sessionsList.moveToWorkspaceRoot') : target.title,
-                disabled: target.disabled,
-                result: SESSION_LIST_IDLE_MOVE_RESULT,
-            };
-        }).filter((target) => target.disabled !== true);
+        const moveTargets = resolveFolderMoveTargetsForItem(firstMovableItem)
+            .filter((target) => target.disabled !== true)
+            .map((target) => target.folderId === null
+                ? { ...target, title: t('sessionsList.moveToWorkspaceRoot') }
+                : target);
         if (moveTargets.length === 0) return null;
-        const selectedTarget = await openMoveSheet({
+        const selectedTarget = await openSessionFolderSelection({
             sourceLabel: t('sessionsList.selectionMoveSheetSourceLabel', { count: targets.length }),
             targets: moveTargets,
         });
-        if (!selectedTarget || selectedTarget.disabled || !folderIdByTargetId.has(selectedTarget.id)) return null;
+        if (!selectedTarget || selectedTarget.disabled) return null;
         return {
-            folderId: folderIdByTargetId.get(selectedTarget.id) ?? null,
+            folderId: selectedTarget.folderId,
             destinationWorkspace,
         };
-    }, [folderActionsEnabled, openMoveSheet, resolveFolderMoveTargetsForItem, sessionListItemBySelectionKey]);
+    }, [folderActionsEnabled, resolveFolderMoveTargetsForItem, sessionListItemBySelectionKey]);
 
     const {
         scopeHintByLegacyWorkspaceKey,

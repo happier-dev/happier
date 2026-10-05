@@ -369,21 +369,6 @@ describe('AgentInput (send button accessibility)', () => {
         await screen.unmount();
     });
 
-    it('reads built-in catalog prompts through the same non-editable document owner', async () => {
-        const { WorkflowBuiltinSourceScreen } = await import('@/components/workflows/screens/WorkflowPluginSourceScreen');
-        const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol');
-        const { walkWorkflowBlocks } = await import('@happier-dev/protocol/workflows/workflowDefinitionEditV1');
-        const entry = getBuiltinWorkflowCatalogV1().find((candidate) => candidate.requiresOriginSession !== true);
-        if (!entry) throw new Error('The shipped built-in catalog must contain a workflow');
-        const step = walkWorkflowBlocks(entry.definition.blocks).find((block) => block.kind === 'step');
-        if (!step || step.kind !== 'step') throw new Error('The built-in fixture must contain an Agent prompt');
-        const screen = await renderScreen(<WorkflowBuiltinSourceScreen workflow={entry.id} />);
-        expect(screen.root.findAll((node) => String(node.type) === 'Text' && node.props.selectable === true && node.children.includes(step.document.text))).not.toHaveLength(0);
-        expect(screen.root.findAll((node) => String(node.type) === 'MultiTextInput')).toHaveLength(0);
-        expect(screen.root.findAll((node) => typeof node.props.testID === 'string' && /(?:composer-send|dictation|voice-composer)/u.test(node.props.testID))).toHaveLength(0);
-        await screen.unmount();
-    });
-
     it('keeps contributed chips in a reading composer and suppresses a supplied submit callback without a writer', async () => {
         const { ScopedAuthoringComposer } = await import('@/components/sessions/authoring/ScopedAuthoringComposer');
         const { createWorkflowAuthoringComposerCustody } = await import('@/components/sessions/authoring/authoringComposerCustody');

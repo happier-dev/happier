@@ -14,7 +14,8 @@ it('activates a real declared plugin and runs area inputs/layout/refresh through
     const rows = new Map<string, NonNullable<Awaited<ReturnType<HomeHubArtifactTransportV1['read']>>>>();
     const transport: HomeHubArtifactTransportV1 = {
         read: async id => rows.get(id) ?? null,
-        create: async input => { rows.set(input.artifactId, { ...input, ownerAccountId: scope.accountId, revision: { headerVersion: 1, bodyVersion: 1 } }); },
+        create: async input => { const row = { ...input, ownerAccountId: scope.accountId, revision: { headerVersion: 1, bodyVersion: 1 } };
+            if (!rows.has(input.artifactId)) rows.set(input.artifactId, row); return rows.get(input.artifactId)!; },
         update: async input => { const revision = { headerVersion: input.expectedRevision.headerVersion + 1, bodyVersion: input.expectedRevision.bodyVersion + 1 };
             rows.set(input.artifactId, { ...input, ownerAccountId: scope.accountId, revision }); return { ok: true, revision }; },
     };

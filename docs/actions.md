@@ -346,6 +346,13 @@ source refusal remains a typed error rather than a successful empty list or a
 fallback to static choices. UI options reads are demanded by an open form and
 retire with the last consumer.
 
+Widget `connectedAccountOptions: true` fields use that same
+`action.options.resolve` front door with the admitted widget consumer. Choices
+are the current viewer's active qualified accounts for the declared Resource
+purpose's permitted services, not another caller's inventory. The marker is
+valid only on a `select` field and cannot be combined with static options,
+`optionsSourceId` or `inputType`.
+
 Plugin `inputTypes` declare a qualified semantic identity and self-contained
 value schema, with optional options Resource and picker renderer references.
 The existing Resource/renderer registration and grant owners admit those

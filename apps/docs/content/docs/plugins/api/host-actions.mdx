@@ -1624,7 +1624,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `composer.transaction.apply`
 
-**Apply composer transaction** — Apply a revision-bound text/reference transaction to the exact mounted editable composer. Preserves the existing document owner; never submits input or grants attachment custody.
+**Apply composer transaction** — Apply a revision-bound transaction to the exact mounted editable composer. Attachment selection is validated against its current composition; never submits input or grants staged-media custody.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
@@ -1636,6 +1636,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `scope` (json, required): Account scope
 - `ref` (json, required): Mounted composer
 - `transaction` (json, required): Revision-bound transaction
+- `attachmentContributor` (json): Current attachment selection
 
 ## `computer.capture`
 
