@@ -11,7 +11,7 @@ import {
 } from './inputFieldOptionsStore';
 
 export type InputFieldOptionsRequest = InputFieldOptionsContext & Readonly<{
-    field: Pick<ActionInputFieldHint, 'path' | 'optionsSourceId' | 'options' | 'inputType'>;
+    field: Pick<ActionInputFieldHint, 'path' | 'optionsSourceId' | 'options' | 'inputType' | 'connectedAccountOptions'>;
 }>;
 const NO_READS: readonly InputOptionsRead[] = Object.freeze([]);
 
@@ -45,7 +45,7 @@ export function useInputFieldOptions(params: Readonly<{
         const defaultContexts = new Map<string, InputFieldOptionsContext>();
         const reads = new Map<string, InputOptionsRead>();
         for (const request of params.requests) {
-            if ((!request.field.optionsSourceId && !request.field.inputType) || request.field.options?.length) continue;
+            if ((!request.field.optionsSourceId && !request.field.inputType && !request.field.connectedAccountOptions) || request.field.options?.length) continue;
             const input = { ...(request.field.optionsSourceId ? { optionsSourceId: request.field.optionsSourceId } : {}),
                 ...(request.actionId ? { actionId: request.actionId, fieldPath: request.field.path } : {}),
                 ...(request.consumer ? { consumer: request.consumer, fieldPath: request.field.path } : {}),
@@ -86,7 +86,7 @@ export function useInputFieldOptions(params: Readonly<{
         activeReads.forEach((read) => refreshInputFieldOptions(read, params.refreshKey));
     }, [activeReads, params.refreshKey]);
     const state = React.useCallback((field: InputFieldOptionsRequest['field'], context?: InputFieldOptionsContext): InputFieldOptionsState => {
-        if (field.options?.length || (!field.optionsSourceId && !field.inputType)) return { options: field.options ?? EMPTY_INPUT_OPTIONS, status: 'ready' };
+        if (field.options?.length || (!field.optionsSourceId && !field.inputType && !field.connectedAccountOptions)) return { options: field.options ?? EMPTY_INPUT_OPTIONS, status: 'ready' };
         const effectiveContext = context ?? defaultContexts.get(JSON.stringify([field.path, field.optionsSourceId, field.inputType]));
         const key = keys.get(fieldKey(field, effectiveContext));
         const index = activeReads.findIndex((read) => read.key === key);

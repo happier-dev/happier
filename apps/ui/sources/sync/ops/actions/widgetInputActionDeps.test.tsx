@@ -1,7 +1,7 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
-import { AccountProfileSchema, PluginProjectionV2Schema, tryWriteServerEnabledBitInPlace, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { AccountProfileSchema, PluginProjectionV2Schema, PluginUiViewV2Schema, tryWriteServerEnabledBitInPlace, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createPluginWidgetAreaHostPortV1 } from '@happier-dev/protocol/plugins/ui';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -23,12 +23,14 @@ import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalo
 import { createPluginDeclaredResourceStore } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
 it('admits a personal connection pin only from the current Account and refuses shared pins', async () => {
     await import('@/sync/syncEngine');
     const connection = await restoreServerAccountForTest({ serverUrl: 'http://personal-pin-mount.test', accountId: 'viewer',
         request: createHomeHubArtifactHttpBoundary('viewer').request });
     const previous = storage.getState();
+    const restoreExecutorLoader = await installRealActionExecutorModuleLoader();
     try {
         const { useConfiguredWidgetTarget } = await import('@/sync/domains/widgets/useConfiguredWidgetTarget');
         const surface = { pluginId: 'com.acme.binding', localId: 'connection' };
@@ -37,10 +39,24 @@ it('admits a personal connection pin only from the current Account and refuses s
         const profile = AccountProfileSchema.parse({ id: 'viewer', connectedAccountsV4: [{ ref: selected, status: 'connected', authenticationModeId: 'token',
             configurationReady: true, configurationRevision: null, revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [] }] });
         storage.setState({ profile, profileScope: { serverId: connection.home.id, accountId: profile.id } });
-        const projection = widgetProjectionOf([{ ...surface, target: 'app', inputs: { fields: [{
-            path: 'connection', title: 'Connection', widget: 'select', connectedAccountOptions: true,
-            options: [selected, foreign].map(value => ({ value, label: value.accountId })),
-        }] } }]);
+        const valueSchema = { type: 'object' as const, required: ['service', 'accountId'], additionalProperties: false, properties: {
+                service: { type: 'object', required: ['pluginId', 'localId'], additionalProperties: false,
+                    properties: { pluginId: { type: 'string' }, localId: { type: 'string' } } }, accountId: { type: 'string' },
+            } };
+        const inputs = { fields: [{ path: 'connection', title: 'Connection', widget: 'select' as const, connectedAccountOptions: true as const }] };
+        const inputSchema = { type: 'object' as const, properties: { connection: valueSchema }, additionalProperties: false };
+        const consumer = { pluginId: surface.pluginId, localId: 'metrics' };
+        const purposes = { resources: [consumer], connectedAccountPurposeBindings: [{ path: 'connection', purpose: 'read', consumer }] };
+        const admitted = PluginUiViewV2Schema.parse({ id: surface.localId, renderer: 'widget-native', container: 'widget', target: { kind: 'app' }, inputs, inputSchema, ...purposes });
+        expect(admitted).toMatchObject({ inputs, inputSchema });
+        const widget = { ...widgetProjectionEntry({ ...surface, target: 'app', inputs, inputSchema, occurrenceId: 'current' }), ...purposes };
+        const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            installedPackagesById: { [surface.pluginId]: { id: surface.pluginId, displayName: 'Binding', enabled: true, occurrenceId: 'current',
+                source: { kind: 'local', locator: `/plugins/${surface.pluginId}` } } },
+            familiesById: { pluginUi: { family: 'pluginUi', entriesById: { [widget.id]: widget } } },
+            resourcesById: { metrics: { id: consumer.localId, pluginId: consumer.pluginId, resourceKind: 'config', scope: 'global',
+                connectedAccountPurposes: [{ purpose: 'read', serviceRefs: [selected.service] }] } },
+        }));
         const descriptor = readWidgetDescriptor(projection, surface)!;
         const home = { serverId: connection.home.id, accountId: 'viewer', owner: { kind: 'home' as const } };
         const hook = await renderHook((props: Readonly<{ value: typeof selected; shared: boolean }>) => useConfiguredWidgetTarget({
@@ -49,14 +65,22 @@ it('admits a personal connection pin only from the current Account and refuses s
                 bindings: { connection: { kind: 'value', value: props.value } } },
             appRuntime: { pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
                 machineId: 'machine', serverId: home.serverId, platform: 'web' },
-        }), { initialProps: { value: selected, shared: false } });
-        expect(hook.getCurrent()).toMatchObject({ status: 'ready', input: { connection: selected } });
+        }), { initialProps: { value: selected, shared: false }, wrapper: ({ children }) => React.createElement(AppShellPluginUiProjectionValueProvider,
+            { value: { pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
+                machineId: 'machine', serverId: home.serverId, platform: 'web', reloadConnectedAccountProjection: () => {},
+                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {} } }, children) });
+        const { callWorkflowAction } = await import('@/sync/domains/workflows/callWorkflowAction');
+        expect(await callWorkflowAction({ actionId: 'action.options.resolve', input: { consumer: { kind: 'widget', surface: home,
+            definition: { kind: 'installed', surface } }, fieldPath: 'connection' }, parseResult: value => value }))
+            .toMatchObject({ options: [{ value: selected }] });
+        await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().status, JSON.stringify(hook.getCurrent())).toBe('ready')); });
+        expect(hook.getCurrent()).toMatchObject({ input: { connection: selected } });
         await hook.rerender({ value: foreign, shared: false });
         expect(hook.getCurrent()).toMatchObject({ status: 'denied' });
         await hook.rerender({ value: selected, shared: true });
         expect(hook.getCurrent()).toMatchObject({ status: 'denied' });
         await hook.unmount();
-    } finally { storage.setState(previous, true); await connection.dispose(); }
+    } finally { restoreExecutorLoader(); storage.setState(previous, true); await connection.dispose(); }
 });
 
 it('validates a mounted schema-only typed pin from its selected origin before exposing a ready Widget target', async () => {
