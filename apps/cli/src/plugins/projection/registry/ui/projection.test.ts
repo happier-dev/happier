@@ -209,6 +209,12 @@ describe('plugin UI projection family', () => {
         expect(entries['surfacePlacement:happier.channels:session-conversations-widget']).toBeUndefined();
         expect(entries['surfacePlacement:happier.channels:channels']).toMatchObject({ descriptorId: 'channels' });
         expect(entries['surfacePlacement:happier.triage:triage']).toMatchObject({ descriptorId: 'triage' });
+        const healthyProjection = buildPluginProjectionV2({
+            registry: { ...registry, uiViewsV2: uiViewsV2.slice(1) }, generation: 7,
+        });
+        for (const entryId of ['surfacePlacement:happier.channels:channels', 'surfacePlacement:happier.triage:triage']) {
+            expect(entries[entryId]).toEqual(healthyProjection.familiesById.pluginUi?.entriesById[entryId]);
+        }
         expect(projection.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
             data: expect.objectContaining({
                 code: 'plugin_compatibility_projection_invalid',
