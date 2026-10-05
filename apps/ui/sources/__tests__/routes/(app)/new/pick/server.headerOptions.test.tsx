@@ -5,6 +5,7 @@ import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 installTokenStorageWebPlatformMocks();
@@ -33,6 +34,8 @@ const importBrowser = installLocalStorageMock();
 const importLocks = installWebLockManagerMock();
 const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 setRuntimeFetch(async () => { throw new Error('Unexpected picker HTTP request before fixture arrangement'); });
+// The real app entry publishes the Sync producer before routes or connection cleanup run.
+await loadSyncSingletonForTests();
 const [
     { AuthProvider, setCurrentAuth }, { default: Route },
     { upsertServerProfile, setActiveServerId, saveHomeViewState, removeServerProfile },

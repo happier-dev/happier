@@ -6,6 +6,7 @@ import { AccountEncryptionMigrateRequestSchema, createAccountEncryptionMigrateRe
 import { renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installLocalStorageMock, installWebLockManagerMock, type LocalStorageMockHandle } from '@/auth/storage/tokenStorage.web.testHelpers';
 import type { PendingExternalAuth } from '@/auth/storage/tokenStorage';
 
@@ -32,6 +33,8 @@ const importBrowser = installLocalStorageMock();
 const importLocks = installWebLockManagerMock();
 const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 setRuntimeFetch(async () => { throw new Error('Unexpected mTLS HTTP request before fixture arrangement'); });
+// The real app entry publishes the Sync producer before routes or connection cleanup run.
+await loadSyncSingletonForTests();
 const [
     { AuthProvider, getCurrentAuth, setCurrentAuth }, { default: Route },
     { adoptHomeProfile, setActiveServerId, getActiveServerUrl, removeServerProfile },

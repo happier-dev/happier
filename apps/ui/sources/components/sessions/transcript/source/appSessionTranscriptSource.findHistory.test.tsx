@@ -12,7 +12,6 @@ import { AppSessionTranscriptSourceProvider } from './appSessionTranscriptSource
 import { useSessionTranscriptSource } from './SessionTranscriptSourceContext';
 
 const request = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/runtime/getSyncSingleton', async () => (await import('@/dev/testkit/harness/syncSingletonLoader')).createSyncSingletonLoaderMock());
 // HTTP and scoped credential persistence are the real external boundaries.
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');

@@ -46,6 +46,8 @@ const importBrowser = installLocalStorageMock();
 const importLocks = installWebLockManagerMock();
 const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 setRuntimeFetch(async () => { throw new Error('Unexpected New Session HTTP request before fixture arrangement'); });
+// Load the app-entry producer before capturing the public facade's singleton.
+await loadSyncSingletonForTests();
 const [
     { AuthProvider, setCurrentAuth }, { default: Route }, { upsertAndActivateServer },
     { TokenStorage }, { storage }, { createDirectoryHttpFixture },
@@ -66,7 +68,6 @@ const [
     await import('@/sync/api/account/apiAccountEncryptionMode'), await import('@/sync/sync'),
     await import('@/sync/ops/sessionDrafts/sessionDraftRepository'),
 ];
-await loadSyncSingletonForTests();
 resetRuntimeFetch();
 importLocks.restore();
 importBrowser.restore();
