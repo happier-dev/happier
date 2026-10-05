@@ -53,6 +53,24 @@ describe('expiry-first selection', () => {
     expect(result.selected?.profileId).toBe(scenario.expected);
   });
 
+  it('does not promote estimated headroom when selecting a pool-specific allowance', () => {
+    const early = state(95, 2_000);
+    const fresh = state(40, 20_000);
+    const input = { nowMs: 1_000, quotaFreshnessMs: 300_000, activeProfileId: null,
+      policy: { ...basePolicy, quotaLimitSelection: { mode: 'selected' as const, providerLimitIds: ['long'] } },
+      members: [member('early', 1, 1), member('fresh', 2, 2)],
+      memberStatesByProfileId: new Map([
+        ['early', { ...early, subscription: { status: 'subscribed' as const, renewal: 'off' as const,
+          observedAtMs: 1_000, staleAfterMs: 300_000, currentPeriodEndAtMs: 2_000 },
+          quotaSnapshot: { ...early.quotaSnapshot!, effectiveRemainingPercent: null,
+            meters: [{ ...early.quotaSnapshot!.meters![0]!, providerLimitId: 'long', reliable: false }] } }],
+        ['fresh', { ...fresh, quotaSnapshot: { ...fresh.quotaSnapshot!,
+          meters: [{ ...fresh.quotaSnapshot!.meters![0]!, providerLimitId: 'long' }] } }],
+      ]),
+    };
+    expect(selectConnectedServiceAuthGroupCandidate(input).selected?.profileId).toBe('fresh');
+  });
+
   it('keeps a healthy current account and ranks only the pool-selected allowance on a swap', () => {
     const early = state(40, 10_000);
     const fresh = state(95, 20_000);

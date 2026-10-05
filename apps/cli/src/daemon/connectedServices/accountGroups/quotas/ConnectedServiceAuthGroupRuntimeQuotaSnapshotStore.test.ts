@@ -85,6 +85,7 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
       capturedAtMs: 1_250,
     }).get('primary')).toEqual({
       providerResetsAtMs: 5_000,
+      subscription: undefined,
       quotaSnapshot: {
         capturedAtMs: 1_000,
         effectiveMeterId: 'primary',
@@ -96,6 +97,8 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
             remainingPct: 0,
             resetAtMs: 5_000,
             providerLimitId: 'primary_window',
+            reliable: true,
+            windowDurationMs: null,
           },
         ],
         exhausted: true,
@@ -157,6 +160,7 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
       capturedAtMs: 3_500,
     }).get('work')).toEqual({
       providerResetsAtMs: 9_000,
+      subscription: undefined,
       quotaSnapshot: {
         capturedAtMs: 3_000,
         effectiveMeterId: 'weekly',
@@ -168,6 +172,8 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
             remainingPct: 30,
             resetAtMs: 7_000,
             providerLimitId: null,
+            reliable: true,
+            windowDurationMs: null,
           },
           {
             meterId: 'weekly',
@@ -175,6 +181,8 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
             remainingPct: 5,
             resetAtMs: 9_000,
             providerLimitId: null,
+            reliable: true,
+            windowDurationMs: null,
           },
         ],
         exhausted: false,
@@ -312,6 +320,7 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
       capturedAtMs: 4_500,
     }).get('primary')).toEqual({
       providerResetsAtMs: 10_000,
+      subscription: undefined,
       quotaSnapshot: {
         capturedAtMs: 4_000,
         effectiveMeterId: null,
@@ -323,6 +332,8 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
             remainingPct: 0,
             resetAtMs: 10_000,
             providerLimitId: 'server_overloaded',
+            reliable: true,
+            windowDurationMs: null,
           },
         ],
         exhausted: false,
