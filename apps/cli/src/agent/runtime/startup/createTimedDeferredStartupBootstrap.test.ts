@@ -26,7 +26,7 @@ describe('createTimedDeferredStartupBootstrap', () => {
       api: {
         push: () => ({
           sendToAllDevices: vi.fn(),
-          sendToAllDevicesAsync: vi.fn(async () => undefined),
+          sendToAllDevicesAsync: vi.fn(async () => true),
         }),
       },
       session: {} as never,

@@ -3,7 +3,7 @@ import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { dispatchConnectedServiceQuotaLifecycleNotificationAsync } from './dispatchConnectedServiceQuotaLifecycleNotification';
 
-type SendToAllDevicesAsync = (title: string, body: string, data: Record<string, unknown>) => Promise<void>;
+type SendToAllDevicesAsync = (title: string, body: string, data: Record<string, unknown>) => Promise<boolean>;
 
 function buildSettings(topics: Readonly<{ blocked: boolean; recovered: boolean }>) {
   return accountSettingsParse({
@@ -28,7 +28,7 @@ function buildSettings(topics: Readonly<{ blocked: boolean; recovered: boolean }
 
 describe('dispatchConnectedServiceQuotaLifecycleNotificationAsync', () => {
   it('dispatches a quota-blocked notification per affected session with retry timing from the known reset', async () => {
-    const sendToAllDevicesAsync = vi.fn<SendToAllDevicesAsync>(async () => {});
+    const sendToAllDevicesAsync = vi.fn<SendToAllDevicesAsync>(async () => { return true; });
 
     await dispatchConnectedServiceQuotaLifecycleNotificationAsync({
       settings: buildSettings({ blocked: true, recovered: true }),
@@ -63,7 +63,7 @@ describe('dispatchConnectedServiceQuotaLifecycleNotificationAsync', () => {
   });
 
   it('suppresses dispatch when the quota-blocked topic is disabled on the channel', async () => {
-    const sendToAllDevicesAsync = vi.fn<SendToAllDevicesAsync>(async () => {});
+    const sendToAllDevicesAsync = vi.fn<SendToAllDevicesAsync>(async () => { return true; });
 
     await dispatchConnectedServiceQuotaLifecycleNotificationAsync({
       settings: buildSettings({ blocked: false, recovered: true }),
@@ -87,7 +87,7 @@ describe('dispatchConnectedServiceQuotaLifecycleNotificationAsync', () => {
   });
 
   it('dispatches the quota-recovered topic on the recovered edge without retry timing', async () => {
-    const sendToAllDevicesAsync = vi.fn<SendToAllDevicesAsync>(async () => {});
+    const sendToAllDevicesAsync = vi.fn<SendToAllDevicesAsync>(async () => { return true; });
 
     await dispatchConnectedServiceQuotaLifecycleNotificationAsync({
       settings: buildSettings({ blocked: true, recovered: true }),

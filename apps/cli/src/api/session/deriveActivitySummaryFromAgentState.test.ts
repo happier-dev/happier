@@ -8,6 +8,14 @@ const LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = localPermissionBridgeCoverageOpti
 const LOCAL_PERMISSION_BRIDGE_STOPPED_REASON = localPermissionBridgeCoverageOptions.equivalentCompletedReasons?.[0] ?? '';
 
 describe('deriveActivitySummaryFromAgentState', () => {
+  it('counts Action confirmations as approval attention without changing their user-action shape', () => {
+    const confirmation = { tool: 'Happier Action confirmation', kind: 'user_action' as const,
+      source: 'happier_action', arguments: {}, createdAt: 100 };
+    const question = { tool: 'AskUserQuestion', kind: 'user_action' as const, arguments: {}, createdAt: 200 };
+    expect(deriveActivitySummaryFromAgentState({ requests: { confirmation, question } })).toMatchObject({
+      pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 1, pendingRequestNewestCreatedAt: 200,
+    });
+  });
   it('counts unresolved permission and user-action requests separately', () => {
     expect(deriveActivitySummaryFromAgentState({
       requests: {

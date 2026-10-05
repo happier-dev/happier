@@ -6,6 +6,7 @@ import type { AgentState } from '../types';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import {
   SessionUserActionRequiredOccurrenceV1Schema,
+  resolvePendingRequestAttentionReasonV1,
   type SessionUserActionRequiredOccurrenceV1,
 } from '@happier-dev/protocol';
 
@@ -73,7 +74,7 @@ export function deriveActivitySummaryFromAgentState(
       ? request.kind
       : resolveAgentRequestKind(toolName);
 
-    if (kind === 'user_action') {
+    if (resolvePendingRequestAttentionReasonV1({ kind, source: request.source }) === 'user_action_required') {
       pendingUserActionRequestCount += 1;
     } else {
       pendingPermissionRequestCount += 1;

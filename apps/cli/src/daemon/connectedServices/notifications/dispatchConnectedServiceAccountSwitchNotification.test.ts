@@ -6,7 +6,7 @@ import { dispatchConnectedServiceAccountSwitchNotificationAsync } from './dispat
 
 describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
     it('uses the session title and enriches switch notifications with profile labels and usage percentages', async () => {
-        const sendToAllDevicesAsync = vi.fn(async () => {});
+        const sendToAllDevicesAsync = vi.fn(async () => { return true; });
         const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
         runtimeQuotaSnapshots.recordSnapshot({
             serviceId: 'openai-codex',
@@ -107,7 +107,7 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
     });
 
     it('dispatches the preventive copy for a preemptive soft-threshold switch', async () => {
-        const sendToAllDevicesAsync = vi.fn(async () => {});
+        const sendToAllDevicesAsync = vi.fn(async () => { return true; });
         const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
 
         await dispatchConnectedServiceAccountSwitchNotificationAsync({
@@ -144,7 +144,7 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
     });
 
     it('suppresses external notifications for user-performed manual switches', async () => {
-        const sendToAllDevicesAsync = vi.fn(async () => {});
+        const sendToAllDevicesAsync = vi.fn(async () => { return true; });
         const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
 
         await dispatchConnectedServiceAccountSwitchNotificationAsync({
@@ -176,7 +176,7 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
     });
 
     it('suppresses external notifications for predictive fanout maintenance switches', async () => {
-        const sendToAllDevicesAsync = vi.fn(async () => {});
+        const sendToAllDevicesAsync = vi.fn(async () => { return true; });
         const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
 
         await dispatchConnectedServiceAccountSwitchNotificationAsync({
