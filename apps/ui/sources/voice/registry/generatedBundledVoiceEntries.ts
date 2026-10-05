@@ -307,6 +307,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             },
             "sources": [
               {
+                "contentSearch": true,
                 "instances": [
                   {
                     "constants": {
@@ -477,6 +478,8 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
       }
     ],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [
@@ -503,6 +506,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
         "scope": "daemon"
       }
     ],
+    "inputTypes": [],
     "managedDependencies": [
       {
         "description": "Codex ACP dependency used by the Codex ACP backend",
@@ -801,6 +805,10 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
         },
         "id": "realtime-codex",
         "kind": "conversation",
+        "mark": {
+          "agentId": "codex",
+          "kind": "agent"
+        },
         "platforms": [
           "web",
           "ios",
@@ -826,6 +834,14 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
           "privacyDisclosure": {
             "fallback": "Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session and Connected Services account run through the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate. Codex or OpenAI may retain developer instructions, realtime conversation material, and related diagnostics in provider-native runtime storage according to the selected account and provider policies; Happier does not delete or rewrite that provider-native data.",
             "key": "settingsVoice.realtimeProviders.codex.privacyDisclosure"
+          },
+          "privacyFacts": {
+            "audioDestination": "OpenAI",
+            "processor": "Codex Live · OpenAI",
+            "retention": {
+              "fallback": "Follows your service account settings and terms.",
+              "key": "settingsVoice.pages.privacy.servicePolicy"
+            }
           },
           "schemaVersion": 2
         },
@@ -965,9 +981,12 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -1995,6 +2014,10 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
         },
         "id": "realtime-elevenlabs",
         "kind": "conversation",
+        "mark": {
+          "kind": "icon",
+          "name": "waveform"
+        },
         "platforms": [
           "web",
           "ios",
@@ -2370,6 +2393,14 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             "fallback": "Audio and conversation content are sent from this device to ElevenLabs through the ElevenLabs client connection. Depending on the selected setup, Happier may also send ElevenLabs bounded agent instructions, client-tool definitions and results, and authentication or provisioning requests needed for the feature. Happier’s server may participate in hosted authentication and usage accounting, but neither Happier’s server nor relay carries the live conversation audio. ElevenLabs may process and retain received data under your ElevenLabs account settings and its terms. Voice context-sharing controls are separate from this provider processing.",
             "key": "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure"
           },
+          "privacyFacts": {
+            "audioDestination": "ElevenLabs",
+            "processor": "ElevenLabs",
+            "retention": {
+              "fallback": "Follows your service account settings and terms.",
+              "key": "settingsVoice.pages.privacy.servicePolicy"
+            }
+          },
           "readiness": [
             {
               "kind": "setting_nonempty",
@@ -2423,9 +2454,12 @@ const GOOGLE_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -2631,6 +2665,14 @@ const GOOGLE_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             "fallback": "Audio sent for transcription is processed by Google Gemini. Happier sends these requests through the selected execution machine using that machine’s Google API credential. Google may retain received data according to the selected Google account’s settings and Google’s terms.",
             "key": "settingsVoice.realtimeProviders.google.sttPrivacyDisclosure"
           },
+          "privacyFacts": {
+            "audioDestination": "Google",
+            "processor": "Google Gemini",
+            "retention": {
+              "fallback": "Follows your service account settings and terms.",
+              "key": "settingsVoice.pages.privacy.servicePolicy"
+            }
+          },
           "schemaVersion": 2
         },
         "title": "Google Gemini Speech-to-Text"
@@ -2774,6 +2816,17 @@ const GOOGLE_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             "fallback": "Text sent for speech is processed by Google Cloud Text-to-Speech. Happier sends these requests through the selected execution machine using that machine’s Google API credential. Google may retain received data according to the selected Google account’s settings and Google’s terms.",
             "key": "settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure"
           },
+          "privacyFacts": {
+            "audioDestination": {
+              "fallback": "No microphone audio; reply text only.",
+              "key": "settingsVoice.pages.privacy.noMicrophoneAudio"
+            },
+            "processor": "Google Cloud Text-to-Speech",
+            "retention": {
+              "fallback": "Follows your service account settings and terms.",
+              "key": "settingsVoice.pages.privacy.servicePolicy"
+            }
+          },
           "readiness": [
             {
               "kind": "setting_nonempty",
@@ -2856,9 +2909,12 @@ const OPENAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
       }
     ],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -3062,6 +3118,10 @@ const OPENAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
         },
         "id": "realtime-openai",
         "kind": "conversation",
+        "mark": {
+          "kind": "connected_service",
+          "serviceId": "openai"
+        },
         "platforms": [
           "web",
           "ios",
@@ -3289,6 +3349,14 @@ const OPENAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             "fallback": "Audio and conversation content are sent from this device to OpenAI using WebRTC. When enabled or used, OpenAI may also receive bounded Voice context updates, client-tool definitions, and delegated results from this device. Happier uses the selected Saved Voice API key, OpenAI Connected Service, or experimental Codex OAuth account to mint short-lived client authentication; connected accounts are accessed through the selected machine. OpenAI processes the live conversation under the selected account and may retain received data according to that account’s settings and OpenAI’s terms. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.",
             "key": "settingsVoice.realtimeProviders.openai.privacyDisclosure"
           },
+          "privacyFacts": {
+            "audioDestination": "OpenAI",
+            "processor": "OpenAI Realtime",
+            "retention": {
+              "fallback": "Follows your service account settings and terms.",
+              "key": "settingsVoice.pages.privacy.servicePolicy"
+            }
+          },
           "schemaVersion": 1
         },
         "title": "OpenAI Realtime Voice"
@@ -3335,9 +3403,12 @@ const OPENAI_COMPAT_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -3577,6 +3648,20 @@ const OPENAI_COMPAT_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             "fallback": "Audio for transcription is sent from the selected execution machine to the OpenAI-compatible endpoint you configure. The endpoint operator may retain received data according to its own terms.",
             "key": "settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt"
           },
+          "privacyFacts": {
+            "audioDestination": {
+              "fallback": "Your configured endpoint",
+              "key": "settingsVoice.pages.privacy.yourEndpoint"
+            },
+            "processor": {
+              "fallback": "Your endpoint operator",
+              "key": "settingsVoice.pages.privacy.endpointOperator"
+            },
+            "retention": {
+              "fallback": "Follows your endpoint operator’s policy.",
+              "key": "settingsVoice.pages.privacy.endpointPolicy"
+            }
+          },
           "readiness": [
             {
               "kind": "setting_nonempty",
@@ -3749,6 +3834,20 @@ const OPENAI_COMPAT_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             "fallback": "Reply text for speech synthesis is sent from the selected execution machine to the OpenAI-compatible endpoint you configure. The endpoint operator may retain received data according to its own terms.",
             "key": "settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts"
           },
+          "privacyFacts": {
+            "audioDestination": {
+              "fallback": "No microphone audio; reply text only.",
+              "key": "settingsVoice.pages.privacy.noMicrophoneAudio"
+            },
+            "processor": {
+              "fallback": "Your endpoint operator",
+              "key": "settingsVoice.pages.privacy.endpointOperator"
+            },
+            "retention": {
+              "fallback": "Follows your endpoint operator’s policy.",
+              "key": "settingsVoice.pages.privacy.endpointPolicy"
+            }
+          },
           "readiness": [
             {
               "kind": "setting_nonempty",
@@ -3803,9 +3902,12 @@ const XAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -4006,6 +4108,10 @@ const XAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
         },
         "id": "realtime-grok",
         "kind": "conversation",
+        "mark": {
+          "agentId": "grok",
+          "kind": "agent"
+        },
         "platforms": [
           "web",
           "ios",
@@ -4523,6 +4629,14 @@ const XAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             "fallback": "Audio and conversation content are sent from this device to xAI through the xAI Realtime connection. When enabled or used, xAI may also receive bounded Voice context updates, client-tool definitions, and delegated results from this device. Happier uses the xAI API key saved in your Happier account secrets only for the bounded client-auth and voice-catalog operations. xAI processes the live conversation under that account and may retain received data according to the account settings and xAI’s terms. If resumption is enabled, Happier saves the provider conversation ID; forgetting it removes Happier’s saved ID and does not delete data held by xAI. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.",
             "key": "settingsVoice.realtimeProviders.xai.privacyDisclosure"
           },
+          "privacyFacts": {
+            "audioDestination": "xAI",
+            "processor": "xAI Realtime",
+            "retention": {
+              "fallback": "Follows your service account settings and terms.",
+              "key": "settingsVoice.pages.privacy.servicePolicy"
+            }
+          },
           "schemaVersion": 1
         },
         "title": "xAI Grok Voice"
@@ -4561,10 +4675,6 @@ export const BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS = Object.freeze([
 export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = createBundledVoiceProviderPresentations(
 [
   {
-    "mark": {
-      "agentId": "codex",
-      "kind": "agent"
-    },
     "providerId": "happier.agent.codex/realtime-codex",
     "selectionOptions": [
       {
@@ -4586,10 +4696,6 @@ export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = createBundledVoiceProvide
       "settingId": "agentId",
       "titleKey": "settingsVoice.realtimeProviders.elevenLabs.agentTitle",
       "updateActionId": "update-agent"
-    },
-    "mark": {
-      "kind": "icon",
-      "name": "waveform"
     },
     "providerId": "happier.voice.elevenlabs/realtime-elevenlabs",
     "resources": {
@@ -4705,10 +4811,6 @@ export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = createBundledVoiceProvide
     }
   },
   {
-    "mark": {
-      "kind": "connected_service",
-      "serviceId": "openai"
-    },
     "providerId": "happier.voice.openai/realtime-openai",
     "selectionOptions": [
       {
@@ -4812,10 +4914,6 @@ export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = createBundledVoiceProvide
     }
   },
   {
-    "mark": {
-      "agentId": "grok",
-      "kind": "agent"
-    },
     "providerId": "happier.voice.xai/realtime-grok",
     "selectionOptions": [
       {

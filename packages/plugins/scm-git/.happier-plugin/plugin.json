@@ -14,9 +14,12 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [
       {
         "description": "Git command line executable used for local source-control operations.",

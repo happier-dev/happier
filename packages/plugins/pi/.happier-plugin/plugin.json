@@ -64,7 +64,15 @@
           "displayName": "Pi Coding Agent CLI",
           "executable": {
             "binaryName": "pi",
-            "knownUserBinDirSuffixes": null,
+            "knownEnvironmentBinDirs": [
+              {
+                "envVar": "PI_CODING_AGENT_DIR",
+                "relativeDir": "bin"
+              }
+            ],
+            "knownUserBinDirSuffixes": [
+              ".pi/agent/bin"
+            ],
             "sourcePreference": "system-first"
           },
           "install": {
@@ -148,6 +156,7 @@
             },
             "sources": [
               {
+                "contentSearch": false,
                 "instances": [
                   {
                     "constants": {},
@@ -215,9 +224,12 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],

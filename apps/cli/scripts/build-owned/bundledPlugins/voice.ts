@@ -57,7 +57,10 @@ export function renderBundledVoiceEntriesTs(
   lines.push(']) satisfies readonly BundledVoiceManifestContribution[];');
   lines.push('');
   lines.push('export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = createBundledVoiceProviderPresentations(');
-  lines.push(`${renderJsonLiteral(sources.flatMap((source) => source.presentations) as JsonValue)} as const,`);
+  // Service marks are contribution semantics, supplied by the manifest owner.
+  const presentations = sources.flatMap((source) => source.presentations)
+    .map(({ mark: _mark, ...presentation }) => presentation);
+  lines.push(`${renderJsonLiteral(presentations as JsonValue)} as const,`);
   lines.push(') satisfies readonly VoiceProviderPresentation[];');
   lines.push('');
   return lines.join('\n');

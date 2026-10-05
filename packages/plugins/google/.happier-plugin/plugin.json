@@ -14,9 +14,12 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -222,6 +225,14 @@
             "fallback": "Audio sent for transcription is processed by Google Gemini. Happier sends these requests through the selected execution machine using that machine’s Google API credential. Google may retain received data according to the selected Google account’s settings and Google’s terms.",
             "key": "settingsVoice.realtimeProviders.google.sttPrivacyDisclosure"
           },
+          "privacyFacts": {
+            "audioDestination": "Google",
+            "processor": "Google Gemini",
+            "retention": {
+              "fallback": "Follows your service account settings and terms.",
+              "key": "settingsVoice.pages.privacy.servicePolicy"
+            }
+          },
           "schemaVersion": 2
         },
         "title": "Google Gemini Speech-to-Text"
@@ -364,6 +375,17 @@
           "privacyDisclosure": {
             "fallback": "Text sent for speech is processed by Google Cloud Text-to-Speech. Happier sends these requests through the selected execution machine using that machine’s Google API credential. Google may retain received data according to the selected Google account’s settings and Google’s terms.",
             "key": "settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure"
+          },
+          "privacyFacts": {
+            "audioDestination": {
+              "fallback": "No microphone audio; reply text only.",
+              "key": "settingsVoice.pages.privacy.noMicrophoneAudio"
+            },
+            "processor": "Google Cloud Text-to-Speech",
+            "retention": {
+              "fallback": "Follows your service account settings and terms.",
+              "key": "settingsVoice.pages.privacy.servicePolicy"
+            }
           },
           "readiness": [
             {

@@ -5,7 +5,10 @@
  * - `apps/cli/scripts/build-owned/generateBundledPluginEntries.ts`
  */
 
-export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
+type BundledPluginTranslationLocale = 'ca' | 'de' | 'en' | 'es' | 'fr' | 'it' | 'ja' | 'pl' | 'pt' | 'ru' | 'zh-Hans' | 'zh-Hant';
+export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
+    BundledPluginTranslationLocale, Readonly<Record<BundledPluginTranslationKey, string>>
+>> = Object.freeze({
   "ca": {
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
@@ -1925,7 +1928,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "Llegir la finestra actual de la llista",
     "plugins.triage.column.all": "Totes les entrades",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Canvia al tauler",
+    "plugins.triage.currentContext.clearSelection": "Esborra la selecció múltiple",
+    "plugins.triage.currentContext.closeDetail": "Tanca els detalls",
+    "plugins.triage.currentContext.list": "Canvia a la llista",
     "plugins.triage.currentContext.openEntry": "Obre {title}",
+    "plugins.triage.currentContext.refresh": "Actualitza PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Selecciona la pestanya {tab}",
+    "plugins.triage.detailStory.activity": "Activitat",
+    "plugins.triage.detailStory.ask": "La petició",
+    "plugins.triage.detailStory.changed": "Què ha canviat",
+    "plugins.triage.detailStory.detail": "Detall de la font",
+    "plugins.triage.detailStory.failed": "{count} han fallat",
+    "plugins.triage.detailStory.passed": "Correcte",
+    "plugins.triage.detailStory.report": "L’informe",
+    "plugins.triage.detailStory.running": "En curs",
     "plugins.triage.picker.attach": "Adjunta",
     "plugins.triage.picker.attached": "Adjunt",
     "plugins.triage.picker.attachEntryLabel": "Adjunta «{title}»",
@@ -2179,6 +2196,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "Fora de línia",
     "plugins.triage.surface.detail.agent.permission": "Necessita el teu permís",
     "plugins.triage.surface.detail.agent.ready": "Llesta",
+    "plugins.triage.surface.detail.agent.seeAll": "Mostra-ho tot",
     "plugins.triage.surface.detail.agent.working": "Treballant",
     "plugins.triage.surface.detail.connection": "Connexió",
     "plugins.triage.surface.detail.connectionUnhealthy": "No s'ha pogut llegir aquesta connexió al pas anterior.",
@@ -2187,11 +2205,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "Tancada sense fusionar",
     "plugins.triage.surface.detail.fixPr.conflict": "Aquest vincle s’ha canviat en un altre lloc. Es mostra l’estat actual.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier no pot accedir al teu compte ara mateix, així que el vincle no s’ha canviat.",
-    "plugins.triage.surface.detail.fixPr.full": "Aquesta entrada ja té tantes pull requests de correcció com pot contenir. Desvincula’n una primer.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Algunes sessions vinculades no s’han revisat per trobar pull requests.",
     "plugins.triage.surface.detail.fixPr.link": "Vincula la PR de correcció",
     "plugins.triage.surface.detail.fixPr.merged": "Fusionada",
     "plugins.triage.surface.detail.fixPr.open": "Oberta",
+    "plugins.triage.surface.detail.fixPr.readFailed": "No s’han pogut llegir els vincles amb pull requests de correcció.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request de correcció",
     "plugins.triage.surface.detail.fixPr.unlink": "Desvincula",
     "plugins.triage.surface.detail.lastKnown": "Aquestes són les darreres dades que aquesta pàgina tenia d’aquesta entrada i poden estar desactualitzades.",
@@ -2235,6 +2253,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "Detall de l'entrada",
     "plugins.triage.surface.detail.type": "Tipus",
     "plugins.triage.surface.detail.via": "via {name}",
+    "plugins.triage.surface.drop.linkSession": "Vincula la sessió",
     "plugins.triage.surface.empty.healthy.description": "Tots els recursos configurats han resposta, i cap d'ells no té una entrada per a tu ara mateix.",
     "plugins.triage.surface.empty.healthy.title": "No necessites res més",
     "plugins.triage.surface.empty.incomplete.description": "Alguns recursos no havien acabat la seva recorreguda, així que pot haver entrades que encara falten. Refresca per continuar llegint.",
@@ -2315,6 +2334,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "Més recents",
     "plugins.triage.surface.order.oldest": "Més antics",
     "plugins.triage.surface.order.smart": "Intel·ligent",
+    "plugins.triage.surface.organizeList": "Organitza la llista",
     "plugins.triage.surface.peek.open": "Obre",
     "plugins.triage.surface.peek.pin": "Fixa",
     "plugins.triage.surface.pin.conflict": "Aquest fixat ha estat canviat en un altre lloc. Mostrant l'estat actual.",
@@ -2398,6 +2418,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "Iniciant una sessió per a aquesta entrada…",
     "plugins.triage.surface.session.workspaceRefused": "No s’ha pogut preparar un espai de revisió per a aquesta entrada, així que no s’ha creat res.",
     "plugins.triage.surface.session.workspaceUnavailable": "Ara mateix no s’ha pogut preparar l’espai de revisió. No s’ha creat res.",
+    "plugins.triage.surface.sessionActivity.reading": "Llegint l’activitat de les sessions vinculades…",
+    "plugins.triage.surface.sessionActivity.unavailable": "No s’ha pogut llegir part de l’activitat de les sessions vinculades.",
     "plugins.triage.surface.smartPolicy": "Ordre intel·ligent",
     "plugins.triage.surface.smartPolicy.activityFirst": "Primer l’activitat més recent",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Primer allò que et necessita",
@@ -4431,7 +4453,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "Aktuelles Listenfenster lesen",
     "plugins.triage.column.all": "Alle Einträge",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Zur Board-Ansicht wechseln",
+    "plugins.triage.currentContext.clearSelection": "Mehrfachauswahl aufheben",
+    "plugins.triage.currentContext.closeDetail": "Details schließen",
+    "plugins.triage.currentContext.list": "Zur Listenansicht wechseln",
     "plugins.triage.currentContext.openEntry": "{title} öffnen",
+    "plugins.triage.currentContext.refresh": "PRs & Issues aktualisieren",
+    "plugins.triage.currentContext.selectTab": "Tab {tab} auswählen",
+    "plugins.triage.detailStory.activity": "Aktivität",
+    "plugins.triage.detailStory.ask": "Die Anfrage",
+    "plugins.triage.detailStory.changed": "Was sich geändert hat",
+    "plugins.triage.detailStory.detail": "Quelldetails",
+    "plugins.triage.detailStory.failed": "{count} fehlgeschlagen",
+    "plugins.triage.detailStory.passed": "Bestanden",
+    "plugins.triage.detailStory.report": "Der Bericht",
+    "plugins.triage.detailStory.running": "Läuft",
     "plugins.triage.picker.attach": "Anhängen",
     "plugins.triage.picker.attached": "Angehängt",
     "plugins.triage.picker.attachEntryLabel": "{title} anhängen",
@@ -4685,6 +4721,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "Offline",
     "plugins.triage.surface.detail.agent.permission": "Braucht deine Erlaubnis",
     "plugins.triage.surface.detail.agent.ready": "Bereit",
+    "plugins.triage.surface.detail.agent.seeAll": "Alle anzeigen",
     "plugins.triage.surface.detail.agent.working": "Arbeitet",
     "plugins.triage.surface.detail.connection": "Verbindung",
     "plugins.triage.surface.detail.connectionUnhealthy": "Diese Verbindung konnte beim letzten Durchlauf nicht gelesen werden.",
@@ -4693,11 +4730,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "Ohne Merge geschlossen",
     "plugins.triage.surface.detail.fixPr.conflict": "Diese Verknüpfung wurde an anderer Stelle geändert. Der aktuelle Stand wird angezeigt.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier kann dein Konto gerade nicht erreichen, daher wurde die Verknüpfung nicht geändert.",
-    "plugins.triage.surface.detail.fixPr.full": "Dieser Eintrag hat bereits so viele Fix-Pull-Requests, wie er aufnehmen kann. Löse zuerst eine Verknüpfung.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Einige verknüpfte Sitzungen wurden nicht auf Pull Requests geprüft.",
     "plugins.triage.surface.detail.fixPr.link": "Fix-PR verknüpfen",
     "plugins.triage.surface.detail.fixPr.merged": "Gemergt",
     "plugins.triage.surface.detail.fixPr.open": "Offen",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Die Fix-Pull-Request-Verknüpfungen konnten nicht gelesen werden.",
     "plugins.triage.surface.detail.fixPr.title": "Fix-Pull-Request",
     "plugins.triage.surface.detail.fixPr.unlink": "Verknüpfung lösen",
     "plugins.triage.surface.detail.lastKnown": "Dies sind die letzten Angaben, die diese Seite zu diesem Eintrag gespeichert hat. Sie könnten veraltet sein.",
@@ -4741,6 +4778,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "Eintragsdetails",
     "plugins.triage.surface.detail.type": "Typ",
     "plugins.triage.surface.detail.via": "über {name}",
+    "plugins.triage.surface.drop.linkSession": "Session verknüpfen",
     "plugins.triage.surface.empty.healthy.description": "Alle konfigurierten Quellen haben geantwortet und keine hat gerade einen Eintrag für dich.",
     "plugins.triage.surface.empty.healthy.title": "Nichts erfordert deine Aufmerksamkeit",
     "plugins.triage.surface.empty.incomplete.description": "Einige Quellen hatten ihren Durchlauf noch nicht abgeschlossen, daher fehlen möglicherweise noch Einträge. Aktualisiere die Liste, um weiterzulesen.",
@@ -4821,6 +4859,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "Neueste zuerst",
     "plugins.triage.surface.order.oldest": "Älteste zuerst",
     "plugins.triage.surface.order.smart": "Intelligent",
+    "plugins.triage.surface.organizeList": "Liste organisieren",
     "plugins.triage.surface.peek.open": "Öffnen",
     "plugins.triage.surface.peek.pin": "Anheften",
     "plugins.triage.surface.pin.conflict": "Diese Anheftung wurde an anderer Stelle geändert. Der aktuelle Stand wird angezeigt.",
@@ -4904,6 +4943,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "Eine Session für diesen Eintrag wird gestartet…",
     "plugins.triage.surface.session.workspaceRefused": "Für diesen Eintrag konnte kein Review-Arbeitsbereich vorbereitet werden. Es wurde nichts erstellt.",
     "plugins.triage.surface.session.workspaceUnavailable": "Der Review-Arbeitsbereich konnte gerade nicht vorbereitet werden. Es wurde nichts erstellt.",
+    "plugins.triage.surface.sessionActivity.reading": "Aktivität verknüpfter Sitzungen wird gelesen…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Ein Teil der Aktivität verknüpfter Sitzungen konnte nicht gelesen werden.",
     "plugins.triage.surface.smartPolicy": "Intelligente Sortierung",
     "plugins.triage.surface.smartPolicy.activityFirst": "Neueste Aktivität zuerst",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Was dich benötigt, zuerst",
@@ -6937,7 +6978,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "Read the current list window",
     "plugins.triage.column.all": "All entries",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Switch to Board",
+    "plugins.triage.currentContext.clearSelection": "Clear bulk selection",
+    "plugins.triage.currentContext.closeDetail": "Close detail",
+    "plugins.triage.currentContext.list": "Switch to List",
     "plugins.triage.currentContext.openEntry": "Open {title}",
+    "plugins.triage.currentContext.refresh": "Refresh PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Select {tab} tab",
+    "plugins.triage.detailStory.activity": "Activity",
+    "plugins.triage.detailStory.ask": "The ask",
+    "plugins.triage.detailStory.changed": "What changed",
+    "plugins.triage.detailStory.detail": "Source detail",
+    "plugins.triage.detailStory.failed": "{count} failed",
+    "plugins.triage.detailStory.passed": "Passed",
+    "plugins.triage.detailStory.report": "The report",
+    "plugins.triage.detailStory.running": "Running",
     "plugins.triage.picker.attach": "Attach",
     "plugins.triage.picker.attached": "Attached",
     "plugins.triage.picker.attachEntryLabel": "Attach {title}",
@@ -7191,6 +7246,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "Offline",
     "plugins.triage.surface.detail.agent.permission": "Needs your permission",
     "plugins.triage.surface.detail.agent.ready": "Ready",
+    "plugins.triage.surface.detail.agent.seeAll": "See all",
     "plugins.triage.surface.detail.agent.working": "Working",
     "plugins.triage.surface.detail.connection": "Connection",
     "plugins.triage.surface.detail.connectionUnhealthy": "This connection could not be read in the last pass.",
@@ -7199,11 +7255,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "Closed without merging",
     "plugins.triage.surface.detail.fixPr.conflict": "That link was changed somewhere else. Showing the current state.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier cannot reach your account right now, so the link was not changed.",
-    "plugins.triage.surface.detail.fixPr.full": "This entry already has as many fix pull requests as it can hold. Unlink one first.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Some linked sessions were not checked for pull requests.",
     "plugins.triage.surface.detail.fixPr.link": "Link fix PR",
     "plugins.triage.surface.detail.fixPr.merged": "Merged",
     "plugins.triage.surface.detail.fixPr.open": "Open",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Fix pull request links could not be read.",
     "plugins.triage.surface.detail.fixPr.title": "Fix pull request",
     "plugins.triage.surface.detail.fixPr.unlink": "Unlink",
     "plugins.triage.surface.detail.lastKnown": "These are the last facts this page held for this entry, and they may be out of date.",
@@ -7247,6 +7303,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "Entry detail",
     "plugins.triage.surface.detail.type": "Type",
     "plugins.triage.surface.detail.via": "via {name}",
+    "plugins.triage.surface.drop.linkSession": "Link Session",
     "plugins.triage.surface.empty.healthy.description": "Every configured source answered, and none of them has an entry for you right now.",
     "plugins.triage.surface.empty.healthy.title": "Nothing needs you",
     "plugins.triage.surface.empty.incomplete.description": "Some sources had not finished their walk, so entries may still be missing. Refresh to keep reading.",
@@ -7327,6 +7384,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "Newest",
     "plugins.triage.surface.order.oldest": "Oldest",
     "plugins.triage.surface.order.smart": "Smart",
+    "plugins.triage.surface.organizeList": "Organize list",
     "plugins.triage.surface.peek.open": "Open",
     "plugins.triage.surface.peek.pin": "Pin",
     "plugins.triage.surface.pin.conflict": "That pin was changed somewhere else. Showing the current state.",
@@ -7410,6 +7468,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "Starting a session for this entry…",
     "plugins.triage.surface.session.workspaceRefused": "A review workspace could not be prepared for this entry, so nothing was created.",
     "plugins.triage.surface.session.workspaceUnavailable": "The review workspace could not be prepared just now. Nothing was created.",
+    "plugins.triage.surface.sessionActivity.reading": "Reading linked Session activity…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Some linked Session activity could not be read.",
     "plugins.triage.surface.smartPolicy": "Smart order",
     "plugins.triage.surface.smartPolicy.activityFirst": "Most recent activity first",
     "plugins.triage.surface.smartPolicy.attentionFirst": "What needs you first",
@@ -9443,7 +9503,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "Leer la ventana actual de la lista",
     "plugins.triage.column.all": "Todas las entradas",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Cambiar al tablero",
+    "plugins.triage.currentContext.clearSelection": "Borrar la selección múltiple",
+    "plugins.triage.currentContext.closeDetail": "Cerrar detalles",
+    "plugins.triage.currentContext.list": "Cambiar a la lista",
     "plugins.triage.currentContext.openEntry": "Abrir {title}",
+    "plugins.triage.currentContext.refresh": "Actualizar PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Seleccionar la pestaña {tab}",
+    "plugins.triage.detailStory.activity": "Actividad",
+    "plugins.triage.detailStory.ask": "La solicitud",
+    "plugins.triage.detailStory.changed": "Qué cambió",
+    "plugins.triage.detailStory.detail": "Detalle de la fuente",
+    "plugins.triage.detailStory.failed": "{count} fallidos",
+    "plugins.triage.detailStory.passed": "Correcto",
+    "plugins.triage.detailStory.report": "El informe",
+    "plugins.triage.detailStory.running": "En curso",
     "plugins.triage.picker.attach": "Adjuntar",
     "plugins.triage.picker.attached": "Adjunto",
     "plugins.triage.picker.attachEntryLabel": "Adjuntar «{title}»",
@@ -9697,6 +9771,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "Sin conexión",
     "plugins.triage.surface.detail.agent.permission": "Necesita tu permiso",
     "plugins.triage.surface.detail.agent.ready": "Lista",
+    "plugins.triage.surface.detail.agent.seeAll": "Ver todos",
     "plugins.triage.surface.detail.agent.working": "Trabajando",
     "plugins.triage.surface.detail.connection": "Conexión",
     "plugins.triage.surface.detail.connectionUnhealthy": "No se pudo leer esta conexión en la última pasada.",
@@ -9705,11 +9780,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "Cerrado sin fusionar",
     "plugins.triage.surface.detail.fixPr.conflict": "Ese vínculo se cambió en otro lugar. Se muestra el estado actual.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier no puede acceder a tu cuenta ahora mismo, así que el vínculo no se ha cambiado.",
-    "plugins.triage.surface.detail.fixPr.full": "Esta entrada ya tiene tantos pull requests de corrección como admite. Desvincula uno primero.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Algunas sesiones vinculadas no se revisaron en busca de pull requests.",
     "plugins.triage.surface.detail.fixPr.link": "Vincular PR de corrección",
     "plugins.triage.surface.detail.fixPr.merged": "Fusionado",
     "plugins.triage.surface.detail.fixPr.open": "Abierto",
+    "plugins.triage.surface.detail.fixPr.readFailed": "No se pudieron leer los vínculos con pull requests de corrección.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request de corrección",
     "plugins.triage.surface.detail.fixPr.unlink": "Desvincular",
     "plugins.triage.surface.detail.lastKnown": "Estos son los últimos datos que esta página tenía de esta entrada y pueden estar desactualizados.",
@@ -9753,6 +9828,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "Detalle de la entrada",
     "plugins.triage.surface.detail.type": "Tipo",
     "plugins.triage.surface.detail.via": "vía {name}",
+    "plugins.triage.surface.drop.linkSession": "Vincular sesión",
     "plugins.triage.surface.empty.healthy.description": "Cada fuente configurada respondió y ninguno de ellos tiene una entrada para ti en este momento.",
     "plugins.triage.surface.empty.healthy.title": "Nada te necesita",
     "plugins.triage.surface.empty.incomplete.description": "Algunas fuentes no habían terminado su camino, por lo que puede que aún faltan entradas. Recarga para seguir leyendo.",
@@ -9833,6 +9909,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "Más recientes",
     "plugins.triage.surface.order.oldest": "Más antiguos",
     "plugins.triage.surface.order.smart": "Inteligente",
+    "plugins.triage.surface.organizeList": "Organizar lista",
     "plugins.triage.surface.peek.open": "Abrir",
     "plugins.triage.surface.peek.pin": "Fijar",
     "plugins.triage.surface.pin.conflict": "Ese fijador cambió en otro lugar. Mostrando el estado actual.",
@@ -9916,6 +9993,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "Iniciando una sesión para esta entrada…",
     "plugins.triage.surface.session.workspaceRefused": "No se pudo preparar un espacio de revisión para esta entrada, así que no se creó nada.",
     "plugins.triage.surface.session.workspaceUnavailable": "El espacio de revisión no se pudo preparar ahora mismo. No se creó nada.",
+    "plugins.triage.surface.sessionActivity.reading": "Leyendo la actividad de las sesiones vinculadas…",
+    "plugins.triage.surface.sessionActivity.unavailable": "No se pudo leer parte de la actividad de las sesiones vinculadas.",
     "plugins.triage.surface.smartPolicy": "Orden inteligente",
     "plugins.triage.surface.smartPolicy.activityFirst": "Primero la actividad más reciente",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Primero lo que te necesita",
@@ -11949,7 +12028,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "Lire la fenêtre actuelle de la liste",
     "plugins.triage.column.all": "Toutes les entrées",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Passer au tableau",
+    "plugins.triage.currentContext.clearSelection": "Effacer la sélection multiple",
+    "plugins.triage.currentContext.closeDetail": "Fermer les détails",
+    "plugins.triage.currentContext.list": "Passer à la liste",
     "plugins.triage.currentContext.openEntry": "Ouvrir {title}",
+    "plugins.triage.currentContext.refresh": "Actualiser PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Sélectionner l’onglet {tab}",
+    "plugins.triage.detailStory.activity": "Activité",
+    "plugins.triage.detailStory.ask": "La demande",
+    "plugins.triage.detailStory.changed": "Ce qui a changé",
+    "plugins.triage.detailStory.detail": "Détails de la source",
+    "plugins.triage.detailStory.failed": "{count} en échec",
+    "plugins.triage.detailStory.passed": "Réussi",
+    "plugins.triage.detailStory.report": "Le signalement",
+    "plugins.triage.detailStory.running": "En cours",
     "plugins.triage.picker.attach": "Joindre",
     "plugins.triage.picker.attached": "Joint",
     "plugins.triage.picker.attachEntryLabel": "Joindre « {title} »",
@@ -12203,6 +12296,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "Hors ligne",
     "plugins.triage.surface.detail.agent.permission": "A besoin de ton autorisation",
     "plugins.triage.surface.detail.agent.ready": "Prêt",
+    "plugins.triage.surface.detail.agent.seeAll": "Tout voir",
     "plugins.triage.surface.detail.agent.working": "En cours",
     "plugins.triage.surface.detail.connection": "Connexion",
     "plugins.triage.surface.detail.connectionUnhealthy": "Cette connexion n'a pas pu être lue lors du dernier passage.",
@@ -12211,11 +12305,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "Fermée sans fusion",
     "plugins.triage.surface.detail.fixPr.conflict": "Ce lien a été modifié ailleurs. L’état actuel est affiché.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier ne peut pas joindre votre compte pour le moment, le lien n’a donc pas été modifié.",
-    "plugins.triage.surface.detail.fixPr.full": "Cette entrée a déjà autant de pull requests de correction qu’elle peut en contenir. Déliez-en une d’abord.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Certaines sessions liées n’ont pas été vérifiées pour des pull requests.",
     "plugins.triage.surface.detail.fixPr.link": "Lier la PR de correction",
     "plugins.triage.surface.detail.fixPr.merged": "Fusionnée",
     "plugins.triage.surface.detail.fixPr.open": "Ouverte",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Les liens vers les pull requests de correction n’ont pas pu être lus.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request de correction",
     "plugins.triage.surface.detail.fixPr.unlink": "Délier",
     "plugins.triage.surface.detail.lastKnown": "Voici les derniers éléments que cette page conservait pour cette entrée ; ils peuvent être obsolètes.",
@@ -12259,6 +12353,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "Détail de l'entrée",
     "plugins.triage.surface.detail.type": "Type",
     "plugins.triage.surface.detail.via": "via {name}",
+    "plugins.triage.surface.drop.linkSession": "Lier la session",
     "plugins.triage.surface.empty.healthy.description": "Toutes les sources configurées ont répondu, et aucune n'a une entrée pour vous à ce moment.",
     "plugins.triage.surface.empty.healthy.title": "Rien ne vous concerne",
     "plugins.triage.surface.empty.incomplete.description": "Certaines sources n'ont pas terminé leur parcours, donc des entrées pourraient encore être manquantes. Rafraîchissez pour continuer à lire.",
@@ -12339,6 +12434,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "Plus récents",
     "plugins.triage.surface.order.oldest": "Plus anciens",
     "plugins.triage.surface.order.smart": "Intelligent",
+    "plugins.triage.surface.organizeList": "Organiser la liste",
     "plugins.triage.surface.peek.open": "Ouvrir",
     "plugins.triage.surface.peek.pin": "Épingler",
     "plugins.triage.surface.pin.conflict": "Ce pin a été changé ailleurs. Affichage de l'état actuel.",
@@ -12422,6 +12518,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "Démarrage d’une session pour cette entrée…",
     "plugins.triage.surface.session.workspaceRefused": "Aucun espace de relecture n’a pu être préparé pour cette entrée, rien n’a donc été créé.",
     "plugins.triage.surface.session.workspaceUnavailable": "L’espace de relecture n’a pas pu être préparé pour le moment. Rien n’a été créé.",
+    "plugins.triage.surface.sessionActivity.reading": "Lecture de l’activité des sessions liées…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Une partie de l’activité des sessions liées n’a pas pu être lue.",
     "plugins.triage.surface.smartPolicy": "Tri intelligent",
     "plugins.triage.surface.smartPolicy.activityFirst": "D’abord l’activité la plus récente",
     "plugins.triage.surface.smartPolicy.attentionFirst": "D’abord ce qui vous attend",
@@ -14455,7 +14553,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "Leggere la finestra corrente dell’elenco",
     "plugins.triage.column.all": "Tutte le voci",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Passa alla bacheca",
+    "plugins.triage.currentContext.clearSelection": "Cancella la selezione multipla",
+    "plugins.triage.currentContext.closeDetail": "Chiudi dettagli",
+    "plugins.triage.currentContext.list": "Passa all’elenco",
     "plugins.triage.currentContext.openEntry": "Apri {title}",
+    "plugins.triage.currentContext.refresh": "Aggiorna PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Seleziona la scheda {tab}",
+    "plugins.triage.detailStory.activity": "Attività",
+    "plugins.triage.detailStory.ask": "La richiesta",
+    "plugins.triage.detailStory.changed": "Cosa è cambiato",
+    "plugins.triage.detailStory.detail": "Dettaglio della fonte",
+    "plugins.triage.detailStory.failed": "{count} non riusciti",
+    "plugins.triage.detailStory.passed": "Riuscito",
+    "plugins.triage.detailStory.report": "La segnalazione",
+    "plugins.triage.detailStory.running": "In corso",
     "plugins.triage.picker.attach": "Allega",
     "plugins.triage.picker.attached": "Allegato",
     "plugins.triage.picker.attachEntryLabel": "Allega “{title}”",
@@ -14709,6 +14821,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "Offline",
     "plugins.triage.surface.detail.agent.permission": "Serve il tuo permesso",
     "plugins.triage.surface.detail.agent.ready": "Pronta",
+    "plugins.triage.surface.detail.agent.seeAll": "Vedi tutti",
     "plugins.triage.surface.detail.agent.working": "Al lavoro",
     "plugins.triage.surface.detail.connection": "Connessione",
     "plugins.triage.surface.detail.connectionUnhealthy": "Non è stato possibile leggere questa connessione nell'ultima passata.",
@@ -14717,11 +14830,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "Chiusa senza unione",
     "plugins.triage.surface.detail.fixPr.conflict": "Questo collegamento è stato modificato altrove. Viene mostrato lo stato attuale.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier non riesce a raggiungere il tuo account in questo momento, quindi il collegamento non è stato modificato.",
-    "plugins.triage.surface.detail.fixPr.full": "Questa voce ha già il numero massimo di pull request di correzione. Scollegane una prima.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Alcune sessioni collegate non sono state controllate per le pull request.",
     "plugins.triage.surface.detail.fixPr.link": "Collega PR di correzione",
     "plugins.triage.surface.detail.fixPr.merged": "Unita",
     "plugins.triage.surface.detail.fixPr.open": "Aperta",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Non è stato possibile leggere i collegamenti ai pull request di correzione.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request di correzione",
     "plugins.triage.surface.detail.fixPr.unlink": "Scollega",
     "plugins.triage.surface.detail.lastKnown": "Questi sono gli ultimi dati che questa pagina aveva per questa voce e potrebbero non essere aggiornati.",
@@ -14765,6 +14878,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "Dettaglio della voce",
     "plugins.triage.surface.detail.type": "Tipo",
     "plugins.triage.surface.detail.via": "tramite {name}",
+    "plugins.triage.surface.drop.linkSession": "Collega sessione",
     "plugins.triage.surface.empty.healthy.description": "Ogni fonte configurata ha risposto, e nessuna di loro ha un'entrata per te ora.",
     "plugins.triage.surface.empty.healthy.title": "Niente ti sta richiedendo",
     "plugins.triage.surface.empty.incomplete.description": "Alcune fonti non sono state ancora completate, quindi le voci potrebbero essere mancanti. Aggiorna per continuare a leggere.",
@@ -14845,6 +14959,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "Più recenti",
     "plugins.triage.surface.order.oldest": "Più vecchi",
     "plugins.triage.surface.order.smart": "Intelligente",
+    "plugins.triage.surface.organizeList": "Organizza elenco",
     "plugins.triage.surface.peek.open": "Apri",
     "plugins.triage.surface.peek.pin": "Fissa",
     "plugins.triage.surface.pin.conflict": "Quel segnalino è stato modificato altrove. Mostrando lo stato corrente.",
@@ -14928,6 +15043,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "Avvio di una sessione per questa voce…",
     "plugins.triage.surface.session.workspaceRefused": "Non è stato possibile preparare uno spazio di revisione per questa voce, quindi non è stato creato nulla.",
     "plugins.triage.surface.session.workspaceUnavailable": "Al momento non è stato possibile preparare lo spazio di revisione. Non è stato creato nulla.",
+    "plugins.triage.surface.sessionActivity.reading": "Lettura dell’attività delle sessioni collegate…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Non è stato possibile leggere parte dell’attività delle sessioni collegate.",
     "plugins.triage.surface.smartPolicy": "Ordine intelligente",
     "plugins.triage.surface.smartPolicy.activityFirst": "Prima l’attività più recente",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Prima ciò che ha bisogno di te",
@@ -16961,7 +17078,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "現在の一覧ウィンドウを読み取る",
     "plugins.triage.column.all": "すべてのエントリ",
     "plugins.triage.composer.entriesCount": "{count} 件の PRs & Issues",
+    "plugins.triage.currentContext.board": "ボードに切り替える",
+    "plugins.triage.currentContext.clearSelection": "複数選択を解除する",
+    "plugins.triage.currentContext.closeDetail": "詳細を閉じる",
+    "plugins.triage.currentContext.list": "リストに切り替える",
     "plugins.triage.currentContext.openEntry": "{title}を開く",
+    "plugins.triage.currentContext.refresh": "PRs & Issues を更新する",
+    "plugins.triage.currentContext.selectTab": "{tab} タブを選択する",
+    "plugins.triage.detailStory.activity": "アクティビティ",
+    "plugins.triage.detailStory.ask": "依頼",
+    "plugins.triage.detailStory.changed": "変更内容",
+    "plugins.triage.detailStory.detail": "ソースの詳細",
+    "plugins.triage.detailStory.failed": "{count} 件失敗",
+    "plugins.triage.detailStory.passed": "成功",
+    "plugins.triage.detailStory.report": "報告",
+    "plugins.triage.detailStory.running": "実行中",
     "plugins.triage.picker.attach": "添付",
     "plugins.triage.picker.attached": "添付済み",
     "plugins.triage.picker.attachEntryLabel": "「{title}」を添付",
@@ -17215,6 +17346,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "オフライン",
     "plugins.triage.surface.detail.agent.permission": "許可が必要です",
     "plugins.triage.surface.detail.agent.ready": "準備完了",
+    "plugins.triage.surface.detail.agent.seeAll": "すべて表示",
     "plugins.triage.surface.detail.agent.working": "作業中",
     "plugins.triage.surface.detail.connection": "接続",
     "plugins.triage.surface.detail.connectionUnhealthy": "最後のパスでこの接続を読み取れませんでした。",
@@ -17223,11 +17355,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "マージせずにクローズ",
     "plugins.triage.surface.detail.fixPr.conflict": "このリンクは別の場所で変更されました。現在の状態を表示しています。",
     "plugins.triage.surface.detail.fixPr.failed": "Happier は現在アカウントに接続できないため、リンクは変更されていません。",
-    "plugins.triage.surface.detail.fixPr.full": "このエントリーの修正プルリクエストは上限に達しています。先にひとつリンク解除してください。",
     "plugins.triage.surface.detail.fixPr.incomplete": "一部のリンク済みセッションはプルリクエストを確認していません。",
     "plugins.triage.surface.detail.fixPr.link": "修正 PR をリンク",
     "plugins.triage.surface.detail.fixPr.merged": "マージ済み",
     "plugins.triage.surface.detail.fixPr.open": "オープン",
+    "plugins.triage.surface.detail.fixPr.readFailed": "修正プルリクエストのリンクを読み取れませんでした。",
     "plugins.triage.surface.detail.fixPr.title": "修正プルリクエスト",
     "plugins.triage.surface.detail.fixPr.unlink": "リンク解除",
     "plugins.triage.surface.detail.lastKnown": "この項目についてこのページが最後に保持していた情報です。最新でない可能性があります。",
@@ -17271,6 +17403,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "エントリの詳細",
     "plugins.triage.surface.detail.type": "種類",
     "plugins.triage.surface.detail.via": "{name} 経由",
+    "plugins.triage.surface.drop.linkSession": "セッションをリンク",
     "plugins.triage.surface.empty.healthy.description": "すべての設定されたソースが応答し、あなたには今、何のエントリもありません。",
     "plugins.triage.surface.empty.healthy.title": "何も必要はありません",
     "plugins.triage.surface.empty.incomplete.description": "一部のソースが未完了のままなので、エントリがまだ欠けています。更新して読み取りを続けることができます。",
@@ -17351,6 +17484,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "新しい順",
     "plugins.triage.surface.order.oldest": "古い順",
     "plugins.triage.surface.order.smart": "スマート",
+    "plugins.triage.surface.organizeList": "リストを整理",
     "plugins.triage.surface.peek.open": "開く",
     "plugins.triage.surface.peek.pin": "ピン留め",
     "plugins.triage.surface.pin.conflict": "その固定は他の場所で変更されました。現在の状態を表示しています。",
@@ -17434,6 +17568,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "この項目のセッションを開始しています…",
     "plugins.triage.surface.session.workspaceRefused": "この項目のレビュー用ワークスペースを準備できなかったため、何も作成されていません。",
     "plugins.triage.surface.session.workspaceUnavailable": "現在レビュー用ワークスペースを準備できませんでした。何も作成されていません。",
+    "plugins.triage.surface.sessionActivity.reading": "リンクされたセッションの動作を読み込み中…",
+    "plugins.triage.surface.sessionActivity.unavailable": "リンクされたセッションの動作の一部を読み込めませんでした。",
     "plugins.triage.surface.smartPolicy": "スマートな並び順",
     "plugins.triage.surface.smartPolicy.activityFirst": "直近の更新を先に",
     "plugins.triage.surface.smartPolicy.attentionFirst": "あなた待ちを先に",
@@ -19467,7 +19603,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "Odczytaj bieżące okno listy",
     "plugins.triage.column.all": "Wszystkie wpisy",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Przełącz na tablicę",
+    "plugins.triage.currentContext.clearSelection": "Wyczyść wybór wielu elementów",
+    "plugins.triage.currentContext.closeDetail": "Zamknij szczegóły",
+    "plugins.triage.currentContext.list": "Przełącz na listę",
     "plugins.triage.currentContext.openEntry": "Otwórz {title}",
+    "plugins.triage.currentContext.refresh": "Odśwież PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Wybierz kartę {tab}",
+    "plugins.triage.detailStory.activity": "Aktywność",
+    "plugins.triage.detailStory.ask": "Prośba",
+    "plugins.triage.detailStory.changed": "Co się zmieniło",
+    "plugins.triage.detailStory.detail": "Szczegóły źródła",
+    "plugins.triage.detailStory.failed": "Niepowodzenia: {count}",
+    "plugins.triage.detailStory.passed": "Powodzenie",
+    "plugins.triage.detailStory.report": "Zgłoszenie",
+    "plugins.triage.detailStory.running": "W toku",
     "plugins.triage.picker.attach": "Dołącz",
     "plugins.triage.picker.attached": "Dołączono",
     "plugins.triage.picker.attachEntryLabel": "Dołącz „{title}”",
@@ -19721,6 +19871,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "Offline",
     "plugins.triage.surface.detail.agent.permission": "Potrzebuje twojej zgody",
     "plugins.triage.surface.detail.agent.ready": "Gotowe",
+    "plugins.triage.surface.detail.agent.seeAll": "Zobacz wszystkie",
     "plugins.triage.surface.detail.agent.working": "Pracuje",
     "plugins.triage.surface.detail.connection": "Połączenie",
     "plugins.triage.surface.detail.connectionUnhealthy": "Nie udało się odczytać tego połączenia w ostatnim przebiegu.",
@@ -19729,11 +19880,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "Zamknięty bez scalenia",
     "plugins.triage.surface.detail.fixPr.conflict": "To powiązanie zostało zmienione w innym miejscu. Wyświetlany jest bieżący stan.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier nie może teraz połączyć się z Twoim kontem, więc powiązanie nie zostało zmienione.",
-    "plugins.triage.surface.detail.fixPr.full": "Ten wpis ma już maksymalną liczbę pull requestów z poprawką. Najpierw odłącz jeden.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Niektóre powiązane sesje nie zostały sprawdzone pod kątem pull requestów.",
     "plugins.triage.surface.detail.fixPr.link": "Połącz PR z poprawką",
     "plugins.triage.surface.detail.fixPr.merged": "Scalony",
     "plugins.triage.surface.detail.fixPr.open": "Otwarty",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Nie udało się odczytać powiązań z pull requestami z poprawką.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request z poprawką",
     "plugins.triage.surface.detail.fixPr.unlink": "Odłącz",
     "plugins.triage.surface.detail.lastKnown": "To ostatnie informacje, jakie ta strona przechowywała o tym wpisie — mogą być nieaktualne.",
@@ -19777,6 +19928,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "Szczegóły wpisu",
     "plugins.triage.surface.detail.type": "Typ",
     "plugins.triage.surface.detail.via": "przez {name}",
+    "plugins.triage.surface.drop.linkSession": "Powiąż sesję",
     "plugins.triage.surface.empty.healthy.description": "Wszystkie skonfigurowane źródła odpowiedziały, a żadne z nich nie ma wpisu dla Ciebie w tej chwili.",
     "plugins.triage.surface.empty.healthy.title": "Nic cię nie wymaga",
     "plugins.triage.surface.empty.incomplete.description": "Niektóre źródła nie skończyły się, więc wpisy mogą jeszcze brakować. Odśwież, aby kontynuować czytanie.",
@@ -19857,6 +20009,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "Najnowsze",
     "plugins.triage.surface.order.oldest": "Najstarsze",
     "plugins.triage.surface.order.smart": "Inteligentna",
+    "plugins.triage.surface.organizeList": "Uporządkuj listę",
     "plugins.triage.surface.peek.open": "Otwórz",
     "plugins.triage.surface.peek.pin": "Przypnij",
     "plugins.triage.surface.pin.conflict": "To przypięcie zostało zmienione gdzieś innych. Pokazuję obecny stan.",
@@ -19940,6 +20093,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "Uruchamianie sesji dla tego wpisu…",
     "plugins.triage.surface.session.workspaceRefused": "Nie udało się przygotować obszaru roboczego przeglądu dla tego wpisu, więc nic nie zostało utworzone.",
     "plugins.triage.surface.session.workspaceUnavailable": "Nie udało się teraz przygotować obszaru roboczego przeglądu. Nic nie zostało utworzone.",
+    "plugins.triage.surface.sessionActivity.reading": "Odczytywanie aktywności powiązanych sesji…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Nie udało się odczytać części aktywności powiązanych sesji.",
     "plugins.triage.surface.smartPolicy": "Kolejność inteligentna",
     "plugins.triage.surface.smartPolicy.activityFirst": "Najpierw najnowsza aktywność",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Najpierw to, co potrzebuje ciebie",
@@ -21973,7 +22128,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "Ler a janela atual da lista",
     "plugins.triage.column.all": "Todas as entradas",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Mudar para o quadro",
+    "plugins.triage.currentContext.clearSelection": "Limpar a seleção múltipla",
+    "plugins.triage.currentContext.closeDetail": "Fechar detalhes",
+    "plugins.triage.currentContext.list": "Mudar para a lista",
     "plugins.triage.currentContext.openEntry": "Abrir {title}",
+    "plugins.triage.currentContext.refresh": "Atualizar PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Selecionar a aba {tab}",
+    "plugins.triage.detailStory.activity": "Atividade",
+    "plugins.triage.detailStory.ask": "O pedido",
+    "plugins.triage.detailStory.changed": "O que mudou",
+    "plugins.triage.detailStory.detail": "Detalhes da fonte",
+    "plugins.triage.detailStory.failed": "{count} falharam",
+    "plugins.triage.detailStory.passed": "Concluído",
+    "plugins.triage.detailStory.report": "O relatório",
+    "plugins.triage.detailStory.running": "Em andamento",
     "plugins.triage.picker.attach": "Anexar",
     "plugins.triage.picker.attached": "Anexado",
     "plugins.triage.picker.attachEntryLabel": "Anexar “{title}”",
@@ -22227,6 +22396,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "Offline",
     "plugins.triage.surface.detail.agent.permission": "Precisa da sua permissão",
     "plugins.triage.surface.detail.agent.ready": "Pronta",
+    "plugins.triage.surface.detail.agent.seeAll": "Ver todos",
     "plugins.triage.surface.detail.agent.working": "Trabalhando",
     "plugins.triage.surface.detail.connection": "Conexão",
     "plugins.triage.surface.detail.connectionUnhealthy": "Não foi possível ler esta conexão na última passagem.",
@@ -22235,11 +22405,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "Fechado sem mesclar",
     "plugins.triage.surface.detail.fixPr.conflict": "Esse vínculo foi alterado em outro lugar. Mostrando o estado atual.",
     "plugins.triage.surface.detail.fixPr.failed": "O Happier não consegue acessar sua conta agora, então o vínculo não foi alterado.",
-    "plugins.triage.surface.detail.fixPr.full": "Esta entrada já tem o máximo de pull requests de correção. Desvincule um primeiro.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Algumas sessões vinculadas não foram verificadas em busca de pull requests.",
     "plugins.triage.surface.detail.fixPr.link": "Vincular PR de correção",
     "plugins.triage.surface.detail.fixPr.merged": "Mesclado",
     "plugins.triage.surface.detail.fixPr.open": "Aberto",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Não foi possível ler os vínculos com pull requests de correção.",
     "plugins.triage.surface.detail.fixPr.title": "Pull request de correção",
     "plugins.triage.surface.detail.fixPr.unlink": "Desvincular",
     "plugins.triage.surface.detail.lastKnown": "Estes são os últimos dados que esta página tinha para esta entrada e podem estar desatualizados.",
@@ -22283,6 +22453,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "Detalhe da entrada",
     "plugins.triage.surface.detail.type": "Tipo",
     "plugins.triage.surface.detail.via": "via {name}",
+    "plugins.triage.surface.drop.linkSession": "Vincular sessão",
     "plugins.triage.surface.empty.healthy.description": "Todas as fontes configuradas responderam, e nenhuma delas tem uma entrada para você no momento.",
     "plugins.triage.surface.empty.healthy.title": "Nada precisa de você",
     "plugins.triage.surface.empty.incomplete.description": "Alguns fontes não terminaram seu caminhada, então entradas podem ainda estar faltando. Atualize para continuar lendo.",
@@ -22363,6 +22534,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "Mais recentes",
     "plugins.triage.surface.order.oldest": "Mais antigos",
     "plugins.triage.surface.order.smart": "Inteligente",
+    "plugins.triage.surface.organizeList": "Organizar lista",
     "plugins.triage.surface.peek.open": "Abrir",
     "plugins.triage.surface.peek.pin": "Fixar",
     "plugins.triage.surface.pin.conflict": "Esse marcador foi alterado em outro lugar. Exibindo o estado atual.",
@@ -22446,6 +22618,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "A iniciar uma sessão para esta entrada…",
     "plugins.triage.surface.session.workspaceRefused": "Não foi possível preparar um espaço de revisão para esta entrada, por isso nada foi criado.",
     "plugins.triage.surface.session.workspaceUnavailable": "Não foi possível preparar o espaço de revisão neste momento. Nada foi criado.",
+    "plugins.triage.surface.sessionActivity.reading": "Lendo a atividade das sessões vinculadas…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Não foi possível ler parte da atividade das sessões vinculadas.",
     "plugins.triage.surface.smartPolicy": "Ordem inteligente",
     "plugins.triage.surface.smartPolicy.activityFirst": "Primeiro a atividade mais recente",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Primeiro o que precisa de você",
@@ -24479,7 +24653,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "Прочитать текущее окно списка",
     "plugins.triage.column.all": "Все записи",
     "plugins.triage.composer.entriesCount": "{count} PRs & Issues",
+    "plugins.triage.currentContext.board": "Переключиться на доску",
+    "plugins.triage.currentContext.clearSelection": "Снять множественное выделение",
+    "plugins.triage.currentContext.closeDetail": "Закрыть сведения",
+    "plugins.triage.currentContext.list": "Переключиться на список",
     "plugins.triage.currentContext.openEntry": "Открыть {title}",
+    "plugins.triage.currentContext.refresh": "Обновить PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "Выбрать вкладку {tab}",
+    "plugins.triage.detailStory.activity": "Активность",
+    "plugins.triage.detailStory.ask": "Запрос",
+    "plugins.triage.detailStory.changed": "Что изменилось",
+    "plugins.triage.detailStory.detail": "Подробности источника",
+    "plugins.triage.detailStory.failed": "Ошибок: {count}",
+    "plugins.triage.detailStory.passed": "Успешно",
+    "plugins.triage.detailStory.report": "Отчёт",
+    "plugins.triage.detailStory.running": "Выполняется",
     "plugins.triage.picker.attach": "Прикрепить",
     "plugins.triage.picker.attached": "Прикреплено",
     "plugins.triage.picker.attachEntryLabel": "Прикрепить «{title}»",
@@ -24733,6 +24921,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "Не в сети",
     "plugins.triage.surface.detail.agent.permission": "Нужно ваше разрешение",
     "plugins.triage.surface.detail.agent.ready": "Готово",
+    "plugins.triage.surface.detail.agent.seeAll": "Показать все",
     "plugins.triage.surface.detail.agent.working": "Работает",
     "plugins.triage.surface.detail.connection": "Подключение",
     "plugins.triage.surface.detail.connectionUnhealthy": "Это подключение не удалось прочитать в последнем проходе.",
@@ -24741,11 +24930,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "Закрыт без слияния",
     "plugins.triage.surface.detail.fixPr.conflict": "Эта связь была изменена в другом месте. Отображается текущее состояние.",
     "plugins.triage.surface.detail.fixPr.failed": "Happier сейчас не может связаться с вашим аккаунтом, поэтому связь не изменена.",
-    "plugins.triage.surface.detail.fixPr.full": "У этой записи уже максимальное число исправляющих pull request. Сначала отвяжите один.",
     "plugins.triage.surface.detail.fixPr.incomplete": "Некоторые связанные сессии не были проверены на pull request.",
     "plugins.triage.surface.detail.fixPr.link": "Связать исправляющий PR",
     "plugins.triage.surface.detail.fixPr.merged": "Слит",
     "plugins.triage.surface.detail.fixPr.open": "Открыт",
+    "plugins.triage.surface.detail.fixPr.readFailed": "Не удалось прочитать связи с исправляющими pull request.",
     "plugins.triage.surface.detail.fixPr.title": "Исправляющий pull request",
     "plugins.triage.surface.detail.fixPr.unlink": "Отвязать",
     "plugins.triage.surface.detail.lastKnown": "Это последние сведения, которые эта страница хранила об этой записи; они могут быть устаревшими.",
@@ -24789,6 +24978,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "Сведения о записи",
     "plugins.triage.surface.detail.type": "Тип",
     "plugins.triage.surface.detail.via": "через {name}",
+    "plugins.triage.surface.drop.linkSession": "Связать с сессией",
     "plugins.triage.surface.empty.healthy.description": "Каждый настроенный источник ответил, и ни один из них не имеет записи для вас в данный момент.",
     "plugins.triage.surface.empty.healthy.title": "Ничего вам не нужно",
     "plugins.triage.surface.empty.incomplete.description": "Некоторые источники еще не завершили свою работу, поэтому записи могут быть отсутствовать. Обновите, чтобы продолжить чтение.",
@@ -24869,6 +25059,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "Сначала новые",
     "plugins.triage.surface.order.oldest": "Сначала старые",
     "plugins.triage.surface.order.smart": "Умный",
+    "plugins.triage.surface.organizeList": "Упорядочить список",
     "plugins.triage.surface.peek.open": "Открыть",
     "plugins.triage.surface.peek.pin": "Закрепить",
     "plugins.triage.surface.pin.conflict": "Этот закрепленный элемент был изменен в другом месте. Отображается текущее состояние.",
@@ -24952,6 +25143,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "Запуск сессии для этой записи…",
     "plugins.triage.surface.session.workspaceRefused": "Для этой записи не удалось подготовить рабочую область для проверки, поэтому ничего не создано.",
     "plugins.triage.surface.session.workspaceUnavailable": "Сейчас не удалось подготовить рабочую область для проверки. Ничего не создано.",
+    "plugins.triage.surface.sessionActivity.reading": "Чтение активности связанных сессий…",
+    "plugins.triage.surface.sessionActivity.unavailable": "Не удалось прочитать часть активности связанных сессий.",
     "plugins.triage.surface.smartPolicy": "Умный порядок",
     "plugins.triage.surface.smartPolicy.activityFirst": "Сначала самое свежее",
     "plugins.triage.surface.smartPolicy.attentionFirst": "Сначала то, что требует вас",
@@ -26985,7 +27178,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "读取当前列表窗口",
     "plugins.triage.column.all": "全部条目",
     "plugins.triage.composer.entriesCount": "{count} 个 PRs & Issues",
+    "plugins.triage.currentContext.board": "切换到看板",
+    "plugins.triage.currentContext.clearSelection": "清除多选",
+    "plugins.triage.currentContext.closeDetail": "关闭详情",
+    "plugins.triage.currentContext.list": "切换到列表",
     "plugins.triage.currentContext.openEntry": "打开{title}",
+    "plugins.triage.currentContext.refresh": "刷新 PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "选择 {tab} 标签页",
+    "plugins.triage.detailStory.activity": "活动",
+    "plugins.triage.detailStory.ask": "请求",
+    "plugins.triage.detailStory.changed": "变更内容",
+    "plugins.triage.detailStory.detail": "来源详情",
+    "plugins.triage.detailStory.failed": "{count} 项失败",
+    "plugins.triage.detailStory.passed": "通过",
+    "plugins.triage.detailStory.report": "报告",
+    "plugins.triage.detailStory.running": "进行中",
     "plugins.triage.picker.attach": "附加",
     "plugins.triage.picker.attached": "已附加",
     "plugins.triage.picker.attachEntryLabel": "附加“{title}”",
@@ -27239,6 +27446,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "离线",
     "plugins.triage.surface.detail.agent.permission": "需要你的许可",
     "plugins.triage.surface.detail.agent.ready": "就绪",
+    "plugins.triage.surface.detail.agent.seeAll": "查看全部",
     "plugins.triage.surface.detail.agent.working": "工作中",
     "plugins.triage.surface.detail.connection": "连接",
     "plugins.triage.surface.detail.connectionUnhealthy": "上一次读取时无法读取此连接。",
@@ -27247,11 +27455,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "未合并即关闭",
     "plugins.triage.surface.detail.fixPr.conflict": "该关联已在其他地方更改。正在显示当前状态。",
     "plugins.triage.surface.detail.fixPr.failed": "Happier 目前无法访问你的账户，因此关联未更改。",
-    "plugins.triage.surface.detail.fixPr.full": "此条目的修复拉取请求已达上限。请先取消关联一个。",
     "plugins.triage.surface.detail.fixPr.incomplete": "部分已关联会话未检查拉取请求。",
     "plugins.triage.surface.detail.fixPr.link": "关联修复 PR",
     "plugins.triage.surface.detail.fixPr.merged": "已合并",
     "plugins.triage.surface.detail.fixPr.open": "打开",
+    "plugins.triage.surface.detail.fixPr.readFailed": "无法读取修复拉取请求的关联。",
     "plugins.triage.surface.detail.fixPr.title": "修复拉取请求",
     "plugins.triage.surface.detail.fixPr.unlink": "取消关联",
     "plugins.triage.surface.detail.lastKnown": "这些是本页面为该条目保留的最后信息，可能已过时。",
@@ -27295,6 +27503,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "条目详情",
     "plugins.triage.surface.detail.type": "类型",
     "plugins.triage.surface.detail.via": "通过 {name}",
+    "plugins.triage.surface.drop.linkSession": "关联会话",
     "plugins.triage.surface.empty.healthy.description": "所有配置的来源都已回答，目前没有您的条目。",
     "plugins.triage.surface.empty.healthy.title": "无需您处理",
     "plugins.triage.surface.empty.incomplete.description": "某些来源尚未完成，因此可能仍缺少条目。刷新以继续阅读。",
@@ -27375,6 +27584,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "最新优先",
     "plugins.triage.surface.order.oldest": "最旧优先",
     "plugins.triage.surface.order.smart": "智能",
+    "plugins.triage.surface.organizeList": "整理列表",
     "plugins.triage.surface.peek.open": "打开",
     "plugins.triage.surface.peek.pin": "置顶",
     "plugins.triage.surface.pin.conflict": "该标记在其他地方已更改。显示当前状态。",
@@ -27458,6 +27668,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "正在为该条目启动会话…",
     "plugins.triage.surface.session.workspaceRefused": "无法为该条目准备评审工作区，因此未创建任何内容。",
     "plugins.triage.surface.session.workspaceUnavailable": "目前无法准备评审工作区。未创建任何内容。",
+    "plugins.triage.surface.sessionActivity.reading": "正在读取关联会话的活动…",
+    "plugins.triage.surface.sessionActivity.unavailable": "无法读取部分关联会话的活动。",
     "plugins.triage.surface.smartPolicy": "智能排序",
     "plugins.triage.surface.smartPolicy.activityFirst": "最近活动优先",
     "plugins.triage.surface.smartPolicy.attentionFirst": "需要你的优先",
@@ -29491,7 +29703,21 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.action.listEntries.title": "讀取目前的清單視窗",
     "plugins.triage.column.all": "全部項目",
     "plugins.triage.composer.entriesCount": "{count} 個 PRs & Issues",
+    "plugins.triage.currentContext.board": "切換至看板",
+    "plugins.triage.currentContext.clearSelection": "清除多選",
+    "plugins.triage.currentContext.closeDetail": "關閉詳細資訊",
+    "plugins.triage.currentContext.list": "切換至清單",
     "plugins.triage.currentContext.openEntry": "開啟{title}",
+    "plugins.triage.currentContext.refresh": "重新整理 PRs & Issues",
+    "plugins.triage.currentContext.selectTab": "選取 {tab} 分頁",
+    "plugins.triage.detailStory.activity": "活動",
+    "plugins.triage.detailStory.ask": "請求",
+    "plugins.triage.detailStory.changed": "變更內容",
+    "plugins.triage.detailStory.detail": "來源詳細資料",
+    "plugins.triage.detailStory.failed": "{count} 項失敗",
+    "plugins.triage.detailStory.passed": "通過",
+    "plugins.triage.detailStory.report": "報告",
+    "plugins.triage.detailStory.running": "進行中",
     "plugins.triage.picker.attach": "附加",
     "plugins.triage.picker.attached": "已附加",
     "plugins.triage.picker.attachEntryLabel": "附加「{title}」",
@@ -29745,6 +29971,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.agent.offline": "離線",
     "plugins.triage.surface.detail.agent.permission": "需要你的許可",
     "plugins.triage.surface.detail.agent.ready": "就緒",
+    "plugins.triage.surface.detail.agent.seeAll": "查看全部",
     "plugins.triage.surface.detail.agent.working": "工作中",
     "plugins.triage.surface.detail.connection": "連接",
     "plugins.triage.surface.detail.connectionUnhealthy": "上一次讀取時無法讀取此連線。",
@@ -29753,11 +29980,11 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.fixPr.closed": "未合併即關閉",
     "plugins.triage.surface.detail.fixPr.conflict": "此關聯已在其他地方變更。正在顯示目前狀態。",
     "plugins.triage.surface.detail.fixPr.failed": "Happier 目前無法存取你的帳戶，因此關聯未變更。",
-    "plugins.triage.surface.detail.fixPr.full": "此項目的修復拉取請求已達上限。請先取消關聯一個。",
     "plugins.triage.surface.detail.fixPr.incomplete": "部分已關聯工作階段未檢查拉取請求。",
     "plugins.triage.surface.detail.fixPr.link": "關聯修復 PR",
     "plugins.triage.surface.detail.fixPr.merged": "已合併",
     "plugins.triage.surface.detail.fixPr.open": "開啟",
+    "plugins.triage.surface.detail.fixPr.readFailed": "無法讀取修復拉取請求的關聯。",
     "plugins.triage.surface.detail.fixPr.title": "修復拉取請求",
     "plugins.triage.surface.detail.fixPr.unlink": "取消關聯",
     "plugins.triage.surface.detail.lastKnown": "這些是本頁面為該項目保留的最後資訊，可能已過時。",
@@ -29801,6 +30028,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.detail.tabs": "項目詳情",
     "plugins.triage.surface.detail.type": "類型",
     "plugins.triage.surface.detail.via": "透過 {name}",
+    "plugins.triage.surface.drop.linkSession": "連結工作階段",
     "plugins.triage.surface.empty.healthy.description": "每個設定的來源都已回答，且目前沒有任何項目適合您。",
     "plugins.triage.surface.empty.healthy.title": "不需要您",
     "plugins.triage.surface.empty.incomplete.description": "某些來源尚未完成其走訪，因此可能仍有多個項目缺失。重新整理以繼續閱讀。",
@@ -29881,6 +30109,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.order.newest": "最新優先",
     "plugins.triage.surface.order.oldest": "最舊優先",
     "plugins.triage.surface.order.smart": "智慧",
+    "plugins.triage.surface.organizeList": "整理清單",
     "plugins.triage.surface.peek.open": "開啟",
     "plugins.triage.surface.peek.pin": "釘選",
     "plugins.triage.surface.pin.conflict": "該固定標記已在其他地方更動。顯示當前狀態。",
@@ -29964,6 +30193,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "plugins.triage.surface.session.starting": "正在為此項目啟動工作階段…",
     "plugins.triage.surface.session.workspaceRefused": "無法為此項目準備審查工作區，因此未建立任何內容。",
     "plugins.triage.surface.session.workspaceUnavailable": "目前無法準備審查工作區。未建立任何內容。",
+    "plugins.triage.surface.sessionActivity.reading": "正在讀取關聯工作階段的活動…",
+    "plugins.triage.surface.sessionActivity.unavailable": "無法讀取部分關聯工作階段的活動。",
     "plugins.triage.surface.smartPolicy": "智慧排序",
     "plugins.triage.surface.smartPolicy.activityFirst": "最近活動優先",
     "plugins.triage.surface.smartPolicy.attentionFirst": "需要你的優先",
@@ -30078,8 +30309,2529 @@ export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({
     "subAgentGuidance.settings.agents.claude.openTitle": "Claude 子代理選項",
     "subAgentGuidance.settings.agents.claude.title": "Claude 團隊代理"
   }
-} as const);
+});
 
-type KeysOfUnion<T> = T extends T ? keyof T : never;
-type BundledPluginTranslationBundle = (typeof BUNDLED_PLUGIN_TRANSLATIONS)[keyof typeof BUNDLED_PLUGIN_TRANSLATIONS];
-export type BundledPluginTranslationKey = KeysOfUnion<BundledPluginTranslationBundle> & string;
+export type BundledPluginTranslationKey =
+    'agentInput.agent.devin'
+    | 'agentInput.agent.droid'
+    | 'agentInput.agent.fx'
+    | 'agentInput.agent.grok'
+    | 'agentInput.agent.kimi'
+    | 'agentInput.connectedServiceLabel.claude'
+    | 'agentInput.connectedServiceLabel.codex'
+    | 'agentInput.connectedServiceLabel.copilot'
+    | 'agentInput.connectedServiceLabel.gemini'
+    | 'channels.discord.setup.credential'
+    | 'channels.discord.setup.credential.description'
+    | 'channels.discord.setup.description'
+    | 'channels.discord.setup.submit'
+    | 'channels.discord.setup.title'
+    | 'channels.telegram.automation.setup.chat'
+    | 'channels.telegram.automation.setup.chat.description'
+    | 'channels.telegram.automation.setup.credential'
+    | 'channels.telegram.automation.setup.description'
+    | 'channels.telegram.automation.setup.submit'
+    | 'channels.telegram.automation.setup.title'
+    | 'channels.telegram.remediation.credential'
+    | 'channels.telegram.remediation.credential.description'
+    | 'channels.telegram.remediation.description'
+    | 'channels.telegram.remediation.submit'
+    | 'channels.telegram.remediation.title'
+    | 'channels.telegram.setup.credential'
+    | 'channels.telegram.setup.credential.description'
+    | 'channels.telegram.setup.description'
+    | 'channels.telegram.setup.submit'
+    | 'channels.telegram.setup.title'
+    | 'discord.automation.messageSource.setup.channel'
+    | 'discord.automation.messageSource.setup.channel.description'
+    | 'discord.automation.messageSource.setup.credential'
+    | 'discord.automation.messageSource.setup.credential.description'
+    | 'discord.automation.messageSource.setup.description'
+    | 'discord.automation.messageSource.setup.submit'
+    | 'discord.automation.messageSource.setup.title'
+    | 'github.automation.historyGapReset.confirmation.body'
+    | 'github.automation.historyGapReset.confirmation.title'
+    | 'managedPurpose.anthropic.title'
+    | 'managedPurpose.openai.title'
+    | 'plugins.azureDevops.account.description'
+    | 'plugins.azureDevops.account.title'
+    | 'plugins.azureDevops.actions.abandon.confirm.body'
+    | 'plugins.azureDevops.actions.abandon.confirm.label'
+    | 'plugins.azureDevops.actions.abandon.confirm.title'
+    | 'plugins.azureDevops.actions.complete.confirm.body'
+    | 'plugins.azureDevops.actions.complete.confirm.label'
+    | 'plugins.azureDevops.actions.complete.confirm.title'
+    | 'plugins.azureDevops.actions.reactivate.confirm.body'
+    | 'plugins.azureDevops.actions.reactivate.confirm.label'
+    | 'plugins.azureDevops.actions.reactivate.confirm.title'
+    | 'plugins.azureDevops.actions.requestReview.confirm.body'
+    | 'plugins.azureDevops.actions.requestReview.confirm.label'
+    | 'plugins.azureDevops.actions.requestReview.confirm.title'
+    | 'plugins.azureDevops.actions.submitReview.confirm.body'
+    | 'plugins.azureDevops.actions.submitReview.confirm.label'
+    | 'plugins.azureDevops.actions.submitReview.confirm.title'
+    | 'plugins.azureDevops.actions.threadCommentCreate.confirm.body'
+    | 'plugins.azureDevops.actions.threadCommentCreate.confirm.label'
+    | 'plugins.azureDevops.actions.threadCommentCreate.confirm.title'
+    | 'plugins.azureDevops.actions.threadReply.confirm.body'
+    | 'plugins.azureDevops.actions.threadReply.confirm.label'
+    | 'plugins.azureDevops.actions.threadReply.confirm.title'
+    | 'plugins.azureDevops.actions.threadStatus.confirm.body'
+    | 'plugins.azureDevops.actions.threadStatus.confirm.label'
+    | 'plugins.azureDevops.actions.threadStatus.confirm.title'
+    | 'plugins.azureDevops.auth.base.description'
+    | 'plugins.azureDevops.auth.base.title'
+    | 'plugins.azureDevops.auth.manual.title'
+    | 'plugins.azureDevops.auth.token.description'
+    | 'plugins.azureDevops.auth.token.title'
+    | 'plugins.azureDevops.settings.group'
+    | 'plugins.azureDevops.settings.sources'
+    | 'plugins.azureDevops.settings.sources.subtitle'
+    | 'plugins.azureDevops.ui.activityLabel'
+    | 'plugins.azureDevops.ui.activityUnavailable'
+    | 'plugins.azureDevops.ui.buildValidationsLabel'
+    | 'plugins.azureDevops.ui.commitsRead'
+    | 'plugins.azureDevops.ui.comparingIteration'
+    | 'plugins.azureDevops.ui.copyValue'
+    | 'plugins.azureDevops.ui.fact.autoComplete'
+    | 'plugins.azureDevops.ui.fact.draft'
+    | 'plugins.azureDevops.ui.fact.merge'
+    | 'plugins.azureDevops.ui.fact.yourVote'
+    | 'plugins.azureDevops.ui.facts'
+    | 'plugins.azureDevops.ui.filesLabel'
+    | 'plugins.azureDevops.ui.filesRead'
+    | 'plugins.azureDevops.ui.filesUnavailable'
+    | 'plugins.azureDevops.ui.invalidInput'
+    | 'plugins.azureDevops.ui.invalidInput.description'
+    | 'plugins.azureDevops.ui.iterationTitle'
+    | 'plugins.azureDevops.ui.iterationUpdated'
+    | 'plugins.azureDevops.ui.iterations'
+    | 'plugins.azureDevops.ui.iterationsUnavailable'
+    | 'plugins.azureDevops.ui.metadata.blocking'
+    | 'plugins.azureDevops.ui.metadata.buildValidations'
+    | 'plugins.azureDevops.ui.metadata.currentIteration'
+    | 'plugins.azureDevops.ui.metadata.evaluations'
+    | 'plugins.azureDevops.ui.metadata.lastChanged'
+    | 'plugins.azureDevops.ui.metadata.observed'
+    | 'plugins.azureDevops.ui.metadata.sourceCommit'
+    | 'plugins.azureDevops.ui.metadata.total'
+    | 'plugins.azureDevops.ui.mutations.abandon.applied'
+    | 'plugins.azureDevops.ui.mutations.abandon.button'
+    | 'plugins.azureDevops.ui.mutations.abandon.description'
+    | 'plugins.azureDevops.ui.mutations.abandon.pending'
+    | 'plugins.azureDevops.ui.mutations.complete.applied'
+    | 'plugins.azureDevops.ui.mutations.complete.button'
+    | 'plugins.azureDevops.ui.mutations.complete.deleteSourceBranch'
+    | 'plugins.azureDevops.ui.mutations.complete.description'
+    | 'plugins.azureDevops.ui.mutations.complete.pending'
+    | 'plugins.azureDevops.ui.mutations.complete.pendingAutoComplete'
+    | 'plugins.azureDevops.ui.mutations.complete.sourceUnavailable'
+    | 'plugins.azureDevops.ui.mutations.declined'
+    | 'plugins.azureDevops.ui.mutations.failed'
+    | 'plugins.azureDevops.ui.mutations.outcomeUnknown'
+    | 'plugins.azureDevops.ui.mutations.reactivate.applied'
+    | 'plugins.azureDevops.ui.mutations.reactivate.button'
+    | 'plugins.azureDevops.ui.mutations.reactivate.description'
+    | 'plugins.azureDevops.ui.mutations.reactivate.pending'
+    | 'plugins.azureDevops.ui.mutations.refused.headAdvanced'
+    | 'plugins.azureDevops.ui.mutations.refused.notAbandoned'
+    | 'plugins.azureDevops.ui.mutations.refused.notActive'
+    | 'plugins.azureDevops.ui.mutations.refused.reviewerPresent'
+    | 'plugins.azureDevops.ui.mutations.rejected.conflicts'
+    | 'plugins.azureDevops.ui.mutations.rejected.failure'
+    | 'plugins.azureDevops.ui.mutations.rejected.fieldsIgnored'
+    | 'plugins.azureDevops.ui.mutations.rejected.policy'
+    | 'plugins.azureDevops.ui.mutations.requestReview.applied'
+    | 'plugins.azureDevops.ui.mutations.requestReview.button'
+    | 'plugins.azureDevops.ui.mutations.requestReview.description'
+    | 'plugins.azureDevops.ui.mutations.requestReview.identities'
+    | 'plugins.azureDevops.ui.mutations.requestReview.identitiesPlaceholder'
+    | 'plugins.azureDevops.ui.mutations.requestReview.pending'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.active'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.alreadyInStatus'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.applied'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.button'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.byDesign'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.close'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.closed'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.fieldsIgnored'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.fixed'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.label'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.pending'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.title'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.uncertain'
+    | 'plugins.azureDevops.ui.mutations.threadStatus.wontFix'
+    | 'plugins.azureDevops.ui.mutations.title'
+    | 'plugins.azureDevops.ui.mutations.unavailable'
+    | 'plugins.azureDevops.ui.mutations.uncertain'
+    | 'plugins.azureDevops.ui.mutations.unreadable'
+    | 'plugins.azureDevops.ui.noBuildValidations'
+    | 'plugins.azureDevops.ui.noBuildValidations.description'
+    | 'plugins.azureDevops.ui.noCommits'
+    | 'plugins.azureDevops.ui.noCommits.description'
+    | 'plugins.azureDevops.ui.noComparisonIteration'
+    | 'plugins.azureDevops.ui.noFacts'
+    | 'plugins.azureDevops.ui.noFacts.description'
+    | 'plugins.azureDevops.ui.noFiles'
+    | 'plugins.azureDevops.ui.noFiles.description'
+    | 'plugins.azureDevops.ui.noPolicies'
+    | 'plugins.azureDevops.ui.noPolicies.description'
+    | 'plugins.azureDevops.ui.noStatuses'
+    | 'plugins.azureDevops.ui.noStatuses.description'
+    | 'plugins.azureDevops.ui.noThreads'
+    | 'plugins.azureDevops.ui.noThreads.description'
+    | 'plugins.azureDevops.ui.observation'
+    | 'plugins.azureDevops.ui.openStatus'
+    | 'plugins.azureDevops.ui.openValue'
+    | 'plugins.azureDevops.ui.pagePositionUnsafe'
+    | 'plugins.azureDevops.ui.partial'
+    | 'plugins.azureDevops.ui.pendingPanels.description'
+    | 'plugins.azureDevops.ui.policiesLabel'
+    | 'plugins.azureDevops.ui.policiesUnavailable'
+    | 'plugins.azureDevops.ui.policyEvaluations'
+    | 'plugins.azureDevops.ui.policyEvaluationsLabel'
+    | 'plugins.azureDevops.ui.policyEvaluationsUnavailable'
+    | 'plugins.azureDevops.ui.policyEvaluationsUnavailable.description'
+    | 'plugins.azureDevops.ui.publication.comments'
+    | 'plugins.azureDevops.ui.publication.complete'
+    | 'plugins.azureDevops.ui.publication.createThread'
+    | 'plugins.azureDevops.ui.publication.diffLessNeedsVerdict'
+    | 'plugins.azureDevops.ui.publication.empty'
+    | 'plugins.azureDevops.ui.publication.failed'
+    | 'plugins.azureDevops.ui.publication.loading'
+    | 'plugins.azureDevops.ui.publication.partial'
+    | 'plugins.azureDevops.ui.publication.proposalsFailed'
+    | 'plugins.azureDevops.ui.publication.rejected'
+    | 'plugins.azureDevops.ui.publication.reply.proposal'
+    | 'plugins.azureDevops.ui.publication.reply.publish'
+    | 'plugins.azureDevops.ui.publication.reply.title'
+    | 'plugins.azureDevops.ui.publication.result'
+    | 'plugins.azureDevops.ui.publication.stale'
+    | 'plugins.azureDevops.ui.publication.submit'
+    | 'plugins.azureDevops.ui.publication.summary'
+    | 'plugins.azureDevops.ui.publication.summaryPublished'
+    | 'plugins.azureDevops.ui.publication.summaryRequired'
+    | 'plugins.azureDevops.ui.publication.threadMissing'
+    | 'plugins.azureDevops.ui.publication.title'
+    | 'plugins.azureDevops.ui.publication.unknown'
+    | 'plugins.azureDevops.ui.publication.unknown.description'
+    | 'plugins.azureDevops.ui.publication.unreadable'
+    | 'plugins.azureDevops.ui.publication.unsupportedAnchor'
+    | 'plugins.azureDevops.ui.publication.verdict'
+    | 'plugins.azureDevops.ui.publication.verdict.approve'
+    | 'plugins.azureDevops.ui.publication.verdict.comment'
+    | 'plugins.azureDevops.ui.publication.verdict.none'
+    | 'plugins.azureDevops.ui.publication.verdict.requestChanges'
+    | 'plugins.azureDevops.ui.readFailed'
+    | 'plugins.azureDevops.ui.readingCommits'
+    | 'plugins.azureDevops.ui.readingFiles'
+    | 'plugins.azureDevops.ui.readingIterations'
+    | 'plugins.azureDevops.ui.readingPolicies'
+    | 'plugins.azureDevops.ui.readingThreads'
+    | 'plugins.azureDevops.ui.replyToThread'
+    | 'plugins.azureDevops.ui.rereadCommits'
+    | 'plugins.azureDevops.ui.rereadFiles'
+    | 'plugins.azureDevops.ui.rereadIterations'
+    | 'plugins.azureDevops.ui.rereadPolicies'
+    | 'plugins.azureDevops.ui.rereadThreads'
+    | 'plugins.azureDevops.ui.rowsUnreadable'
+    | 'plugins.azureDevops.ui.setThreadStatus'
+    | 'plugins.azureDevops.ui.shortened'
+    | 'plugins.azureDevops.ui.shortened.description'
+    | 'plugins.azureDevops.ui.showEarlierReplies'
+    | 'plugins.azureDevops.ui.showMoreThreads'
+    | 'plugins.azureDevops.ui.statusInformational.description'
+    | 'plugins.azureDevops.ui.statusesLabel'
+    | 'plugins.azureDevops.ui.tab.activity'
+    | 'plugins.azureDevops.ui.tab.files'
+    | 'plugins.azureDevops.ui.tab.overview'
+    | 'plugins.azureDevops.ui.tab.policies'
+    | 'plugins.azureDevops.ui.tab.threads'
+    | 'plugins.azureDevops.ui.tabsLabel'
+    | 'plugins.azureDevops.ui.threadReplyRow'
+    | 'plugins.azureDevops.ui.threadStatusRow'
+    | 'plugins.azureDevops.ui.threadsLabel'
+    | 'plugins.azureDevops.ui.threadsShown'
+    | 'plugins.azureDevops.ui.threadsUnavailable'
+    | 'plugins.azureDevops.ui.value.completionUnknown'
+    | 'plugins.azureDevops.ui.value.none'
+    | 'plugins.azureDevops.ui.value.optional'
+    | 'plugins.azureDevops.ui.value.required'
+    | 'plugins.azureDevops.ui.value.unknown'
+    | 'plugins.bitbucket.settings.group'
+    | 'plugins.bitbucket.settings.sources'
+    | 'plugins.bitbucket.settings.sources.subtitle'
+    | 'plugins.bitbucket.ui.activity.approval'
+    | 'plugins.bitbucket.ui.activity.changesRequested'
+    | 'plugins.bitbucket.ui.activity.comment'
+    | 'plugins.bitbucket.ui.activity.update'
+    | 'plugins.bitbucket.ui.activityCollection.description'
+    | 'plugins.bitbucket.ui.activityLabel'
+    | 'plugins.bitbucket.ui.activityUnavailable'
+    | 'plugins.bitbucket.ui.allBuilds'
+    | 'plugins.bitbucket.ui.buildStatusesRead'
+    | 'plugins.bitbucket.ui.buildsLabel'
+    | 'plugins.bitbucket.ui.buildsTruncated.description'
+    | 'plugins.bitbucket.ui.buildsUnavailable'
+    | 'plugins.bitbucket.ui.changedFiles'
+    | 'plugins.bitbucket.ui.commentDeleted'
+    | 'plugins.bitbucket.ui.commentsLabel'
+    | 'plugins.bitbucket.ui.commentsRead'
+    | 'plugins.bitbucket.ui.commentsUnavailable'
+    | 'plugins.bitbucket.ui.description'
+    | 'plugins.bitbucket.ui.detailLabel'
+    | 'plugins.bitbucket.ui.diffFilesRead'
+    | 'plugins.bitbucket.ui.diffTooLarge'
+    | 'plugins.bitbucket.ui.diffTooLarge.description'
+    | 'plugins.bitbucket.ui.diffUnavailable'
+    | 'plugins.bitbucket.ui.edited'
+    | 'plugins.bitbucket.ui.entriesRead'
+    | 'plugins.bitbucket.ui.facts'
+    | 'plugins.bitbucket.ui.field.author'
+    | 'plugins.bitbucket.ui.field.comments'
+    | 'plugins.bitbucket.ui.field.draft'
+    | 'plugins.bitbucket.ui.field.number'
+    | 'plugins.bitbucket.ui.field.reviewers'
+    | 'plugins.bitbucket.ui.field.target-branch'
+    | 'plugins.bitbucket.ui.field.tasks'
+    | 'plugins.bitbucket.ui.field.updated'
+    | 'plugins.bitbucket.ui.field.your-review'
+    | 'plugins.bitbucket.ui.invalidInput'
+    | 'plugins.bitbucket.ui.invalidInput.description'
+    | 'plugins.bitbucket.ui.lastChanged'
+    | 'plugins.bitbucket.ui.mutations.comment.alreadyInResolution'
+    | 'plugins.bitbucket.ui.mutations.comment.reopen'
+    | 'plugins.bitbucket.ui.mutations.comment.reopenConfirmation'
+    | 'plugins.bitbucket.ui.mutations.comment.reopenLabel'
+    | 'plugins.bitbucket.ui.mutations.comment.reopened'
+    | 'plugins.bitbucket.ui.mutations.comment.resolutionUnknown'
+    | 'plugins.bitbucket.ui.mutations.comment.resolve'
+    | 'plugins.bitbucket.ui.mutations.comment.resolveConfirmation'
+    | 'plugins.bitbucket.ui.mutations.comment.resolveLabel'
+    | 'plugins.bitbucket.ui.mutations.comment.resolved'
+    | 'plugins.bitbucket.ui.mutations.comment.uncertain'
+    | 'plugins.bitbucket.ui.mutations.comment.unchanged'
+    | 'plugins.bitbucket.ui.mutations.comment.unconfirmed'
+    | 'plugins.bitbucket.ui.mutations.decline.applied'
+    | 'plugins.bitbucket.ui.mutations.decline.button'
+    | 'plugins.bitbucket.ui.mutations.decline.description'
+    | 'plugins.bitbucket.ui.mutations.decline.pending'
+    | 'plugins.bitbucket.ui.mutations.declined'
+    | 'plugins.bitbucket.ui.mutations.failed'
+    | 'plugins.bitbucket.ui.mutations.merge.applied'
+    | 'plugins.bitbucket.ui.mutations.merge.button'
+    | 'plugins.bitbucket.ui.mutations.merge.closeSourceBranch'
+    | 'plugins.bitbucket.ui.mutations.merge.headUnavailable'
+    | 'plugins.bitbucket.ui.mutations.merge.message'
+    | 'plugins.bitbucket.ui.mutations.merge.messagePlaceholder'
+    | 'plugins.bitbucket.ui.mutations.merge.pending'
+    | 'plugins.bitbucket.ui.mutations.merge.strategy'
+    | 'plugins.bitbucket.ui.mutations.merge.strategy.fastForward'
+    | 'plugins.bitbucket.ui.mutations.merge.strategy.mergeCommit'
+    | 'plugins.bitbucket.ui.mutations.merge.strategy.squash'
+    | 'plugins.bitbucket.ui.mutations.merge.strategyRequired'
+    | 'plugins.bitbucket.ui.mutations.outcomeUnknown'
+    | 'plugins.bitbucket.ui.mutations.refused.headAdvanced'
+    | 'plugins.bitbucket.ui.mutations.refused.notOpen'
+    | 'plugins.bitbucket.ui.mutations.rejected.oversized'
+    | 'plugins.bitbucket.ui.mutations.rejected.provider'
+    | 'plugins.bitbucket.ui.mutations.review.approve'
+    | 'plugins.bitbucket.ui.mutations.review.comment'
+    | 'plugins.bitbucket.ui.mutations.review.comments'
+    | 'plugins.bitbucket.ui.mutations.review.confirmation.body'
+    | 'plugins.bitbucket.ui.mutations.review.confirmation.title'
+    | 'plugins.bitbucket.ui.mutations.review.loadingProposals'
+    | 'plugins.bitbucket.ui.mutations.review.noProposals'
+    | 'plugins.bitbucket.ui.mutations.review.outcomeCounts'
+    | 'plugins.bitbucket.ui.mutations.review.partial'
+    | 'plugins.bitbucket.ui.mutations.review.proposalsUnavailable'
+    | 'plugins.bitbucket.ui.mutations.review.published'
+    | 'plugins.bitbucket.ui.mutations.review.rejected'
+    | 'plugins.bitbucket.ui.mutations.review.rejectionDetail'
+    | 'plugins.bitbucket.ui.mutations.review.replyComment'
+    | 'plugins.bitbucket.ui.mutations.review.replyProposal'
+    | 'plugins.bitbucket.ui.mutations.review.replyTitle'
+    | 'plugins.bitbucket.ui.mutations.review.requestChanges'
+    | 'plugins.bitbucket.ui.mutations.review.settlementUnrecorded'
+    | 'plugins.bitbucket.ui.mutations.review.settlementUnrecordedDetail'
+    | 'plugins.bitbucket.ui.mutations.review.submit'
+    | 'plugins.bitbucket.ui.mutations.review.summary'
+    | 'plugins.bitbucket.ui.mutations.review.summaryVisible'
+    | 'plugins.bitbucket.ui.mutations.review.title'
+    | 'plugins.bitbucket.ui.mutations.review.uncertain'
+    | 'plugins.bitbucket.ui.mutations.review.verdict'
+    | 'plugins.bitbucket.ui.mutations.reviewComment.confirmation.body'
+    | 'plugins.bitbucket.ui.mutations.reviewComment.confirmation.title'
+    | 'plugins.bitbucket.ui.mutations.reviewComment.publish'
+    | 'plugins.bitbucket.ui.mutations.reviewReply.confirmation.body'
+    | 'plugins.bitbucket.ui.mutations.reviewReply.confirmation.title'
+    | 'plugins.bitbucket.ui.mutations.reviewReply.publish'
+    | 'plugins.bitbucket.ui.mutations.title'
+    | 'plugins.bitbucket.ui.mutations.unavailable'
+    | 'plugins.bitbucket.ui.mutations.uncertain'
+    | 'plugins.bitbucket.ui.mutations.unchanged'
+    | 'plugins.bitbucket.ui.mutations.unreadable'
+    | 'plugins.bitbucket.ui.noActivity'
+    | 'plugins.bitbucket.ui.noActivity.description'
+    | 'plugins.bitbucket.ui.noBuilds'
+    | 'plugins.bitbucket.ui.noBuilds.description'
+    | 'plugins.bitbucket.ui.noComments'
+    | 'plugins.bitbucket.ui.noComments.description'
+    | 'plugins.bitbucket.ui.noFacts'
+    | 'plugins.bitbucket.ui.noFacts.description'
+    | 'plugins.bitbucket.ui.observation'
+    | 'plugins.bitbucket.ui.observed'
+    | 'plugins.bitbucket.ui.openComment'
+    | 'plugins.bitbucket.ui.openResults'
+    | 'plugins.bitbucket.ui.overviewFallback'
+    | 'plugins.bitbucket.ui.overviewRefreshFailed'
+    | 'plugins.bitbucket.ui.paginationIncomplete'
+    | 'plugins.bitbucket.ui.partial'
+    | 'plugins.bitbucket.ui.pendingPanels.description'
+    | 'plugins.bitbucket.ui.rawDiffShortened'
+    | 'plugins.bitbucket.ui.rawDiffShortened.description'
+    | 'plugins.bitbucket.ui.readFailed'
+    | 'plugins.bitbucket.ui.readingActivity'
+    | 'plugins.bitbucket.ui.readingBuilds'
+    | 'plugins.bitbucket.ui.readingComments'
+    | 'plugins.bitbucket.ui.readingDiff'
+    | 'plugins.bitbucket.ui.reply'
+    | 'plugins.bitbucket.ui.replyToComment'
+    | 'plugins.bitbucket.ui.rereadActivity'
+    | 'plugins.bitbucket.ui.rereadBuilds'
+    | 'plugins.bitbucket.ui.rereadComments'
+    | 'plugins.bitbucket.ui.rereadDiff'
+    | 'plugins.bitbucket.ui.rereadOverview'
+    | 'plugins.bitbucket.ui.resolution.resolved'
+    | 'plugins.bitbucket.ui.resolution.unknown'
+    | 'plugins.bitbucket.ui.resolution.unresolved'
+    | 'plugins.bitbucket.ui.rowsUnreadable'
+    | 'plugins.bitbucket.ui.shortened'
+    | 'plugins.bitbucket.ui.shortened.description'
+    | 'plugins.bitbucket.ui.showMoreActivity'
+    | 'plugins.bitbucket.ui.showMoreBuilds'
+    | 'plugins.bitbucket.ui.showMoreComments'
+    | 'plugins.bitbucket.ui.showMoreFiles'
+    | 'plugins.bitbucket.ui.showReturnedReplies'
+    | 'plugins.bitbucket.ui.someone'
+    | 'plugins.bitbucket.ui.status.failing'
+    | 'plugins.bitbucket.ui.status.passing'
+    | 'plugins.bitbucket.ui.status.running'
+    | 'plugins.bitbucket.ui.tabs.activity'
+    | 'plugins.bitbucket.ui.tabs.builds'
+    | 'plugins.bitbucket.ui.tabs.comments'
+    | 'plugins.bitbucket.ui.tabs.diff'
+    | 'plugins.bitbucket.ui.tabs.overview'
+    | 'plugins.channels.column.botNeedsYou'
+    | 'plugins.channels.column.botsAndConnections'
+    | 'plugins.channels.column.empty'
+    | 'plugins.channels.column.link'
+    | 'plugins.channels.column.noResults'
+    | 'plugins.channels.column.otherGroup'
+    | 'plugins.channels.column.paused'
+    | 'plugins.channels.column.search'
+    | 'plugins.channels.column.unavailable'
+    | 'plugins.channels.page.approvals'
+    | 'plugins.channels.page.approvalsOff'
+    | 'plugins.channels.page.approvalsRequest'
+    | 'plugins.channels.page.approvalsSession'
+    | 'plugins.channels.page.bot'
+    | 'plugins.channels.page.botAttentionDescription'
+    | 'plugins.channels.page.connectBot'
+    | 'plugins.channels.page.conversation'
+    | 'plugins.channels.page.deletingDescription'
+    | 'plugins.channels.page.description'
+    | 'plugins.channels.page.edit'
+    | 'plugins.channels.page.errorTitle'
+    | 'plugins.channels.page.linkAnotherSession'
+    | 'plugins.channels.page.linkDescription'
+    | 'plugins.channels.page.linkStepConversation'
+    | 'plugins.channels.page.linkStepPairing'
+    | 'plugins.channels.page.linkStepTarget'
+    | 'plugins.channels.page.listensTo'
+    | 'plugins.channels.page.loadingTitle'
+    | 'plugins.channels.page.manageBot'
+    | 'plugins.channels.page.manageBotDescription'
+    | 'plugins.channels.page.noBotsDescription'
+    | 'plugins.channels.page.noBotsTitle'
+    | 'plugins.channels.page.noConversationsDescription'
+    | 'plugins.channels.page.noConversationsOneBot'
+    | 'plugins.channels.page.noConversationsTitle'
+    | 'plugins.channels.page.notFoundDescription'
+    | 'plugins.channels.page.notFoundTitle'
+    | 'plugins.channels.page.noteAutomation'
+    | 'plugins.channels.page.noteAutomationResult'
+    | 'plugins.channels.page.noteMirror'
+    | 'plugins.channels.page.noteNone'
+    | 'plugins.channels.page.noteReplies'
+    | 'plugins.channels.page.onlyYou'
+    | 'plugins.channels.page.openSession'
+    | 'plugins.channels.page.pause'
+    | 'plugins.channels.page.pauseDescription'
+    | 'plugins.channels.page.pauseOrUnlink'
+    | 'plugins.channels.page.pausedDescription'
+    | 'plugins.channels.page.sendsBack'
+    | 'plugins.channels.page.sessionOpenFailed'
+    | 'plugins.channels.page.sharedConversation'
+    | 'plugins.channels.page.showAll'
+    | 'plugins.channels.page.startsRunOf'
+    | 'plugins.channels.page.talksTo'
+    | 'plugins.channels.page.test'
+    | 'plugins.channels.page.title'
+    | 'plugins.channels.page.turnOn'
+    | 'plugins.channels.page.unlink'
+    | 'plugins.channels.page.unlinkAction'
+    | 'plugins.channels.page.unlinkAutomationDescription'
+    | 'plugins.channels.page.unlinkConfirm'
+    | 'plugins.channels.page.unlinkConfirmDescription'
+    | 'plugins.channels.page.unlinkConfirmTitle'
+    | 'plugins.channels.page.unlinkFailedTitle'
+    | 'plugins.channels.page.unlinkSection'
+    | 'plugins.channels.page.unlinkSessionDescription'
+    | 'plugins.channels.page.unlinking'
+    | 'plugins.channels.session.actionFailed'
+    | 'plugins.channels.session.approvals'
+    | 'plugins.channels.session.attentionBindingDisabled'
+    | 'plugins.channels.session.attentionConnectionDeleting'
+    | 'plugins.channels.session.attentionConnectionDisabled'
+    | 'plugins.channels.session.attentionConnectionUnavailable'
+    | 'plugins.channels.session.attentionTranscriptHistoryGap'
+    | 'plugins.channels.session.bot'
+    | 'plugins.channels.session.cancel'
+    | 'plugins.channels.session.composerChip'
+    | 'plugins.channels.session.composerChipAttention'
+    | 'plugins.channels.session.continueFromHere'
+    | 'plugins.channels.session.emptyDescription'
+    | 'plugins.channels.session.emptyInviteDescription'
+    | 'plugins.channels.session.emptyInviteTitle'
+    | 'plugins.channels.session.errorTitle'
+    | 'plugins.channels.session.gets'
+    | 'plugins.channels.session.groupLive'
+    | 'plugins.channels.session.groupNeedsYou'
+    | 'plugins.channels.session.groupPaused'
+    | 'plugins.channels.session.hears'
+    | 'plugins.channels.session.lastReply'
+    | 'plugins.channels.session.lastReplyNotDelivered'
+    | 'plugins.channels.session.lastReplySending'
+    | 'plugins.channels.session.link'
+    | 'plugins.channels.session.liveUpdatesEndedReason'
+    | 'plugins.channels.session.loadingTitle'
+    | 'plugins.channels.session.needsYouCount'
+    | 'plugins.channels.session.offlineReason'
+    | 'plugins.channels.session.openChannels'
+    | 'plugins.channels.session.openInChannels'
+    | 'plugins.channels.session.openInChannelsUnavailable'
+    | 'plugins.channels.session.pause'
+    | 'plugins.channels.session.refreshing'
+    | 'plugins.channels.session.resume'
+    | 'plugins.channels.session.staleReason'
+    | 'plugins.channels.session.title'
+    | 'plugins.channels.session.transcriptBaselineAccept'
+    | 'plugins.channels.session.transcriptBaselineAccepting'
+    | 'plugins.channels.session.transcriptBaselineUnconfirmed'
+    | 'plugins.channels.session.unlink'
+    | 'plugins.channels.session.unlinkConfirm'
+    | 'plugins.channels.session.unlinkNamed'
+    | 'plugins.channels.settings.connections'
+    | 'plugins.channels.settings.connections.subtitle'
+    | 'plugins.channels.settings.conversations'
+    | 'plugins.channels.settings.conversationsCount'
+    | 'plugins.channels.settings.conversationsNone'
+    | 'plugins.channels.settings.description'
+    | 'plugins.channels.settings.openChannels'
+    | 'plugins.channels.surface.acceptLossFailedTitle'
+    | 'plugins.channels.surface.acceptPossibleLoss'
+    | 'plugins.channels.surface.acceptPossibleLossConfirm'
+    | 'plugins.channels.surface.acceptPossibleLossConfirmDescription'
+    | 'plugins.channels.surface.acceptPossibleLossConfirmTitle'
+    | 'plugins.channels.surface.acceptedPossibleLossDescription'
+    | 'plugins.channels.surface.acceptedPossibleLossTitle'
+    | 'plugins.channels.surface.acceptingPossibleLoss'
+    | 'plugins.channels.surface.back'
+    | 'plugins.channels.surface.bestEffort'
+    | 'plugins.channels.surface.bestEffortBeforeDurableAdmissionDescription'
+    | 'plugins.channels.surface.bestEffortBeforeDurableAdmissionTitle'
+    | 'plugins.channels.surface.bindingApprovalEnabledRequest'
+    | 'plugins.channels.surface.bindingApprovalEnabledSession'
+    | 'plugins.channels.surface.bindingApprovalUnavailableRequest'
+    | 'plugins.channels.surface.bindingApprovalUnavailableSession'
+    | 'plugins.channels.surface.bindingAudienceDirect'
+    | 'plugins.channels.surface.bindingAudienceShared'
+    | 'plugins.channels.surface.bindingConnectionUnavailable'
+    | 'plugins.channels.surface.bindingCreateAction'
+    | 'plugins.channels.surface.bindingCreateAllowBots'
+    | 'plugins.channels.surface.bindingCreateAllowBotsAllowed'
+    | 'plugins.channels.surface.bindingCreateAllowBotsBlocked'
+    | 'plugins.channels.surface.bindingCreateAllowedSender'
+    | 'plugins.channels.surface.bindingCreateApprovals'
+    | 'plugins.channels.surface.bindingCreateApprovalsAudience'
+    | 'plugins.channels.surface.bindingCreateApprovalsAudienceAll'
+    | 'plugins.channels.surface.bindingCreateApprovalsAudienceSelected'
+    | 'plugins.channels.surface.bindingCreateApprovalsAudienceSelectedSummary'
+    | 'plugins.channels.surface.bindingCreateApprovalsOff'
+    | 'plugins.channels.surface.bindingCreateApprovalsScope'
+    | 'plugins.channels.surface.bindingCreateApprovalsScopeRequest'
+    | 'plugins.channels.surface.bindingCreateApprovalsScopeSession'
+    | 'plugins.channels.surface.bindingCreateAutomation'
+    | 'plugins.channels.surface.bindingCreateAutomationAuthority'
+    | 'plugins.channels.surface.bindingCreateAutomationAuthorityValue'
+    | 'plugins.channels.surface.bindingCreateAutomationDelivery'
+    | 'plugins.channels.surface.bindingCreateAutomationDisabled'
+    | 'plugins.channels.surface.bindingCreateAutomationEffect'
+    | 'plugins.channels.surface.bindingCreateAutomationEffectExecutionRun'
+    | 'plugins.channels.surface.bindingCreateAutomationEffectExistingSession'
+    | 'plugins.channels.surface.bindingCreateAutomationEffectNewSession'
+    | 'plugins.channels.surface.bindingCreateAutomationEffectWorkflow'
+    | 'plugins.channels.surface.bindingCreateAutomationEnabled'
+    | 'plugins.channels.surface.bindingCreateAutomationLoad'
+    | 'plugins.channels.surface.bindingCreateAutomationLoadMore'
+    | 'plugins.channels.surface.bindingCreateAutomationState'
+    | 'plugins.channels.surface.bindingCreateAutomationUnavailableDescription'
+    | 'plugins.channels.surface.bindingCreateAutomationUnavailableTitle'
+    | 'plugins.channels.surface.bindingCreateBack'
+    | 'plugins.channels.surface.bindingCreateCancel'
+    | 'plugins.channels.surface.bindingCreateConfigureNewSession'
+    | 'plugins.channels.surface.bindingCreateConfirm'
+    | 'plugins.channels.surface.bindingCreateConnection'
+    | 'plugins.channels.surface.bindingCreateConnectionUnavailable'
+    | 'plugins.channels.surface.bindingCreateContinue'
+    | 'plugins.channels.surface.bindingCreateConversation'
+    | 'plugins.channels.surface.bindingCreateCreated'
+    | 'plugins.channels.surface.bindingCreateCurrentStep'
+    | 'plugins.channels.surface.bindingCreateDeliveryMode'
+    | 'plugins.channels.surface.bindingCreateDescription'
+    | 'plugins.channels.surface.bindingCreateEndpoint'
+    | 'plugins.channels.surface.bindingCreateEndpointCandidates'
+    | 'plugins.channels.surface.bindingCreateEndpointFallback'
+    | 'plugins.channels.surface.bindingCreateEndpointQuery'
+    | 'plugins.channels.surface.bindingCreateEndpointSearch'
+    | 'plugins.channels.surface.bindingCreateInputAddressed'
+    | 'plugins.channels.surface.bindingCreateInputAll'
+    | 'plugins.channels.surface.bindingCreateInputDirect'
+    | 'plugins.channels.surface.bindingCreateInputMode'
+    | 'plugins.channels.surface.bindingCreateLinkPreview'
+    | 'plugins.channels.surface.bindingCreateLinkPreviewProviderDefault'
+    | 'plugins.channels.surface.bindingCreateLinkPreviewSuppress'
+    | 'plugins.channels.surface.bindingCreateMirrorSession'
+    | 'plugins.channels.surface.bindingCreateNewSessionDisabled'
+    | 'plugins.channels.surface.bindingCreateNewSessionEnabled'
+    | 'plugins.channels.surface.bindingCreateNewSessionUnavailable'
+    | 'plugins.channels.surface.bindingCreateNewSessionUnavailableDescription'
+    | 'plugins.channels.surface.bindingCreateNoConnection'
+    | 'plugins.channels.surface.bindingCreatePairingAttempts'
+    | 'plugins.channels.surface.bindingCreatePairingCancel'
+    | 'plugins.channels.surface.bindingCreatePairingChallengeDetails'
+    | 'plugins.channels.surface.bindingCreatePairingChallengeTitle'
+    | 'plugins.channels.surface.bindingCreatePairingClose'
+    | 'plugins.channels.surface.bindingCreatePairingCompleted'
+    | 'plugins.channels.surface.bindingCreatePairingCompletedPaused'
+    | 'plugins.channels.surface.bindingCreatePairingConfirm'
+    | 'plugins.channels.surface.bindingCreatePairingCopyLink'
+    | 'plugins.channels.surface.bindingCreatePairingCopyToken'
+    | 'plugins.channels.surface.bindingCreatePairingCountdown'
+    | 'plugins.channels.surface.bindingCreatePairingDescription'
+    | 'plugins.channels.surface.bindingCreatePairingDestination'
+    | 'plugins.channels.surface.bindingCreatePairingEndpoint'
+    | 'plugins.channels.surface.bindingCreatePairingExpiredDescription'
+    | 'plugins.channels.surface.bindingCreatePairingExpiredTitle'
+    | 'plugins.channels.surface.bindingCreatePairingExpiresIn'
+    | 'plugins.channels.surface.bindingCreatePairingFinalize'
+    | 'plugins.channels.surface.bindingCreatePairingFinalizing'
+    | 'plugins.channels.surface.bindingCreatePairingInvalidDescription'
+    | 'plugins.channels.surface.bindingCreatePairingLink'
+    | 'plugins.channels.surface.bindingCreatePairingLoadingDescription'
+    | 'plugins.channels.surface.bindingCreatePairingLoadingTitle'
+    | 'plugins.channels.surface.bindingCreatePairingOpenLink'
+    | 'plugins.channels.surface.bindingCreatePairingProposal'
+    | 'plugins.channels.surface.bindingCreatePairingProposalDetails'
+    | 'plugins.channels.surface.bindingCreatePairingRefresh'
+    | 'plugins.channels.surface.bindingCreatePairingRequiredSummary'
+    | 'plugins.channels.surface.bindingCreatePairingRestartedDescription'
+    | 'plugins.channels.surface.bindingCreatePairingRestartedTitle'
+    | 'plugins.channels.surface.bindingCreatePairingReviewEnable'
+    | 'plugins.channels.surface.bindingCreatePairingTitle'
+    | 'plugins.channels.surface.bindingCreatePairingToken'
+    | 'plugins.channels.surface.bindingCreatePairingUnavailableDescription'
+    | 'plugins.channels.surface.bindingCreatePairingUnavailableTitle'
+    | 'plugins.channels.surface.bindingCreatePairingUnknownDescription'
+    | 'plugins.channels.surface.bindingCreatePairingUnknownTitle'
+    | 'plugins.channels.surface.bindingCreatePermissionCeiling'
+    | 'plugins.channels.surface.bindingCreatePermissionDefault'
+    | 'plugins.channels.surface.bindingCreatePermissionPlan'
+    | 'plugins.channels.surface.bindingCreatePermissionReadOnly'
+    | 'plugins.channels.surface.bindingCreatePermissionSafeYolo'
+    | 'plugins.channels.surface.bindingCreatePermissionYolo'
+    | 'plugins.channels.surface.bindingCreatePolicies'
+    | 'plugins.channels.surface.bindingCreatePolicySummary'
+    | 'plugins.channels.surface.bindingCreatePrincipal'
+    | 'plugins.channels.surface.bindingCreatePrincipalCandidates'
+    | 'plugins.channels.surface.bindingCreatePrincipalFallback'
+    | 'plugins.channels.surface.bindingCreatePrincipalQuery'
+    | 'plugins.channels.surface.bindingCreatePrincipalSearch'
+    | 'plugins.channels.surface.bindingCreatePrivacyE2ee'
+    | 'plugins.channels.surface.bindingCreatePrivacyPlain'
+    | 'plugins.channels.surface.bindingCreatePrivacyTransit'
+    | 'plugins.channels.surface.bindingCreateRepliesOnly'
+    | 'plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription'
+    | 'plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle'
+    | 'plugins.channels.surface.bindingCreateReview'
+    | 'plugins.channels.surface.bindingCreateSenderFeedback'
+    | 'plugins.channels.surface.bindingCreateSenderFeedbackOff'
+    | 'plugins.channels.surface.bindingCreateSenderFeedbackRefusals'
+    | 'plugins.channels.surface.bindingCreateSession'
+    | 'plugins.channels.surface.bindingCreateSessionLoadMore'
+    | 'plugins.channels.surface.bindingCreateSessionReload'
+    | 'plugins.channels.surface.bindingCreateSessionUnavailableDescription'
+    | 'plugins.channels.surface.bindingCreateSessionUnavailableTitle'
+    | 'plugins.channels.surface.bindingCreateStaleDescription'
+    | 'plugins.channels.surface.bindingCreateStaleTitle'
+    | 'plugins.channels.surface.bindingCreateSummary'
+    | 'plugins.channels.surface.bindingCreateTarget'
+    | 'plugins.channels.surface.bindingCreateTargetNotVerifiedDescription'
+    | 'plugins.channels.surface.bindingCreateTargetNotVerifiedTitle'
+    | 'plugins.channels.surface.bindingCreateTargetSearch'
+    | 'plugins.channels.surface.bindingCreateTargetSearchPlaceholder'
+    | 'plugins.channels.surface.bindingCreateTitle'
+    | 'plugins.channels.surface.bindingCreateUnavailableDescription'
+    | 'plugins.channels.surface.bindingCreateUnavailableTitle'
+    | 'plugins.channels.surface.bindingCreateUnknownDescription'
+    | 'plugins.channels.surface.bindingCreateUnknownTitle'
+    | 'plugins.channels.surface.bindingCreateWebhookBoundary'
+    | 'plugins.channels.surface.bindingCreateWebhookBoundaryDurablePush'
+    | 'plugins.channels.surface.bindingDeleteFailedDescription'
+    | 'plugins.channels.surface.bindingDeleteUnknownDescription'
+    | 'plugins.channels.surface.bindingDeleteUnknownTitle'
+    | 'plugins.channels.surface.bindingDeliveryFinalResult'
+    | 'plugins.channels.surface.bindingDeliveryMirrorSession'
+    | 'plugins.channels.surface.bindingDeliveryNone'
+    | 'plugins.channels.surface.bindingDeliveryRepliesOnly'
+    | 'plugins.channels.surface.bindingEdit'
+    | 'plugins.channels.surface.bindingEditAudience'
+    | 'plugins.channels.surface.bindingEditAutomationPolicyTitle'
+    | 'plugins.channels.surface.bindingEditAutomationTargetOfflineDescription'
+    | 'plugins.channels.surface.bindingEditAutomationTargetOfflineTitle'
+    | 'plugins.channels.surface.bindingEditAutomationUnavailableDescription'
+    | 'plugins.channels.surface.bindingEditAutomationUnavailableTitle'
+    | 'plugins.channels.surface.bindingEditConnectionChangedDescription'
+    | 'plugins.channels.surface.bindingEditConnectionChangedTitle'
+    | 'plugins.channels.surface.bindingEditCurrentAudience'
+    | 'plugins.channels.surface.bindingEditCurrentStep'
+    | 'plugins.channels.surface.bindingEditDebounce'
+    | 'plugins.channels.surface.bindingEditEnabled'
+    | 'plugins.channels.surface.bindingEditEndpointReselection'
+    | 'plugins.channels.surface.bindingEditFinalizingDescription'
+    | 'plugins.channels.surface.bindingEditLoadingDescription'
+    | 'plugins.channels.surface.bindingEditLoadingTitle'
+    | 'plugins.channels.surface.bindingEditNewSessionUnavailableDescription'
+    | 'plugins.channels.surface.bindingEditNewSessionUnavailableTitle'
+    | 'plugins.channels.surface.bindingEditNotFoundDescription'
+    | 'plugins.channels.surface.bindingEditNotFoundTitle'
+    | 'plugins.channels.surface.bindingEditPolicyClampedDescription'
+    | 'plugins.channels.surface.bindingEditPolicyClampedTitle'
+    | 'plugins.channels.surface.bindingEditQuotaIncompatibleDescription'
+    | 'plugins.channels.surface.bindingEditQuotaIncompatibleTitle'
+    | 'plugins.channels.surface.bindingEditReadUnavailableDescription'
+    | 'plugins.channels.surface.bindingEditReadUnavailableTitle'
+    | 'plugins.channels.surface.bindingEditResolverNotReadyDescription'
+    | 'plugins.channels.surface.bindingEditResolverNotReadyTitle'
+    | 'plugins.channels.surface.bindingEditResolverStaleDescription'
+    | 'plugins.channels.surface.bindingEditResolverStaleTitle'
+    | 'plugins.channels.surface.bindingEditResolverUnavailableDescription'
+    | 'plugins.channels.surface.bindingEditResolverUnavailableTitle'
+    | 'plugins.channels.surface.bindingEditResultDelivery'
+    | 'plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription'
+    | 'plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle'
+    | 'plugins.channels.surface.bindingEditReview'
+    | 'plugins.channels.surface.bindingEditRevokeSender'
+    | 'plugins.channels.surface.bindingEditSave'
+    | 'plugins.channels.surface.bindingEditSessionUnavailableDescription'
+    | 'plugins.channels.surface.bindingEditSessionUnavailableTitle'
+    | 'plugins.channels.surface.bindingEditSummary'
+    | 'plugins.channels.surface.bindingEditSummaryChangedDescription'
+    | 'plugins.channels.surface.bindingEditSummaryChangedTitle'
+    | 'plugins.channels.surface.bindingEditTarget'
+    | 'plugins.channels.surface.bindingEditTargetNotVerifiedDescription'
+    | 'plugins.channels.surface.bindingEditTargetNotVerifiedTitle'
+    | 'plugins.channels.surface.bindingEditTargetPolicy'
+    | 'plugins.channels.surface.bindingEditUnavailableDescription'
+    | 'plugins.channels.surface.bindingEditUnavailableTitle'
+    | 'plugins.channels.surface.bindingEditUnknownDescription'
+    | 'plugins.channels.surface.bindingEditUnknownTitle'
+    | 'plugins.channels.surface.bindingEditUseAudience'
+    | 'plugins.channels.surface.bindingEnableFailedDescription'
+    | 'plugins.channels.surface.bindingEnableFailedTitle'
+    | 'plugins.channels.surface.bindingEnableQuotaIncompatibleDescription'
+    | 'plugins.channels.surface.bindingEndpointFallback'
+    | 'plugins.channels.surface.bindingInputAddressedMessages'
+    | 'plugins.channels.surface.bindingInputAllAllowedMessages'
+    | 'plugins.channels.surface.bindingInputDirectMentionsOnly'
+    | 'plugins.channels.surface.bindingInputModeCapability'
+    | 'plugins.channels.surface.bindingProviderFilterFallback'
+    | 'plugins.channels.surface.bindingSaveUnknownDescription'
+    | 'plugins.channels.surface.bindingSaveUnknownTitle'
+    | 'plugins.channels.surface.bindingTargetAutomation'
+    | 'plugins.channels.surface.bindingTargetSession'
+    | 'plugins.channels.surface.bindingUpdated'
+    | 'plugins.channels.surface.bindingsErrorDescription'
+    | 'plugins.channels.surface.bindingsLiveUpdatesEndedDescription'
+    | 'plugins.channels.surface.bindingsLiveUpdatesEndedTitle'
+    | 'plugins.channels.surface.bindingsLoadingDescription'
+    | 'plugins.channels.surface.bindingsRefreshing'
+    | 'plugins.channels.surface.bindingsResourceBindingInvalid'
+    | 'plugins.channels.surface.bindingsResourceContentTypeInvalid'
+    | 'plugins.channels.surface.bindingsResourceInvalidJson'
+    | 'plugins.channels.surface.bindingsResourceShapeInvalid'
+    | 'plugins.channels.surface.bindingsStaleDescription'
+    | 'plugins.channels.surface.bindingsStaleTitle'
+    | 'plugins.channels.surface.cancel'
+    | 'plugins.channels.surface.connectionAccount'
+    | 'plugins.channels.surface.connectionCreatedAwaitingBinding'
+    | 'plugins.channels.surface.connectionDeleteConfirm'
+    | 'plugins.channels.surface.connectionDeleteConfirmDescription'
+    | 'plugins.channels.surface.connectionDeleteConfirmTitle'
+    | 'plugins.channels.surface.connectionDeleted'
+    | 'plugins.channels.surface.connectionNoAttention'
+    | 'plugins.channels.surface.connectionPaused'
+    | 'plugins.channels.surface.connectionRetest'
+    | 'plugins.channels.surface.connectionRetestFailedDescription'
+    | 'plugins.channels.surface.connectionRetestFailedTitle'
+    | 'plugins.channels.surface.connectionRetestNotReadyTitle'
+    | 'plugins.channels.surface.connectionRetestReadyDescription'
+    | 'plugins.channels.surface.connectionRetestReadyTitle'
+    | 'plugins.channels.surface.connectionRetestUnknownDescription'
+    | 'plugins.channels.surface.connectionRetestUnknownTitle'
+    | 'plugins.channels.surface.connectionRetesting'
+    | 'plugins.channels.surface.connectionReviewContinuity'
+    | 'plugins.channels.surface.connectionReviewOverlapDestructive'
+    | 'plugins.channels.surface.connectionReviewOverlapExclusive'
+    | 'plugins.channels.surface.connectionReviewOverlapSafe'
+    | 'plugins.channels.surface.connectionReviewReplayCheckpointed'
+    | 'plugins.channels.surface.connectionReviewReplayNone'
+    | 'plugins.channels.surface.connectionReviewReplaySession'
+    | 'plugins.channels.surface.connectionReviewSummary'
+    | 'plugins.channels.surface.connectionReviewTitle'
+    | 'plugins.channels.surface.connectionSourceChangedDescription'
+    | 'plugins.channels.surface.connectionSourceChangedTitle'
+    | 'plugins.channels.surface.connectionTransfer'
+    | 'plugins.channels.surface.connectionTransferCancel'
+    | 'plugins.channels.surface.connectionTransferConfirm'
+    | 'plugins.channels.surface.connectionTransferDescription'
+    | 'plugins.channels.surface.connectionTransferEndpointEnsureUnknownDescription'
+    | 'plugins.channels.surface.connectionTransferEndpointEnsureUnknownTitle'
+    | 'plugins.channels.surface.connectionTransferFailedDescription'
+    | 'plugins.channels.surface.connectionTransferFailedTitle'
+    | 'plugins.channels.surface.connectionTransferResultFailedDescription'
+    | 'plugins.channels.surface.connectionTransferTitle'
+    | 'plugins.channels.surface.connectionTransferUnavailableDescription'
+    | 'plugins.channels.surface.connectionTransferUnavailableTitle'
+    | 'plugins.channels.surface.connectionTransferUnknownDescription'
+    | 'plugins.channels.surface.connectionTransferUnknownTitle'
+    | 'plugins.channels.surface.connectionTransferWith'
+    | 'plugins.channels.surface.connectionTransferring'
+    | 'plugins.channels.surface.connections'
+    | 'plugins.channels.surface.currentPolicy'
+    | 'plugins.channels.surface.day'
+    | 'plugins.channels.surface.days'
+    | 'plugins.channels.surface.delete'
+    | 'plugins.channels.surface.deleteDescription'
+    | 'plugins.channels.surface.deleteFailedDescription'
+    | 'plugins.channels.surface.deleteFailedTitle'
+    | 'plugins.channels.surface.deleteFinalizing'
+    | 'plugins.channels.surface.deleteFinalizingDescription'
+    | 'plugins.channels.surface.deleteStopPendingDescription'
+    | 'plugins.channels.surface.deleteStopPendingTitle'
+    | 'plugins.channels.surface.deleteTitle'
+    | 'plugins.channels.surface.deleteUnknownDescription'
+    | 'plugins.channels.surface.deleteUnknownTitle'
+    | 'plugins.channels.surface.deleting'
+    | 'plugins.channels.surface.deliveryNotDelivered'
+    | 'plugins.channels.surface.deliveryNotDeliveredDescription'
+    | 'plugins.channels.surface.deliveryNotDeliveredTitle'
+    | 'plugins.channels.surface.deliveryOutcomeUnknown'
+    | 'plugins.channels.surface.deliveryOutcomeUnknownDescription'
+    | 'plugins.channels.surface.deliveryOutcomeUnknownTitle'
+    | 'plugins.channels.surface.deliveryPartial'
+    | 'plugins.channels.surface.deliveryPartialDescription'
+    | 'plugins.channels.surface.deliveryPartialTitle'
+    | 'plugins.channels.surface.deliveryResolutionAccept'
+    | 'plugins.channels.surface.deliveryResolutionAccepting'
+    | 'plugins.channels.surface.deliveryResolutionArchived'
+    | 'plugins.channels.surface.deliveryResolutionDescription'
+    | 'plugins.channels.surface.deliveryResolutionDiscard'
+    | 'plugins.channels.surface.deliveryResolutionDiscarding'
+    | 'plugins.channels.surface.deliveryResolutionEmpty'
+    | 'plugins.channels.surface.deliveryResolutionFailedDescription'
+    | 'plugins.channels.surface.deliveryResolutionFailedTitle'
+    | 'plugins.channels.surface.deliveryResolutionLoadMore'
+    | 'plugins.channels.surface.deliveryResolutionLoading'
+    | 'plugins.channels.surface.deliveryResolutionOutcomeUnknown'
+    | 'plugins.channels.surface.deliveryResolutionPartial'
+    | 'plugins.channels.surface.deliveryResolutionReadFailedDescription'
+    | 'plugins.channels.surface.deliveryResolutionReadFailedTitle'
+    | 'plugins.channels.surface.deliveryResolutionRetryAfterUnarchive'
+    | 'plugins.channels.surface.deliveryResolutionRetrying'
+    | 'plugins.channels.surface.deliveryResolutionTitle'
+    | 'plugins.channels.surface.deliveryResolutionUnknownDescription'
+    | 'plugins.channels.surface.deliveryResolutionUnknownTitle'
+    | 'plugins.channels.surface.deliveryRetryDue'
+    | 'plugins.channels.surface.deliveryRetryDueDescription'
+    | 'plugins.channels.surface.deliveryRetryDueTitle'
+    | 'plugins.channels.surface.disabled'
+    | 'plugins.channels.surface.emptyDescription'
+    | 'plugins.channels.surface.emptyTitle'
+    | 'plugins.channels.surface.enabled'
+    | 'plugins.channels.surface.enabledPolicy'
+    | 'plugins.channels.surface.enabledPolicyDescription'
+    | 'plugins.channels.surface.endpointRepairFailedTitle'
+    | 'plugins.channels.surface.endpointRetargetOwed'
+    | 'plugins.channels.surface.endpointRetargetOwedDescription'
+    | 'plugins.channels.surface.endpointRetargetOwedTitle'
+    | 'plugins.channels.surface.errorDescription'
+    | 'plugins.channels.surface.errorTitle'
+    | 'plugins.channels.surface.historyGap'
+    | 'plugins.channels.surface.historyGapApplicationAdmissionLostDescription'
+    | 'plugins.channels.surface.historyGapBaselineAccept'
+    | 'plugins.channels.surface.historyGapBaselineAccepting'
+    | 'plugins.channels.surface.historyGapBaselineConfirm'
+    | 'plugins.channels.surface.historyGapBaselineConfirmDescription'
+    | 'plugins.channels.surface.historyGapBaselineConfirmTitle'
+    | 'plugins.channels.surface.historyGapBaselineFailedDescription'
+    | 'plugins.channels.surface.historyGapBaselineFailedTitle'
+    | 'plugins.channels.surface.historyGapBaselineUnknownDescription'
+    | 'plugins.channels.surface.historyGapBaselineUnknownTitle'
+    | 'plugins.channels.surface.historyGapProviderHistoryUnavailableDescription'
+    | 'plugins.channels.surface.historyGapReportedAt'
+    | 'plugins.channels.surface.historyGapTitle'
+    | 'plugins.channels.surface.historyGapUnknownReportedAt'
+    | 'plugins.channels.surface.hour'
+    | 'plugins.channels.surface.hours'
+    | 'plugins.channels.surface.ingressAttentionActionsUnavailable'
+    | 'plugins.channels.surface.ingressAttentionAttemptCountPlural'
+    | 'plugins.channels.surface.ingressAttentionAttemptCountPrefix'
+    | 'plugins.channels.surface.ingressAttentionAttemptCountSingular'
+    | 'plugins.channels.surface.ingressAttentionDescription'
+    | 'plugins.channels.surface.ingressAttentionEmptyDescription'
+    | 'plugins.channels.surface.ingressAttentionEmptyTitle'
+    | 'plugins.channels.surface.ingressAttentionLoadMore'
+    | 'plugins.channels.surface.ingressAttentionLoading'
+    | 'plugins.channels.surface.ingressAttentionOccurrenceConflict'
+    | 'plugins.channels.surface.ingressAttentionReadFailedDescription'
+    | 'plugins.channels.surface.ingressAttentionReadFailedTitle'
+    | 'plugins.channels.surface.ingressAttentionRetry'
+    | 'plugins.channels.surface.ingressAttentionRetryFailedDescription'
+    | 'plugins.channels.surface.ingressAttentionRetryFailedTitle'
+    | 'plugins.channels.surface.ingressAttentionRetryUnknownDescription'
+    | 'plugins.channels.surface.ingressAttentionRetryUnknownTitle'
+    | 'plugins.channels.surface.ingressAttentionRetrying'
+    | 'plugins.channels.surface.ingressAttentionTerminal'
+    | 'plugins.channels.surface.ingressAttentionTerminalRecoverable'
+    | 'plugins.channels.surface.ingressAttentionTitle'
+    | 'plugins.channels.surface.ingressOccurrenceConflict'
+    | 'plugins.channels.surface.ingressOccurrenceConflictDescription'
+    | 'plugins.channels.surface.ingressOccurrenceConflictTitle'
+    | 'plugins.channels.surface.integrationIdentity'
+    | 'plugins.channels.surface.liveUpdatesEndedDescription'
+    | 'plugins.channels.surface.liveUpdatesEndedTitle'
+    | 'plugins.channels.surface.loadingDescription'
+    | 'plugins.channels.surface.loadingTitle'
+    | 'plugins.channels.surface.machinePlacementPausedAssigned'
+    | 'plugins.channels.surface.machinePlacementPollBlocked'
+    | 'plugins.channels.surface.machinePlacementRetargetOwed'
+    | 'plugins.channels.surface.machinePlacementStopUnconfirmed'
+    | 'plugins.channels.surface.maximumObservationAge'
+    | 'plugins.channels.surface.maximumObservationAgeDescription'
+    | 'plugins.channels.surface.maximumObservationAgeInput'
+    | 'plugins.channels.surface.minute'
+    | 'plugins.channels.surface.minutes'
+    | 'plugins.channels.surface.observationAgeInvalid'
+    | 'plugins.channels.surface.observationAgeRange'
+    | 'plugins.channels.surface.oldTransportStopUnconfirmed'
+    | 'plugins.channels.surface.oldTransportStopUnconfirmedDescription'
+    | 'plugins.channels.surface.oldTransportStopUnconfirmedTitle'
+    | 'plugins.channels.surface.openInChannels'
+    | 'plugins.channels.surface.pollBlocked'
+    | 'plugins.channels.surface.pollBlockedDescription'
+    | 'plugins.channels.surface.pollBlockedTitle'
+    | 'plugins.channels.surface.pollRetry'
+    | 'plugins.channels.surface.pollRetryDue'
+    | 'plugins.channels.surface.pollRetryDueDescription'
+    | 'plugins.channels.surface.pollRetryDueTitle'
+    | 'plugins.channels.surface.pollRetryFailedDescription'
+    | 'plugins.channels.surface.pollRetryFailedTitle'
+    | 'plugins.channels.surface.pollRetryUnknownDescription'
+    | 'plugins.channels.surface.pollRetryUnknownTitle'
+    | 'plugins.channels.surface.pollRetrying'
+    | 'plugins.channels.surface.provider'
+    | 'plugins.channels.surface.providerActionsUnavailableDescription'
+    | 'plugins.channels.surface.providerActionsUnavailableTitle'
+    | 'plugins.channels.surface.providerConfigurationInvalid'
+    | 'plugins.channels.surface.providerConfigurationInvalidDescription'
+    | 'plugins.channels.surface.providerCreate'
+    | 'plugins.channels.surface.providerCreating'
+    | 'plugins.channels.surface.providerCreationFailedDescription'
+    | 'plugins.channels.surface.providerCreationFailedTitle'
+    | 'plugins.channels.surface.providerCreationRetryUnknownDescription'
+    | 'plugins.channels.surface.providerCreationUnavailableDescription'
+    | 'plugins.channels.surface.providerCreationUnavailableTitle'
+    | 'plugins.channels.surface.providerCreationUnknownDescription'
+    | 'plugins.channels.surface.providerCreationUnknownTitle'
+    | 'plugins.channels.surface.providerCredentialInvalid'
+    | 'plugins.channels.surface.providerCredentialInvalidDescription'
+    | 'plugins.channels.surface.providerCredentialInvalidOpenConnectedAccounts'
+    | 'plugins.channels.surface.providerCredentialInvalidOpenConnectedAccountsUnavailable'
+    | 'plugins.channels.surface.providerEndpointEnsureFailedDescription'
+    | 'plugins.channels.surface.providerEndpointEnsureFailedTitle'
+    | 'plugins.channels.surface.providerEndpointEnsureUnknownDescription'
+    | 'plugins.channels.surface.providerEndpointEnsureUnknownTitle'
+    | 'plugins.channels.surface.providerFailureCredentialInvalid'
+    | 'plugins.channels.surface.providerFailureInvalidConfiguration'
+    | 'plugins.channels.surface.providerFailureNetwork'
+    | 'plugins.channels.surface.providerFailurePermissionMissing'
+    | 'plugins.channels.surface.providerFailureProviderConflict'
+    | 'plugins.channels.surface.providerFailureRateLimited'
+    | 'plugins.channels.surface.providerFailureUnsupported'
+    | 'plugins.channels.surface.providerFallback'
+    | 'plugins.channels.surface.providerPermissionMissing'
+    | 'plugins.channels.surface.providerPermissionMissingDescription'
+    | 'plugins.channels.surface.providerPluginId'
+    | 'plugins.channels.surface.providerPreparationUnavailableDescription'
+    | 'plugins.channels.surface.providerPreparationUnavailableTitle'
+    | 'plugins.channels.surface.providerSetupAction'
+    | 'plugins.channels.surface.providerSetupDescription'
+    | 'plugins.channels.surface.providerSetupHostUnsupportedDescription'
+    | 'plugins.channels.surface.providerSetupHostUnsupportedTitle'
+    | 'plugins.channels.surface.providerSetupNoneDescription'
+    | 'plugins.channels.surface.providerSetupNoneTitle'
+    | 'plugins.channels.surface.providerSetupReady'
+    | 'plugins.channels.surface.providerSetupRemediationAction'
+    | 'plugins.channels.surface.providerSetupRemediationDescription'
+    | 'plugins.channels.surface.providerSetupRemediationFailedDescription'
+    | 'plugins.channels.surface.providerSetupRemediationFailedTitle'
+    | 'plugins.channels.surface.providerSetupRemediationTitle'
+    | 'plugins.channels.surface.providerSetupRemediationUnavailableDescription'
+    | 'plugins.channels.surface.providerSetupRemediationUnavailableTitle'
+    | 'plugins.channels.surface.providerSetupRemediationUnknownDescription'
+    | 'plugins.channels.surface.providerSetupRemediationUnknownTitle'
+    | 'plugins.channels.surface.providerSetupTitle'
+    | 'plugins.channels.surface.providerSetupTransportDescription'
+    | 'plugins.channels.surface.providerSetupUnavailableDescription'
+    | 'plugins.channels.surface.providerSetupUnavailableTitle'
+    | 'plugins.channels.surface.providerSetupUnknownDescription'
+    | 'plugins.channels.surface.providerSetupUnknownTitle'
+    | 'plugins.channels.surface.refresh'
+    | 'plugins.channels.surface.refreshing'
+    | 'plugins.channels.surface.reload'
+    | 'plugins.channels.surface.repairEndpointRetarget'
+    | 'plugins.channels.surface.repairingEndpointRetarget'
+    | 'plugins.channels.surface.resourceConnectionInvalid'
+    | 'plugins.channels.surface.resourceContentTypeInvalid'
+    | 'plugins.channels.surface.resourceInvalidJson'
+    | 'plugins.channels.surface.resourceShapeInvalid'
+    | 'plugins.channels.surface.save'
+    | 'plugins.channels.surface.saveFailedDescription'
+    | 'plugins.channels.surface.saveFailedTitle'
+    | 'plugins.channels.surface.saveUnknownDescription'
+    | 'plugins.channels.surface.saveUnknownTitle'
+    | 'plugins.channels.surface.saved'
+    | 'plugins.channels.surface.savedPendingMachineReconciliation'
+    | 'plugins.channels.surface.saving'
+    | 'plugins.channels.surface.second'
+    | 'plugins.channels.surface.seconds'
+    | 'plugins.channels.surface.selectedMachineId'
+    | 'plugins.channels.surface.selectedMachineSummary'
+    | 'plugins.channels.surface.staleDescription'
+    | 'plugins.channels.surface.staleTitle'
+    | 'plugins.channels.surface.stopPending'
+    | 'plugins.channels.surface.summaryUnavailable'
+    | 'plugins.channels.surface.technicalDetails'
+    | 'plugins.channels.surface.through'
+    | 'plugins.channels.surface.title'
+    | 'plugins.channels.surface.transport'
+    | 'plugins.channels.surface.transportCheckpointedPull'
+    | 'plugins.channels.surface.transportCheckpointedPullOutcome'
+    | 'plugins.channels.surface.transportDurablePush'
+    | 'plugins.channels.surface.transportDurablePushOutcome'
+    | 'plugins.channels.surface.transportSocket'
+    | 'plugins.channels.surface.transportSocketOutcome'
+    | 'plugins.channels.surface.tryAgain'
+    | 'plugins.channels.surface.updateUnavailableDescription'
+    | 'plugins.channels.surface.updateUnavailableTitle'
+    | 'plugins.channels.surface.webhookEndpointAwaitingConfirmation'
+    | 'plugins.channels.surface.webhookEndpointCredentialDisclosureLost'
+    | 'plugins.channels.surface.webhookEndpointSecret'
+    | 'plugins.channels.surface.webhookEndpointSecretCopy'
+    | 'plugins.channels.surface.webhookEndpointSecretLost'
+    | 'plugins.channels.surface.webhookEndpointSecretShownOnce'
+    | 'plugins.channels.surface.webhookEndpointSetupRequiredDescription'
+    | 'plugins.channels.surface.webhookEndpointSetupRequiredTitle'
+    | 'plugins.channels.surface.webhookEndpointTransferSetupRequiredDescription'
+    | 'plugins.channels.surface.webhookEndpointUrl'
+    | 'plugins.channels.surface.webhookEndpointUrlCopy'
+    | 'plugins.channels.title'
+    | 'plugins.channels.widget.loading'
+    | 'plugins.channels.widget.noBots'
+    | 'plugins.channels.widget.noConversations'
+    | 'plugins.channels.widget.paused'
+    | 'plugins.channels.widget.title'
+    | 'plugins.github.mutations.addReviewers.confirmation.body'
+    | 'plugins.github.mutations.addReviewers.confirmation.confirmLabel'
+    | 'plugins.github.mutations.addReviewers.confirmation.title'
+    | 'plugins.github.mutations.close.confirmation.body'
+    | 'plugins.github.mutations.close.confirmation.confirmLabel'
+    | 'plugins.github.mutations.close.confirmation.title'
+    | 'plugins.github.mutations.issueAssigneeAdd.confirmation.body'
+    | 'plugins.github.mutations.issueAssigneeAdd.confirmation.confirmLabel'
+    | 'plugins.github.mutations.issueAssigneeAdd.confirmation.title'
+    | 'plugins.github.mutations.issueAssigneeRemove.confirmation.body'
+    | 'plugins.github.mutations.issueAssigneeRemove.confirmation.confirmLabel'
+    | 'plugins.github.mutations.issueAssigneeRemove.confirmation.title'
+    | 'plugins.github.mutations.issueClose.confirmation.body'
+    | 'plugins.github.mutations.issueClose.confirmation.confirmLabel'
+    | 'plugins.github.mutations.issueClose.confirmation.title'
+    | 'plugins.github.mutations.issueComment.confirmation.body'
+    | 'plugins.github.mutations.issueComment.confirmation.confirmLabel'
+    | 'plugins.github.mutations.issueComment.confirmation.title'
+    | 'plugins.github.mutations.issueLabelAdd.confirmation.body'
+    | 'plugins.github.mutations.issueLabelAdd.confirmation.confirmLabel'
+    | 'plugins.github.mutations.issueLabelAdd.confirmation.title'
+    | 'plugins.github.mutations.issueLabelRemove.confirmation.body'
+    | 'plugins.github.mutations.issueLabelRemove.confirmation.confirmLabel'
+    | 'plugins.github.mutations.issueLabelRemove.confirmation.title'
+    | 'plugins.github.mutations.issueReopen.confirmation.body'
+    | 'plugins.github.mutations.issueReopen.confirmation.confirmLabel'
+    | 'plugins.github.mutations.issueReopen.confirmation.title'
+    | 'plugins.github.mutations.markReady.confirmation.body'
+    | 'plugins.github.mutations.markReady.confirmation.confirmLabel'
+    | 'plugins.github.mutations.markReady.confirmation.title'
+    | 'plugins.github.mutations.merge.confirmation.body'
+    | 'plugins.github.mutations.merge.confirmation.confirmLabel'
+    | 'plugins.github.mutations.merge.confirmation.title'
+    | 'plugins.github.mutations.removeReviewers.confirmation.body'
+    | 'plugins.github.mutations.removeReviewers.confirmation.confirmLabel'
+    | 'plugins.github.mutations.removeReviewers.confirmation.title'
+    | 'plugins.github.mutations.reopen.confirmation.body'
+    | 'plugins.github.mutations.reopen.confirmation.confirmLabel'
+    | 'plugins.github.mutations.reopen.confirmation.title'
+    | 'plugins.github.mutations.review.confirmation.body'
+    | 'plugins.github.mutations.review.confirmation.title'
+    | 'plugins.github.mutations.reviewCommentCreate.confirmation.body'
+    | 'plugins.github.mutations.reviewCommentCreate.confirmation.confirmLabel'
+    | 'plugins.github.mutations.reviewCommentCreate.confirmation.title'
+    | 'plugins.github.mutations.threadReply.confirmation.body'
+    | 'plugins.github.mutations.threadReply.confirmation.confirmLabel'
+    | 'plugins.github.mutations.threadReply.confirmation.title'
+    | 'plugins.github.mutations.threadResolution.confirmation.body'
+    | 'plugins.github.mutations.threadResolution.confirmation.confirmLabel'
+    | 'plugins.github.mutations.threadResolution.confirmation.title'
+    | 'plugins.github.mutations.updateBranch.confirmation.body'
+    | 'plugins.github.mutations.updateBranch.confirmation.confirmLabel'
+    | 'plugins.github.mutations.updateBranch.confirmation.title'
+    | 'plugins.github.settings.group'
+    | 'plugins.github.settings.sources'
+    | 'plugins.github.settings.sources.subtitle'
+    | 'plugins.github.ui.atHead'
+    | 'plugins.github.ui.capabilities.archived'
+    | 'plugins.github.ui.capabilities.unsupported'
+    | 'plugins.github.ui.checkConclusion.failure'
+    | 'plugins.github.ui.checkConclusion.skipped'
+    | 'plugins.github.ui.checkConclusion.success'
+    | 'plugins.github.ui.checkRuns'
+    | 'plugins.github.ui.checkStatus.completed'
+    | 'plugins.github.ui.checkStatus.in_progress'
+    | 'plugins.github.ui.checkStatus.pending'
+    | 'plugins.github.ui.checkStatus.queued'
+    | 'plugins.github.ui.checkStatus.requested'
+    | 'plugins.github.ui.checkStatus.waiting'
+    | 'plugins.github.ui.checkSuiteIncomplete'
+    | 'plugins.github.ui.checkSuiteIncomplete.description'
+    | 'plugins.github.ui.checkSurfaceUnavailable'
+    | 'plugins.github.ui.checksFailing'
+    | 'plugins.github.ui.checksLabel'
+    | 'plugins.github.ui.checksNotListed'
+    | 'plugins.github.ui.checksPassing'
+    | 'plugins.github.ui.checksRunning'
+    | 'plugins.github.ui.checksUnavailable'
+    | 'plugins.github.ui.checksUnknown'
+    | 'plugins.github.ui.checksUnknown.description'
+    | 'plugins.github.ui.commentEdited'
+    | 'plugins.github.ui.commentNoText'
+    | 'plugins.github.ui.commentScope'
+    | 'plugins.github.ui.commentsLabel'
+    | 'plugins.github.ui.commentsRead'
+    | 'plugins.github.ui.commentsReadWithUnreadable'
+    | 'plugins.github.ui.commentsShortened.description'
+    | 'plugins.github.ui.commitStatuses'
+    | 'plugins.github.ui.conversationUnavailable'
+    | 'plugins.github.ui.copyValue'
+    | 'plugins.github.ui.detailTabs'
+    | 'plugins.github.ui.event.assigned'
+    | 'plugins.github.ui.event.baseChanged'
+    | 'plugins.github.ui.event.closed'
+    | 'plugins.github.ui.event.commented'
+    | 'plugins.github.ui.event.committed'
+    | 'plugins.github.ui.event.crossReferenced'
+    | 'plugins.github.ui.event.demilestoned'
+    | 'plugins.github.ui.event.forcePushed'
+    | 'plugins.github.ui.event.labeled'
+    | 'plugins.github.ui.event.merged'
+    | 'plugins.github.ui.event.milestoned'
+    | 'plugins.github.ui.event.referenced'
+    | 'plugins.github.ui.event.renamed'
+    | 'plugins.github.ui.event.reopened'
+    | 'plugins.github.ui.event.reviewRequestRemoved'
+    | 'plugins.github.ui.event.reviewRequested'
+    | 'plugins.github.ui.event.reviewed'
+    | 'plugins.github.ui.event.unassigned'
+    | 'plugins.github.ui.event.unlabeled'
+    | 'plugins.github.ui.eventsRead'
+    | 'plugins.github.ui.eventsReadWithUnreadable'
+    | 'plugins.github.ui.factStatus'
+    | 'plugins.github.ui.facts'
+    | 'plugins.github.ui.feedbackChecksFailed'
+    | 'plugins.github.ui.feedbackChecksIncomplete'
+    | 'plugins.github.ui.feedbackConversationFailed'
+    | 'plugins.github.ui.feedbackLabel'
+    | 'plugins.github.ui.feedbackPartial'
+    | 'plugins.github.ui.feedbackPartial.description'
+    | 'plugins.github.ui.feedbackRead'
+    | 'plugins.github.ui.feedbackRequestsFailed'
+    | 'plugins.github.ui.feedbackReviewsFailed'
+    | 'plugins.github.ui.feedbackScope'
+    | 'plugins.github.ui.feedbackThreadsFailed'
+    | 'plugins.github.ui.feedbackUnavailable'
+    | 'plugins.github.ui.field.additions_deletions'
+    | 'plugins.github.ui.field.author'
+    | 'plugins.github.ui.field.checks'
+    | 'plugins.github.ui.field.comments'
+    | 'plugins.github.ui.field.labels'
+    | 'plugins.github.ui.field.mergeability'
+    | 'plugins.github.ui.field.number'
+    | 'plugins.github.ui.field.repository'
+    | 'plugins.github.ui.field.review_decision'
+    | 'plugins.github.ui.field.updated'
+    | 'plugins.github.ui.fileDiffUnavailable'
+    | 'plugins.github.ui.fileStatus.modified'
+    | 'plugins.github.ui.fileStatus.renamed'
+    | 'plugins.github.ui.fileWasAt'
+    | 'plugins.github.ui.filesLabel'
+    | 'plugins.github.ui.filesRead'
+    | 'plugins.github.ui.filesReadWithUnreadable'
+    | 'plugins.github.ui.filesUnavailable'
+    | 'plugins.github.ui.findingCheck'
+    | 'plugins.github.ui.findingConflict'
+    | 'plugins.github.ui.incompleteFiles'
+    | 'plugins.github.ui.incompleteFiles.description'
+    | 'plugins.github.ui.incompletePagination'
+    | 'plugins.github.ui.invalidInput'
+    | 'plugins.github.ui.invalidInput.description'
+    | 'plugins.github.ui.linkedSession'
+    | 'plugins.github.ui.loadEarlierReplies'
+    | 'plugins.github.ui.loadEarlierReviewThreads'
+    | 'plugins.github.ui.loadEarlierReviews'
+    | 'plugins.github.ui.loadMoreComments'
+    | 'plugins.github.ui.loadMoreEvents'
+    | 'plugins.github.ui.loadMoreFiles'
+    | 'plugins.github.ui.loadMoreReviewRequests'
+    | 'plugins.github.ui.mutations'
+    | 'plugins.github.ui.mutations.alreadySatisfied'
+    | 'plugins.github.ui.mutations.alreadySatisfied.description'
+    | 'plugins.github.ui.mutations.applied'
+    | 'plugins.github.ui.mutations.applied.description'
+    | 'plugins.github.ui.mutations.assignees'
+    | 'plugins.github.ui.mutations.close'
+    | 'plugins.github.ui.mutations.closeIssue'
+    | 'plugins.github.ui.mutations.closeReason'
+    | 'plugins.github.ui.mutations.closeReason.completed'
+    | 'plugins.github.ui.mutations.closeReason.duplicate'
+    | 'plugins.github.ui.mutations.closeReason.notPlanned'
+    | 'plugins.github.ui.mutations.description'
+    | 'plugins.github.ui.mutations.issueDescription'
+    | 'plugins.github.ui.mutations.labels'
+    | 'plugins.github.ui.mutations.merge'
+    | 'plugins.github.ui.mutations.mergeHead'
+    | 'plugins.github.ui.mutations.mergeHeadUnknown'
+    | 'plugins.github.ui.mutations.mergeMethod'
+    | 'plugins.github.ui.mutations.mergeMethod.merge'
+    | 'plugins.github.ui.mutations.mergeMethod.rebase'
+    | 'plugins.github.ui.mutations.mergeMethod.squash'
+    | 'plugins.github.ui.mutations.noRoute'
+    | 'plugins.github.ui.mutations.noRoute.description'
+    | 'plugins.github.ui.mutations.notCarriedOut'
+    | 'plugins.github.ui.mutations.oneLabelPerLine'
+    | 'plugins.github.ui.mutations.pending'
+    | 'plugins.github.ui.mutations.pending.description'
+    | 'plugins.github.ui.mutations.refused'
+    | 'plugins.github.ui.mutations.refused.head_advanced'
+    | 'plugins.github.ui.mutations.refused.merge_method_not_allowed'
+    | 'plugins.github.ui.mutations.refused.not_mergeable'
+    | 'plugins.github.ui.mutations.refused.state_changed'
+    | 'plugins.github.ui.mutations.rejected.description'
+    | 'plugins.github.ui.mutations.reopen'
+    | 'plugins.github.ui.mutations.reopenIssue'
+    | 'plugins.github.ui.mutations.review.outcome.exact'
+    | 'plugins.github.ui.mutations.review.outcome.partial'
+    | 'plugins.github.ui.mutations.review.outcome.published'
+    | 'plugins.github.ui.mutations.review.outcome.verdict.failed'
+    | 'plugins.github.ui.mutations.review.outcome.verdict.notRequested'
+    | 'plugins.github.ui.mutations.review.outcome.verdict.published'
+    | 'plugins.github.ui.mutations.review.outcome.verdict.uncertain'
+    | 'plugins.github.ui.mutations.review.proposal'
+    | 'plugins.github.ui.mutations.review.proposals.empty'
+    | 'plugins.github.ui.mutations.review.proposals.failed'
+    | 'plugins.github.ui.mutations.review.proposals.failed.description'
+    | 'plugins.github.ui.mutations.review.proposals.loading'
+    | 'plugins.github.ui.mutations.review.submit'
+    | 'plugins.github.ui.mutations.review.summary'
+    | 'plugins.github.ui.mutations.review.verdict'
+    | 'plugins.github.ui.mutations.review.verdict.approve'
+    | 'plugins.github.ui.mutations.review.verdict.comment'
+    | 'plugins.github.ui.mutations.review.verdict.requestChanges'
+    | 'plugins.github.ui.mutations.reviewers.teams'
+    | 'plugins.github.ui.mutations.reviewers.users'
+    | 'plugins.github.ui.mutations.separateWithCommas'
+    | 'plugins.github.ui.mutations.thread.apply'
+    | 'plugins.github.ui.mutations.thread.id'
+    | 'plugins.github.ui.mutations.thread.open'
+    | 'plugins.github.ui.mutations.thread.reopen'
+    | 'plugins.github.ui.mutations.thread.resolve'
+    | 'plugins.github.ui.mutations.thread.resolved'
+    | 'plugins.github.ui.mutations.thread.state'
+    | 'plugins.github.ui.mutations.uncertain'
+    | 'plugins.github.ui.mutations.uncertain.description'
+    | 'plugins.github.ui.mutations.unreadable'
+    | 'plugins.github.ui.mutations.unreadable.description'
+    | 'plugins.github.ui.mutations.writeFailed'
+    | 'plugins.github.ui.noChecks'
+    | 'plugins.github.ui.noChecks.description'
+    | 'plugins.github.ui.noComments'
+    | 'plugins.github.ui.noEvents'
+    | 'plugins.github.ui.noEvents.description'
+    | 'plugins.github.ui.noFacts'
+    | 'plugins.github.ui.noFacts.description'
+    | 'plugins.github.ui.noFeedback'
+    | 'plugins.github.ui.noFeedback.checksIncomplete'
+    | 'plugins.github.ui.noFeedback.description'
+    | 'plugins.github.ui.noFiles'
+    | 'plugins.github.ui.noFiles.description'
+    | 'plugins.github.ui.noSessions'
+    | 'plugins.github.ui.noSessions.description'
+    | 'plugins.github.ui.openOnGithub'
+    | 'plugins.github.ui.openResults'
+    | 'plugins.github.ui.openSession'
+    | 'plugins.github.ui.overview.copyGithubUrl'
+    | 'plugins.github.ui.overview.details'
+    | 'plugins.github.ui.overview.openAttachment'
+    | 'plugins.github.ui.overview.openOnGithub'
+    | 'plugins.github.ui.overview.openVideo'
+    | 'plugins.github.ui.overview.openVideoAttachment'
+    | 'plugins.github.ui.overview.reread'
+    | 'plugins.github.ui.overview.retained'
+    | 'plugins.github.ui.overview.unavailable'
+    | 'plugins.github.ui.partial'
+    | 'plugins.github.ui.pendingPanels.description'
+    | 'plugins.github.ui.readAgainstRevision'
+    | 'plugins.github.ui.readFailed'
+    | 'plugins.github.ui.readingChecks'
+    | 'plugins.github.ui.readingConversation'
+    | 'plugins.github.ui.readingFeedback'
+    | 'plugins.github.ui.readingFiles'
+    | 'plugins.github.ui.readingTimeline'
+    | 'plugins.github.ui.rereadChecks'
+    | 'plugins.github.ui.rereadConversation'
+    | 'plugins.github.ui.rereadFeedback'
+    | 'plugins.github.ui.rereadFiles'
+    | 'plugins.github.ui.rereadTimeline'
+    | 'plugins.github.ui.reviewAwaited'
+    | 'plugins.github.ui.reviewDecision'
+    | 'plugins.github.ui.reviewRequestedFrom'
+    | 'plugins.github.ui.reviewState.approved'
+    | 'plugins.github.ui.reviewState.changes_requested'
+    | 'plugins.github.ui.reviewState.commented'
+    | 'plugins.github.ui.reviewState.dismissed'
+    | 'plugins.github.ui.reviewState.pending'
+    | 'plugins.github.ui.reviewState.unknown'
+    | 'plugins.github.ui.reviewThread'
+    | 'plugins.github.ui.reviewUnresolved'
+    | 'plugins.github.ui.reviewedBy'
+    | 'plugins.github.ui.sessionOpenFailed'
+    | 'plugins.github.ui.sessionUnavailable'
+    | 'plugins.github.ui.sessionsLabel'
+    | 'plugins.github.ui.showEarlierIssueComments'
+    | 'plugins.github.ui.someone'
+    | 'plugins.github.ui.story.ask'
+    | 'plugins.github.ui.story.changed'
+    | 'plugins.github.ui.story.checks'
+    | 'plugins.github.ui.story.checksFailing'
+    | 'plugins.github.ui.story.checksPassing'
+    | 'plugins.github.ui.story.checksRunning'
+    | 'plugins.github.ui.story.noDescription'
+    | 'plugins.github.ui.story.report'
+    | 'plugins.github.ui.story.smallerFiles'
+    | 'plugins.github.ui.story.totals'
+    | 'plugins.github.ui.story.totalsPartial'
+    | 'plugins.github.ui.tab.checks'
+    | 'plugins.github.ui.tab.comments'
+    | 'plugins.github.ui.tab.feedback'
+    | 'plugins.github.ui.tab.files'
+    | 'plugins.github.ui.tab.overview'
+    | 'plugins.github.ui.tab.timeline'
+    | 'plugins.github.ui.tab.workSessions'
+    | 'plugins.github.ui.threadReplyCount'
+    | 'plugins.github.ui.threadResolved'
+    | 'plugins.github.ui.threadUnresolved'
+    | 'plugins.github.ui.timelineLabel'
+    | 'plugins.github.ui.timelineUnavailable'
+    | 'plugins.github.ui.unknownAuthor'
+    | 'plugins.gitlab.actions.discussionResolution.confirm.body'
+    | 'plugins.gitlab.actions.discussionResolution.confirm.label'
+    | 'plugins.gitlab.actions.discussionResolution.confirm.title'
+    | 'plugins.gitlab.actions.issueAssign.confirm.body'
+    | 'plugins.gitlab.actions.issueAssign.confirm.label'
+    | 'plugins.gitlab.actions.issueAssign.confirm.title'
+    | 'plugins.gitlab.actions.issueClose.confirm.body'
+    | 'plugins.gitlab.actions.issueClose.confirm.label'
+    | 'plugins.gitlab.actions.issueClose.confirm.title'
+    | 'plugins.gitlab.actions.issueComment.confirm.body'
+    | 'plugins.gitlab.actions.issueComment.confirm.label'
+    | 'plugins.gitlab.actions.issueComment.confirm.title'
+    | 'plugins.gitlab.actions.issueLabel.confirm.body'
+    | 'plugins.gitlab.actions.issueLabel.confirm.label'
+    | 'plugins.gitlab.actions.issueLabel.confirm.title'
+    | 'plugins.gitlab.actions.issueReopen.confirm.body'
+    | 'plugins.gitlab.actions.issueReopen.confirm.label'
+    | 'plugins.gitlab.actions.issueReopen.confirm.title'
+    | 'plugins.gitlab.actions.mergeRequestClose.confirm.body'
+    | 'plugins.gitlab.actions.mergeRequestClose.confirm.label'
+    | 'plugins.gitlab.actions.mergeRequestClose.confirm.title'
+    | 'plugins.gitlab.actions.mergeRequestMarkReady.confirm.body'
+    | 'plugins.gitlab.actions.mergeRequestMarkReady.confirm.label'
+    | 'plugins.gitlab.actions.mergeRequestMarkReady.confirm.title'
+    | 'plugins.gitlab.actions.mergeRequestMerge.confirm.body'
+    | 'plugins.gitlab.actions.mergeRequestMerge.confirm.label'
+    | 'plugins.gitlab.actions.mergeRequestMerge.confirm.title'
+    | 'plugins.gitlab.actions.mergeRequestReopen.confirm.body'
+    | 'plugins.gitlab.actions.mergeRequestReopen.confirm.label'
+    | 'plugins.gitlab.actions.mergeRequestReopen.confirm.title'
+    | 'plugins.gitlab.actions.reviewCommentCreate.confirm.body'
+    | 'plugins.gitlab.actions.reviewCommentCreate.confirm.label'
+    | 'plugins.gitlab.actions.reviewCommentCreate.confirm.title'
+    | 'plugins.gitlab.actions.reviewerChange.confirm.body'
+    | 'plugins.gitlab.actions.reviewerChange.confirm.label'
+    | 'plugins.gitlab.actions.reviewerChange.confirm.title'
+    | 'plugins.gitlab.actions.submitReview.confirm.body'
+    | 'plugins.gitlab.actions.submitReview.confirm.label'
+    | 'plugins.gitlab.actions.submitReview.confirm.title'
+    | 'plugins.gitlab.actions.threadReply.confirm.body'
+    | 'plugins.gitlab.actions.threadReply.confirm.label'
+    | 'plugins.gitlab.actions.threadReply.confirm.title'
+    | 'plugins.gitlab.settings.group'
+    | 'plugins.gitlab.settings.sources'
+    | 'plugins.gitlab.settings.sources.subtitle'
+    | 'plugins.gitlab.ui.activity'
+    | 'plugins.gitlab.ui.activityLabel'
+    | 'plugins.gitlab.ui.activityUnavailable'
+    | 'plugins.gitlab.ui.approvalRules'
+    | 'plugins.gitlab.ui.approvalRulesUnavailable'
+    | 'plugins.gitlab.ui.approvalRulesUnavailable.description'
+    | 'plugins.gitlab.ui.approvals'
+    | 'plugins.gitlab.ui.approvalsUnavailable'
+    | 'plugins.gitlab.ui.collectionLabel'
+    | 'plugins.gitlab.ui.collectionUnavailable'
+    | 'plugins.gitlab.ui.commentsLabel'
+    | 'plugins.gitlab.ui.copyValue'
+    | 'plugins.gitlab.ui.detailLabel'
+    | 'plugins.gitlab.ui.diffLimitUnknown'
+    | 'plugins.gitlab.ui.diffLimitUnknown.description'
+    | 'plugins.gitlab.ui.discussion.comment'
+    | 'plugins.gitlab.ui.discussion.omittedReplies'
+    | 'plugins.gitlab.ui.discussion.showEarlier'
+    | 'plugins.gitlab.ui.discussion.thread'
+    | 'plugins.gitlab.ui.discussionsLabel'
+    | 'plugins.gitlab.ui.discussionsRead'
+    | 'plugins.gitlab.ui.discussionsUnavailable'
+    | 'plugins.gitlab.ui.edited'
+    | 'plugins.gitlab.ui.eventSource.label'
+    | 'plugins.gitlab.ui.eventSource.milestone'
+    | 'plugins.gitlab.ui.eventSource.state'
+    | 'plugins.gitlab.ui.eventsRead'
+    | 'plugins.gitlab.ui.facts'
+    | 'plugins.gitlab.ui.field.approved'
+    | 'plugins.gitlab.ui.field.author'
+    | 'plugins.gitlab.ui.field.comments'
+    | 'plugins.gitlab.ui.field.iid'
+    | 'plugins.gitlab.ui.field.labels'
+    | 'plugins.gitlab.ui.field.merge-status'
+    | 'plugins.gitlab.ui.files.added'
+    | 'plugins.gitlab.ui.files.collapsed'
+    | 'plugins.gitlab.ui.files.deleted'
+    | 'plugins.gitlab.ui.files.modified'
+    | 'plugins.gitlab.ui.files.renamed'
+    | 'plugins.gitlab.ui.files.tooLarge'
+    | 'plugins.gitlab.ui.filesLabel'
+    | 'plugins.gitlab.ui.filesRead'
+    | 'plugins.gitlab.ui.filesUnavailable'
+    | 'plugins.gitlab.ui.invalidInput'
+    | 'plugins.gitlab.ui.invalidInput.description'
+    | 'plugins.gitlab.ui.loadRawDiff'
+    | 'plugins.gitlab.ui.mutations.assignees.add'
+    | 'plugins.gitlab.ui.mutations.assignees.field'
+    | 'plugins.gitlab.ui.mutations.assignees.remove'
+    | 'plugins.gitlab.ui.mutations.assignees.updated'
+    | 'plugins.gitlab.ui.mutations.close.button'
+    | 'plugins.gitlab.ui.mutations.close.closed'
+    | 'plugins.gitlab.ui.mutations.close.description'
+    | 'plugins.gitlab.ui.mutations.declined'
+    | 'plugins.gitlab.ui.mutations.discussion.reopen'
+    | 'plugins.gitlab.ui.mutations.discussion.resolve'
+    | 'plugins.gitlab.ui.mutations.discussion.updated'
+    | 'plugins.gitlab.ui.mutations.issue.close.button'
+    | 'plugins.gitlab.ui.mutations.issue.closed'
+    | 'plugins.gitlab.ui.mutations.issue.outcomeUnknown'
+    | 'plugins.gitlab.ui.mutations.issue.reconfirm'
+    | 'plugins.gitlab.ui.mutations.issue.refused.dispatched'
+    | 'plugins.gitlab.ui.mutations.issue.refused.local'
+    | 'plugins.gitlab.ui.mutations.issue.rejected'
+    | 'plugins.gitlab.ui.mutations.issue.reopen.button'
+    | 'plugins.gitlab.ui.mutations.issue.title'
+    | 'plugins.gitlab.ui.mutations.labels.add'
+    | 'plugins.gitlab.ui.mutations.labels.field'
+    | 'plugins.gitlab.ui.mutations.labels.remove'
+    | 'plugins.gitlab.ui.mutations.labels.updated'
+    | 'plugins.gitlab.ui.mutations.markReady.button'
+    | 'plugins.gitlab.ui.mutations.markReady.ready'
+    | 'plugins.gitlab.ui.mutations.merge.button'
+    | 'plugins.gitlab.ui.mutations.merge.merged'
+    | 'plugins.gitlab.ui.mutations.merge.scheduled'
+    | 'plugins.gitlab.ui.mutations.outcomeUnknown'
+    | 'plugins.gitlab.ui.mutations.pinUnavailable'
+    | 'plugins.gitlab.ui.mutations.reconfirm'
+    | 'plugins.gitlab.ui.mutations.refused.headAdvanced'
+    | 'plugins.gitlab.ui.mutations.refused.mergeAttemptFailed'
+    | 'plugins.gitlab.ui.mutations.refused.mutationRejected'
+    | 'plugins.gitlab.ui.mutations.refused.notMergeable'
+    | 'plugins.gitlab.ui.mutations.refused.notOpen'
+    | 'plugins.gitlab.ui.mutations.refused.notOpenLocal'
+    | 'plugins.gitlab.ui.mutations.refused.shaRequired'
+    | 'plugins.gitlab.ui.mutations.rejected'
+    | 'plugins.gitlab.ui.mutations.reopen.button'
+    | 'plugins.gitlab.ui.mutations.reopen.reopened'
+    | 'plugins.gitlab.ui.mutations.reviewers.add'
+    | 'plugins.gitlab.ui.mutations.reviewers.field'
+    | 'plugins.gitlab.ui.mutations.reviewers.remove'
+    | 'plugins.gitlab.ui.mutations.reviewers.updated'
+    | 'plugins.gitlab.ui.mutations.title'
+    | 'plugins.gitlab.ui.mutations.unavailable'
+    | 'plugins.gitlab.ui.mutations.unconfirmed'
+    | 'plugins.gitlab.ui.mutations.unreadable'
+    | 'plugins.gitlab.ui.newestPipelineJobs'
+    | 'plugins.gitlab.ui.noActivity'
+    | 'plugins.gitlab.ui.noActivity.description'
+    | 'plugins.gitlab.ui.noDiscussions'
+    | 'plugins.gitlab.ui.noDiscussions.description'
+    | 'plugins.gitlab.ui.noEvents.description'
+    | 'plugins.gitlab.ui.noFacts'
+    | 'plugins.gitlab.ui.noFacts.description'
+    | 'plugins.gitlab.ui.noFiles'
+    | 'plugins.gitlab.ui.noFiles.description'
+    | 'plugins.gitlab.ui.noPipelines'
+    | 'plugins.gitlab.ui.noPipelines.description'
+    | 'plugins.gitlab.ui.noSessions'
+    | 'plugins.gitlab.ui.noSessions.description'
+    | 'plugins.gitlab.ui.notesLabel'
+    | 'plugins.gitlab.ui.notesRead'
+    | 'plugins.gitlab.ui.notesUnavailable'
+    | 'plugins.gitlab.ui.openCollapsedFile'
+    | 'plugins.gitlab.ui.openOnGitlab'
+    | 'plugins.gitlab.ui.openRawDiff'
+    | 'plugins.gitlab.ui.overview.description'
+    | 'plugins.gitlab.ui.overview.descriptionShortened'
+    | 'plugins.gitlab.ui.overview.reread'
+    | 'plugins.gitlab.ui.overview.showingLastRead'
+    | 'plugins.gitlab.ui.overview.showingLaunchObservation'
+    | 'plugins.gitlab.ui.paginationUnfollowable'
+    | 'plugins.gitlab.ui.partial'
+    | 'plugins.gitlab.ui.pendingPanels.description'
+    | 'plugins.gitlab.ui.pipelineJobsUnavailable.description'
+    | 'plugins.gitlab.ui.pipelinesLabel'
+    | 'plugins.gitlab.ui.pipelinesRead'
+    | 'plugins.gitlab.ui.pipelinesUnavailable'
+    | 'plugins.gitlab.ui.publication.anchorUnsupported'
+    | 'plugins.gitlab.ui.publication.cancelled'
+    | 'plugins.gitlab.ui.publication.cancelled.description'
+    | 'plugins.gitlab.ui.publication.changed'
+    | 'plugins.gitlab.ui.publication.comments'
+    | 'plugins.gitlab.ui.publication.complete'
+    | 'plugins.gitlab.ui.publication.continueWithoutDrafts'
+    | 'plugins.gitlab.ui.publication.createComment'
+    | 'plugins.gitlab.ui.publication.description'
+    | 'plugins.gitlab.ui.publication.empty'
+    | 'plugins.gitlab.ui.publication.existingDraftsRemain'
+    | 'plugins.gitlab.ui.publication.incomplete'
+    | 'plugins.gitlab.ui.publication.incomplete.description'
+    | 'plugins.gitlab.ui.publication.issue.proposal'
+    | 'plugins.gitlab.ui.publication.issue.publish'
+    | 'plugins.gitlab.ui.publication.issue.title'
+    | 'plugins.gitlab.ui.publication.loading'
+    | 'plugins.gitlab.ui.publication.partial'
+    | 'plugins.gitlab.ui.publication.preexistingDrafts'
+    | 'plugins.gitlab.ui.publication.preexistingDrafts.description'
+    | 'plugins.gitlab.ui.publication.preexistingDrafts.descriptionWithoutCount'
+    | 'plugins.gitlab.ui.publication.proposalsFailed'
+    | 'plugins.gitlab.ui.publication.rejected'
+    | 'plugins.gitlab.ui.publication.reply.proposal'
+    | 'plugins.gitlab.ui.publication.reply.publish'
+    | 'plugins.gitlab.ui.publication.reply.title'
+    | 'plugins.gitlab.ui.publication.result'
+    | 'plugins.gitlab.ui.publication.submit'
+    | 'plugins.gitlab.ui.publication.summary'
+    | 'plugins.gitlab.ui.publication.summaryRequired'
+    | 'plugins.gitlab.ui.publication.title'
+    | 'plugins.gitlab.ui.publication.unknown'
+    | 'plugins.gitlab.ui.publication.unknown.description'
+    | 'plugins.gitlab.ui.publication.unreadable'
+    | 'plugins.gitlab.ui.publication.unreadable.description'
+    | 'plugins.gitlab.ui.publication.verdict'
+    | 'plugins.gitlab.ui.publication.verdict.approve'
+    | 'plugins.gitlab.ui.publication.verdict.comment'
+    | 'plugins.gitlab.ui.publication.verdict.none'
+    | 'plugins.gitlab.ui.publication.verdictUnsupported'
+    | 'plugins.gitlab.ui.rawDiffLabel'
+    | 'plugins.gitlab.ui.rawDiffShortened'
+    | 'plugins.gitlab.ui.rawDiffShortened.description'
+    | 'plugins.gitlab.ui.rawDiffUnavailable'
+    | 'plugins.gitlab.ui.readFailed'
+    | 'plugins.gitlab.ui.readingActivity'
+    | 'plugins.gitlab.ui.readingApprovals'
+    | 'plugins.gitlab.ui.readingCollection'
+    | 'plugins.gitlab.ui.readingDiscussions'
+    | 'plugins.gitlab.ui.readingFiles'
+    | 'plugins.gitlab.ui.readingNotes'
+    | 'plugins.gitlab.ui.readingPipelines'
+    | 'plugins.gitlab.ui.rereadActivity'
+    | 'plugins.gitlab.ui.rereadApprovals'
+    | 'plugins.gitlab.ui.rereadDiscussions'
+    | 'plugins.gitlab.ui.rereadFiles'
+    | 'plugins.gitlab.ui.rereadNotes'
+    | 'plugins.gitlab.ui.rereadPipelines'
+    | 'plugins.gitlab.ui.rowsUnreadable'
+    | 'plugins.gitlab.ui.session.detailsUnavailable'
+    | 'plugins.gitlab.ui.session.open'
+    | 'plugins.gitlab.ui.session.openFailed'
+    | 'plugins.gitlab.ui.session.openUntitled'
+    | 'plugins.gitlab.ui.session.untitled'
+    | 'plugins.gitlab.ui.sessionsLabel'
+    | 'plugins.gitlab.ui.showEarlierNotes'
+    | 'plugins.gitlab.ui.showMoreDiscussions'
+    | 'plugins.gitlab.ui.showMoreEvents'
+    | 'plugins.gitlab.ui.showMoreFiles'
+    | 'plugins.gitlab.ui.showOlderPipelines'
+    | 'plugins.gitlab.ui.someone'
+    | 'plugins.gitlab.ui.status.approvedBy'
+    | 'plugins.gitlab.ui.status.failing'
+    | 'plugins.gitlab.ui.status.no'
+    | 'plugins.gitlab.ui.status.passing'
+    | 'plugins.gitlab.ui.status.required'
+    | 'plugins.gitlab.ui.status.running'
+    | 'plugins.gitlab.ui.status.stillNeeded'
+    | 'plugins.gitlab.ui.status.yes'
+    | 'plugins.gitlab.ui.status.youApproved'
+    | 'plugins.gitlab.ui.tabs.activity'
+    | 'plugins.gitlab.ui.tabs.changes'
+    | 'plugins.gitlab.ui.tabs.comments'
+    | 'plugins.gitlab.ui.tabs.overview'
+    | 'plugins.gitlab.ui.tabs.pipelines'
+    | 'plugins.gitlab.ui.tabs.reviews'
+    | 'plugins.gitlab.ui.tabs.workSessions'
+    | 'plugins.inspector.description'
+    | 'plugins.inspector.settings.showDiagnostics'
+    | 'plugins.inspector.settings.showDiagnostics.description'
+    | 'plugins.inspector.surface.changedPlugins'
+    | 'plugins.inspector.surface.copyInventory'
+    | 'plugins.inspector.surface.copyReload'
+    | 'plugins.inspector.surface.empty'
+    | 'plugins.inspector.surface.executeSelfCheck'
+    | 'plugins.inspector.surface.inventory'
+    | 'plugins.inspector.surface.inventoryActions'
+    | 'plugins.inspector.surface.inventoryIllustration'
+    | 'plugins.inspector.surface.loading'
+    | 'plugins.inspector.surface.navigationActions'
+    | 'plugins.inspector.surface.noMatches'
+    | 'plugins.inspector.surface.noMatchesDescription'
+    | 'plugins.inspector.surface.openDiagnostics'
+    | 'plugins.inspector.surface.openDocumentation'
+    | 'plugins.inspector.surface.openInspector'
+    | 'plugins.inspector.surface.openPage'
+    | 'plugins.inspector.surface.pageRoot'
+    | 'plugins.inspector.surface.quickActions'
+    | 'plugins.inspector.surface.refresh'
+    | 'plugins.inspector.surface.refreshHint'
+    | 'plugins.inspector.surface.refreshing'
+    | 'plugins.inspector.surface.registryStatus'
+    | 'plugins.inspector.surface.reload'
+    | 'plugins.inspector.surface.reloadFailed'
+    | 'plugins.inspector.surface.reloadSucceeded'
+    | 'plugins.inspector.surface.reloading'
+    | 'plugins.inspector.surface.search'
+    | 'plugins.inspector.surface.searchPlaceholder'
+    | 'plugins.inspector.surface.selfCheck'
+    | 'plugins.inspector.surface.selfCheckDescription'
+    | 'plugins.inspector.surface.showActions'
+    | 'plugins.inspector.surface.showActionsContext'
+    | 'plugins.inspector.title'
+    | 'plugins.posthog.account.description'
+    | 'plugins.posthog.account.title'
+    | 'plugins.posthog.auth.origin.description'
+    | 'plugins.posthog.auth.origin.title'
+    | 'plugins.posthog.auth.personalApiKey.description'
+    | 'plugins.posthog.auth.personalApiKey.mode'
+    | 'plugins.posthog.auth.personalApiKey.title'
+    | 'plugins.posthog.detail.fallback.body'
+    | 'plugins.posthog.settings.group'
+    | 'plugins.posthog.settings.sources'
+    | 'plugins.posthog.settings.sources.subtitle'
+    | 'plugins.posthog.ui.activityLabel'
+    | 'plugins.posthog.ui.activityRecordsRead'
+    | 'plugins.posthog.ui.activityRecordsReadOfTotal'
+    | 'plugins.posthog.ui.activityStoppedShort'
+    | 'plugins.posthog.ui.activityUnavailable'
+    | 'plugins.posthog.ui.addSelectedOccurrence'
+    | 'plugins.posthog.ui.codeVariables.confirmDescription'
+    | 'plugins.posthog.ui.codeVariables.confirmTitle'
+    | 'plugins.posthog.ui.codeVariables.discardNotice'
+    | 'plugins.posthog.ui.codeVariables.loading'
+    | 'plugins.posthog.ui.codeVariables.reveal'
+    | 'plugins.posthog.ui.codeVariables.title'
+    | 'plugins.posthog.ui.codeVariables.truncated'
+    | 'plugins.posthog.ui.codeVariables.unavailable'
+    | 'plugins.posthog.ui.derivingSessions'
+    | 'plugins.posthog.ui.detailOnly'
+    | 'plugins.posthog.ui.differentStatus'
+    | 'plugins.posthog.ui.enrichmentUnavailable'
+    | 'plugins.posthog.ui.fact.first-seen'
+    | 'plugins.posthog.ui.fact.function'
+    | 'plugins.posthog.ui.fact.last-seen'
+    | 'plugins.posthog.ui.fact.library'
+    | 'plugins.posthog.ui.fact.occurrences'
+    | 'plugins.posthog.ui.fact.release'
+    | 'plugins.posthog.ui.fact.sessions'
+    | 'plugins.posthog.ui.fact.severity'
+    | 'plugins.posthog.ui.fact.source'
+    | 'plugins.posthog.ui.fact.top-frame'
+    | 'plugins.posthog.ui.fact.users'
+    | 'plugins.posthog.ui.facts'
+    | 'plugins.posthog.ui.framesLabel'
+    | 'plugins.posthog.ui.invalidInput'
+    | 'plugins.posthog.ui.invalidInput.description'
+    | 'plugins.posthog.ui.lastObservation'
+    | 'plugins.posthog.ui.lastObservation.description'
+    | 'plugins.posthog.ui.loadMoreActivity'
+    | 'plugins.posthog.ui.loadMoreSamples'
+    | 'plugins.posthog.ui.metadata.lastSaw'
+    | 'plugins.posthog.ui.metadata.observed'
+    | 'plugins.posthog.ui.noActivity'
+    | 'plugins.posthog.ui.noActivity.description'
+    | 'plugins.posthog.ui.noFacts'
+    | 'plugins.posthog.ui.noFacts.description'
+    | 'plugins.posthog.ui.noFrames'
+    | 'plugins.posthog.ui.noFrames.description'
+    | 'plugins.posthog.ui.noReadableActivity'
+    | 'plugins.posthog.ui.noReadableActivity.description'
+    | 'plugins.posthog.ui.noSamples'
+    | 'plugins.posthog.ui.noSessions'
+    | 'plugins.posthog.ui.noSessions.description'
+    | 'plugins.posthog.ui.observation'
+    | 'plugins.posthog.ui.partialActivity'
+    | 'plugins.posthog.ui.partialSample'
+    | 'plugins.posthog.ui.readFailed'
+    | 'plugins.posthog.ui.readingActivity'
+    | 'plugins.posthog.ui.readingSamples'
+    | 'plugins.posthog.ui.readingStack'
+    | 'plugins.posthog.ui.recordsUnreadable'
+    | 'plugins.posthog.ui.replayUnavailable'
+    | 'plugins.posthog.ui.sampleDisclosure'
+    | 'plugins.posthog.ui.sampleDisclosureUnreadable'
+    | 'plugins.posthog.ui.sampleStackCounts'
+    | 'plugins.posthog.ui.sampleStoppedShort'
+    | 'plugins.posthog.ui.sampledOccurrences'
+    | 'plugins.posthog.ui.sampledSession'
+    | 'plugins.posthog.ui.sampledSessions.description'
+    | 'plugins.posthog.ui.sampledSessions.replayUnavailable'
+    | 'plugins.posthog.ui.samplesLabel'
+    | 'plugins.posthog.ui.samplesUnavailable'
+    | 'plugins.posthog.ui.selectSampleForStack'
+    | 'plugins.posthog.ui.sessionsLabel'
+    | 'plugins.posthog.ui.settings.attention'
+    | 'plugins.posthog.ui.settings.cancel'
+    | 'plugins.posthog.ui.settings.chooseEnvironment'
+    | 'plugins.posthog.ui.settings.chooseOrganization'
+    | 'plugins.posthog.ui.settings.description'
+    | 'plugins.posthog.ui.settings.detail'
+    | 'plugins.posthog.ui.settings.environments'
+    | 'plugins.posthog.ui.settings.exactWindow'
+    | 'plugins.posthog.ui.settings.heading'
+    | 'plugins.posthog.ui.settings.invalidWindow'
+    | 'plugins.posthog.ui.settings.loadMoreEnvironments'
+    | 'plugins.posthog.ui.settings.loadMoreOrganizations'
+    | 'plugins.posthog.ui.settings.organization'
+    | 'plugins.posthog.ui.settings.partial'
+    | 'plugins.posthog.ui.settings.readFailed'
+    | 'plugins.posthog.ui.settings.relativeWindow'
+    | 'plugins.posthog.ui.settings.save'
+    | 'plugins.posthog.ui.settings.scan'
+    | 'plugins.posthog.ui.settings.selectionTooLarge'
+    | 'plugins.posthog.ui.settings.unavailable'
+    | 'plugins.posthog.ui.settings.verifyFailed'
+    | 'plugins.posthog.ui.settings.windowDays'
+    | 'plugins.posthog.ui.settings.windowEnd'
+    | 'plugins.posthog.ui.settings.windowMode'
+    | 'plugins.posthog.ui.settings.windowStart'
+    | 'plugins.posthog.ui.shortened'
+    | 'plugins.posthog.ui.shortened.description'
+    | 'plugins.posthog.ui.stackShortened'
+    | 'plugins.posthog.ui.stackShortened.description'
+    | 'plugins.posthog.ui.tab.activity'
+    | 'plugins.posthog.ui.tab.affectedSessions'
+    | 'plugins.posthog.ui.tab.occurrences'
+    | 'plugins.posthog.ui.tab.overview'
+    | 'plugins.posthog.ui.tab.stackTrace'
+    | 'plugins.posthog.ui.tabsLabel'
+    | 'plugins.sentry.account.description'
+    | 'plugins.sentry.account.title'
+    | 'plugins.sentry.auth.cloud.title'
+    | 'plugins.sentry.auth.origin.description'
+    | 'plugins.sentry.auth.origin.title'
+    | 'plugins.sentry.auth.region.description'
+    | 'plugins.sentry.auth.region.title'
+    | 'plugins.sentry.auth.selfHosted.title'
+    | 'plugins.sentry.auth.token.description'
+    | 'plugins.sentry.auth.token.title'
+    | 'plugins.sentry.detail.fallback.body'
+    | 'plugins.sentry.settings.group'
+    | 'plugins.sentry.settings.sources'
+    | 'plugins.sentry.settings.sources.subtitle'
+    | 'plugins.sentry.ui.activityLabel'
+    | 'plugins.sentry.ui.activityRecordsRead'
+    | 'plugins.sentry.ui.activityUnavailable'
+    | 'plugins.sentry.ui.activityUnreadable'
+    | 'plugins.sentry.ui.activityUnreadable.description'
+    | 'plugins.sentry.ui.addSelectedOccurrence'
+    | 'plugins.sentry.ui.breadcrumbs'
+    | 'plugins.sentry.ui.breadcrumbsLabel'
+    | 'plugins.sentry.ui.detailOnly'
+    | 'plugins.sentry.ui.eventTags'
+    | 'plugins.sentry.ui.eventUser'
+    | 'plugins.sentry.ui.eventsLabel'
+    | 'plugins.sentry.ui.eventsUnavailable'
+    | 'plugins.sentry.ui.evidence.excludes'
+    | 'plugins.sentry.ui.evidence.includes'
+    | 'plugins.sentry.ui.fact.assignee'
+    | 'plugins.sentry.ui.fact.culprit'
+    | 'plugins.sentry.ui.fact.events'
+    | 'plugins.sentry.ui.fact.first-seen'
+    | 'plugins.sentry.ui.fact.issue-category'
+    | 'plugins.sentry.ui.fact.issue-type'
+    | 'plugins.sentry.ui.fact.last-release'
+    | 'plugins.sentry.ui.fact.last-seen'
+    | 'plugins.sentry.ui.fact.level'
+    | 'plugins.sentry.ui.fact.priority'
+    | 'plugins.sentry.ui.fact.project'
+    | 'plugins.sentry.ui.fact.unhandled'
+    | 'plugins.sentry.ui.fact.users'
+    | 'plugins.sentry.ui.facts'
+    | 'plugins.sentry.ui.framesLabel'
+    | 'plugins.sentry.ui.framesOmitted'
+    | 'plugins.sentry.ui.hideSpread'
+    | 'plugins.sentry.ui.hideSystemFrames'
+    | 'plugins.sentry.ui.hideUserDetails'
+    | 'plugins.sentry.ui.invalidInput'
+    | 'plugins.sentry.ui.invalidInput.description'
+    | 'plugins.sentry.ui.lastObservation'
+    | 'plugins.sentry.ui.loadMoreEvents'
+    | 'plugins.sentry.ui.loadMoreValues'
+    | 'plugins.sentry.ui.metadata.email'
+    | 'plugins.sentry.ui.metadata.events'
+    | 'plugins.sentry.ui.metadata.firstSeen'
+    | 'plugins.sentry.ui.metadata.firstSeenIn'
+    | 'plugins.sentry.ui.metadata.id'
+    | 'plugins.sentry.ui.metadata.ipAddress'
+    | 'plugins.sentry.ui.metadata.lastChanged'
+    | 'plugins.sentry.ui.metadata.lastSeen'
+    | 'plugins.sentry.ui.metadata.lastSeenIn'
+    | 'plugins.sentry.ui.metadata.name'
+    | 'plugins.sentry.ui.metadata.observed'
+    | 'plugins.sentry.ui.metadata.username'
+    | 'plugins.sentry.ui.metadata.users'
+    | 'plugins.sentry.ui.noActivity'
+    | 'plugins.sentry.ui.noActivity.description'
+    | 'plugins.sentry.ui.noApplicationFrames'
+    | 'plugins.sentry.ui.noApplicationFrames.description'
+    | 'plugins.sentry.ui.noEvents'
+    | 'plugins.sentry.ui.noFacts'
+    | 'plugins.sentry.ui.noFacts.description'
+    | 'plugins.sentry.ui.noTagValues'
+    | 'plugins.sentry.ui.noTagValues.description'
+    | 'plugins.sentry.ui.noTags'
+    | 'plugins.sentry.ui.noTags.description'
+    | 'plugins.sentry.ui.observation'
+    | 'plugins.sentry.ui.occurrenceUnavailable'
+    | 'plugins.sentry.ui.openStack'
+    | 'plugins.sentry.ui.partialEvents'
+    | 'plugins.sentry.ui.partialTagValues'
+    | 'plugins.sentry.ui.readFailed'
+    | 'plugins.sentry.ui.readingActivity'
+    | 'plugins.sentry.ui.readingEvents'
+    | 'plugins.sentry.ui.readingIssue'
+    | 'plugins.sentry.ui.readingOccurrence'
+    | 'plugins.sentry.ui.readingSelectedOccurrence'
+    | 'plugins.sentry.ui.readingTagValues'
+    | 'plugins.sentry.ui.readingTags'
+    | 'plugins.sentry.ui.recordsNotShown'
+    | 'plugins.sentry.ui.releaseEvidence.description'
+    | 'plugins.sentry.ui.releasesLabel'
+    | 'plugins.sentry.ui.rereadOccurrence'
+    | 'plugins.sentry.ui.retainedCount.description'
+    | 'plugins.sentry.ui.retainedEventsRead'
+    | 'plugins.sentry.ui.retainedEventsReadWithUnreadable'
+    | 'plugins.sentry.ui.retentionDisclosure'
+    | 'plugins.sentry.ui.selectedOccurrence'
+    | 'plugins.sentry.ui.selectionIdentity'
+    | 'plugins.sentry.ui.selectionIdentityRecorded'
+    | 'plugins.sentry.ui.sensitiveRetained.description'
+    | 'plugins.sentry.ui.sentryNow'
+    | 'plugins.sentry.ui.shortened'
+    | 'plugins.sentry.ui.shortened.description'
+    | 'plugins.sentry.ui.showSpread'
+    | 'plugins.sentry.ui.showSystemFrames'
+    | 'plugins.sentry.ui.showUserDetails'
+    | 'plugins.sentry.ui.showingSelection'
+    | 'plugins.sentry.ui.showingSelectionRecorded'
+    | 'plugins.sentry.ui.spread.description'
+    | 'plugins.sentry.ui.tab.activity'
+    | 'plugins.sentry.ui.tab.occurrences'
+    | 'plugins.sentry.ui.tab.overview'
+    | 'plugins.sentry.ui.tab.release'
+    | 'plugins.sentry.ui.tab.stackTrace'
+    | 'plugins.sentry.ui.tabsLabel'
+    | 'plugins.sentry.ui.tagValues.description'
+    | 'plugins.sentry.ui.tagValuesLabel'
+    | 'plugins.sentry.ui.tagValuesUnavailable'
+    | 'plugins.sentry.ui.tagsLabel'
+    | 'plugins.sentry.ui.tagsUnavailable'
+    | 'plugins.sentry.ui.tagsUnclassified'
+    | 'plugins.sentry.ui.tagsUnclassified.description'
+    | 'plugins.sentry.ui.tagsUnreadable'
+    | 'plugins.sentry.ui.valuesRead'
+    | 'plugins.sentry.ui.valuesRedacted'
+    | 'plugins.sentry.ui.valuesRedacted.description'
+    | 'plugins.sentry.ui.valuesWithheld'
+    | 'plugins.sentry.ui.valuesWithheld.description'
+    | 'plugins.sentry.ui.walkStoppedShort'
+    | 'plugins.triage.action.listEntries.description'
+    | 'plugins.triage.action.listEntries.title'
+    | 'plugins.triage.column.all'
+    | 'plugins.triage.composer.entriesCount'
+    | 'plugins.triage.currentContext.board'
+    | 'plugins.triage.currentContext.clearSelection'
+    | 'plugins.triage.currentContext.closeDetail'
+    | 'plugins.triage.currentContext.list'
+    | 'plugins.triage.currentContext.openEntry'
+    | 'plugins.triage.currentContext.refresh'
+    | 'plugins.triage.currentContext.selectTab'
+    | 'plugins.triage.detailStory.activity'
+    | 'plugins.triage.detailStory.ask'
+    | 'plugins.triage.detailStory.changed'
+    | 'plugins.triage.detailStory.detail'
+    | 'plugins.triage.detailStory.failed'
+    | 'plugins.triage.detailStory.passed'
+    | 'plugins.triage.detailStory.report'
+    | 'plugins.triage.detailStory.running'
+    | 'plugins.triage.picker.attach'
+    | 'plugins.triage.picker.attachEntryLabel'
+    | 'plugins.triage.picker.attached'
+    | 'plugins.triage.picker.empty'
+    | 'plugins.triage.picker.filter'
+    | 'plugins.triage.picker.noMatch'
+    | 'plugins.triage.picker.noMatchYet'
+    | 'plugins.triage.picker.noSources.description'
+    | 'plugins.triage.picker.noSources.title'
+    | 'plugins.triage.picker.notSynchronized'
+    | 'plugins.triage.picker.openFailed'
+    | 'plugins.triage.picker.refreshRemedy'
+    | 'plugins.triage.picker.remove'
+    | 'plugins.triage.picker.removeEntryLabel'
+    | 'plugins.triage.picker.search'
+    | 'plugins.triage.picker.sourcesUnavailable'
+    | 'plugins.triage.picker.viewDetails'
+    | 'plugins.triage.picker.viewDetailsEntryLabel'
+    | 'plugins.triage.sessionLinks.alreadyLinked'
+    | 'plugins.triage.sessionLinks.approved'
+    | 'plugins.triage.sessionLinks.browse'
+    | 'plugins.triage.sessionLinks.cancel'
+    | 'plugins.triage.sessionLinks.changesRequested'
+    | 'plugins.triage.sessionLinks.done'
+    | 'plugins.triage.sessionLinks.empty.inviteDescription'
+    | 'plugins.triage.sessionLinks.empty.inviteTitle'
+    | 'plugins.triage.sessionLinks.fact.author'
+    | 'plugins.triage.sessionLinks.fact.comments'
+    | 'plugins.triage.sessionLinks.fact.linked'
+    | 'plugins.triage.sessionLinks.fact.review'
+    | 'plugins.triage.sessionLinks.fact.state'
+    | 'plugins.triage.sessionLinks.fact.unknown'
+    | 'plugins.triage.sessionLinks.fact.updated'
+    | 'plugins.triage.sessionLinks.fact.where'
+    | 'plugins.triage.sessionLinks.group.issues'
+    | 'plugins.triage.sessionLinks.group.other'
+    | 'plugins.triage.sessionLinks.group.pullRequests'
+    | 'plugins.triage.sessionLinks.kind.entry'
+    | 'plugins.triage.sessionLinks.kind.issue'
+    | 'plugins.triage.sessionLinks.kind.pullRequest'
+    | 'plugins.triage.sessionLinks.label'
+    | 'plugins.triage.sessionLinks.link'
+    | 'plugins.triage.sessionLinks.linkFailed'
+    | 'plugins.triage.sessionLinks.linkReassurance'
+    | 'plugins.triage.sessionLinks.linkedAge'
+    | 'plugins.triage.sessionLinks.loading'
+    | 'plugins.triage.sessionLinks.more.description'
+    | 'plugins.triage.sessionLinks.needsYouCount'
+    | 'plugins.triage.sessionLinks.noSession.description'
+    | 'plugins.triage.sessionLinks.noSession.title'
+    | 'plugins.triage.sessionLinks.open'
+    | 'plugins.triage.sessionLinks.openOnGitHub'
+    | 'plugins.triage.sessionLinks.reading'
+    | 'plugins.triage.sessionLinks.removed'
+    | 'plugins.triage.sessionLinks.reviewRequired'
+    | 'plugins.triage.sessionLinks.search'
+    | 'plugins.triage.sessionLinks.searchEmpty'
+    | 'plugins.triage.sessionLinks.searchPlaceholder'
+    | 'plugins.triage.sessionLinks.status.blocked'
+    | 'plugins.triage.sessionLinks.status.branch'
+    | 'plugins.triage.sessionLinks.status.checks'
+    | 'plugins.triage.sessionLinks.status.commented'
+    | 'plugins.triage.sessionLinks.status.conflicts'
+    | 'plugins.triage.sessionLinks.status.dismissed'
+    | 'plugins.triage.sessionLinks.status.failed'
+    | 'plugins.triage.sessionLinks.status.merge'
+    | 'plugins.triage.sessionLinks.status.mergeable'
+    | 'plugins.triage.sessionLinks.status.neutral'
+    | 'plugins.triage.sessionLinks.status.none'
+    | 'plugins.triage.sessionLinks.status.otherPassing'
+    | 'plugins.triage.sessionLinks.status.partial'
+    | 'plugins.triage.sessionLinks.status.passed'
+    | 'plugins.triage.sessionLinks.status.pending'
+    | 'plugins.triage.sessionLinks.status.reading'
+    | 'plugins.triage.sessionLinks.status.requestedChanges'
+    | 'plugins.triage.sessionLinks.status.unavailable'
+    | 'plugins.triage.sessionLinks.unavailable'
+    | 'plugins.triage.sessionLinks.unlink'
+    | 'plugins.triage.sessionLinks.unlinkConfirm'
+    | 'plugins.triage.sessionLinks.unlinkFailed'
+    | 'plugins.triage.sessionLinks.unlinkNamed'
+    | 'plugins.triage.sessionLinks.unreadable'
+    | 'plugins.triage.sourceSettings.configuration.added'
+    | 'plugins.triage.sourceSettings.configuration.alreadyConfigured'
+    | 'plugins.triage.sourceSettings.configuration.atMaximum'
+    | 'plugins.triage.sourceSettings.configuration.conflict'
+    | 'plugins.triage.sourceSettings.configuration.outcomeUnknown'
+    | 'plugins.triage.sourceSettings.configuration.raced'
+    | 'plugins.triage.sourceSettings.configuration.removed'
+    | 'plugins.triage.sourceSettings.configuration.restored'
+    | 'plugins.triage.sourceSettings.configuration.sourceNotAdmitted'
+    | 'plugins.triage.sourceSettings.configuration.unreadable'
+    | 'plugins.triage.sourceSettings.configuration.updated'
+    | 'plugins.triage.sourceSettings.configuredRead.incomplete.description'
+    | 'plugins.triage.sourceSettings.configuredRead.incomplete.title'
+    | 'plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description'
+    | 'plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title'
+    | 'plugins.triage.sourceSettings.configuredRead.raced.description'
+    | 'plugins.triage.sourceSettings.configuredRead.raced.title'
+    | 'plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description'
+    | 'plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title'
+    | 'plugins.triage.sourceSettings.configuredRead.unreachable.description'
+    | 'plugins.triage.sourceSettings.configuredRead.unreachable.title'
+    | 'plugins.triage.sourceSettings.configuredRead.unreadable.description'
+    | 'plugins.triage.sourceSettings.configuredRead.unreadable.title'
+    | 'plugins.triage.sourceSettings.connectAccount'
+    | 'plugins.triage.sourceSettings.control.add'
+    | 'plugins.triage.sourceSettings.control.addLabel'
+    | 'plugins.triage.sourceSettings.control.remove'
+    | 'plugins.triage.sourceSettings.control.removeLabel'
+    | 'plugins.triage.sourceSettings.control.restore'
+    | 'plugins.triage.sourceSettings.control.restoreLabel'
+    | 'plugins.triage.sourceSettings.control.update'
+    | 'plugins.triage.sourceSettings.control.updateLabel'
+    | 'plugins.triage.sourceSettings.empty.description'
+    | 'plugins.triage.sourceSettings.empty.title'
+    | 'plugins.triage.sourceSettings.failure.authentication'
+    | 'plugins.triage.sourceSettings.failure.permission'
+    | 'plugins.triage.sourceSettings.failure.rateLimit'
+    | 'plugins.triage.sourceSettings.failure.transient'
+    | 'plugins.triage.sourceSettings.failure.unknown'
+    | 'plugins.triage.sourceSettings.failure.unsupportedContract'
+    | 'plugins.triage.sourceSettings.failures.title'
+    | 'plugins.triage.sourceSettings.followsProviderName'
+    | 'plugins.triage.sourceSettings.heading'
+    | 'plugins.triage.sourceSettings.incomplete.description'
+    | 'plugins.triage.sourceSettings.incomplete.title'
+    | 'plugins.triage.sourceSettings.intro'
+    | 'plugins.triage.sourceSettings.lifecycle.configured'
+    | 'plugins.triage.sourceSettings.lifecycle.missing'
+    | 'plugins.triage.sourceSettings.lifecycle.retired'
+    | 'plugins.triage.sourceSettings.lifecycle.unlisted'
+    | 'plugins.triage.sourceSettings.loading.description'
+    | 'plugins.triage.sourceSettings.loading.title'
+    | 'plugins.triage.sourceSettings.manageAccounts'
+    | 'plugins.triage.sourceSettings.navigationUnavailable'
+    | 'plugins.triage.sourceSettings.outcomeUnknown.description'
+    | 'plugins.triage.sourceSettings.outcomeUnknown.title'
+    | 'plugins.triage.sourceSettings.reconnectAccount'
+    | 'plugins.triage.sourceSettings.refresh'
+    | 'plugins.triage.sourceSettings.removeConfirm.message'
+    | 'plugins.triage.sourceSettings.removeConfirm.title'
+    | 'plugins.triage.sourceSettings.removeConfirm.unavailable'
+    | 'plugins.triage.sourceSettings.scopesLabel'
+    | 'plugins.triage.sourceSettings.tryAgain'
+    | 'plugins.triage.sourceSettings.unreachable.noMachine'
+    | 'plugins.triage.sourceSettings.unreachable.title'
+    | 'plugins.triage.sourceSettings.unreadable.description'
+    | 'plugins.triage.sourceSettings.unreadable.title'
+    | 'plugins.triage.surface.account.unreachable'
+    | 'plugins.triage.surface.actions.add'
+    | 'plugins.triage.surface.actions.arm.agent'
+    | 'plugins.triage.surface.actions.arm.reviewStart'
+    | 'plugins.triage.surface.actions.blocker.appliesTo'
+    | 'plugins.triage.surface.actions.blocker.instruction'
+    | 'plugins.triage.surface.actions.blocker.label'
+    | 'plugins.triage.surface.actions.cancel'
+    | 'plugins.triage.surface.actions.close'
+    | 'plugins.triage.surface.actions.configure'
+    | 'plugins.triage.surface.actions.conflict'
+    | 'plugins.triage.surface.actions.delivery.compose'
+    | 'plugins.triage.surface.actions.delivery.send'
+    | 'plugins.triage.surface.actions.disabled'
+    | 'plugins.triage.surface.actions.draftStale'
+    | 'plugins.triage.surface.actions.edit'
+    | 'plugins.triage.surface.actions.empty.description'
+    | 'plugins.triage.surface.actions.empty.title'
+    | 'plugins.triage.surface.actions.field.appliesTo'
+    | 'plugins.triage.surface.actions.field.arm'
+    | 'plugins.triage.surface.actions.field.delivery'
+    | 'plugins.triage.surface.actions.field.enabled'
+    | 'plugins.triage.surface.actions.field.label'
+    | 'plugins.triage.surface.actions.field.profileId'
+    | 'plugins.triage.surface.actions.field.profileIdRaw'
+    | 'plugins.triage.surface.actions.field.profileMissing'
+    | 'plugins.triage.surface.actions.field.profileNone'
+    | 'plugins.triage.surface.actions.field.profileUnchecked'
+    | 'plugins.triage.surface.actions.field.prompt'
+    | 'plugins.triage.surface.actions.field.promptArgs'
+    | 'plugins.triage.surface.actions.field.promptMissing'
+    | 'plugins.triage.surface.actions.field.promptNone'
+    | 'plugins.triage.surface.actions.field.workspaceMode'
+    | 'plugins.triage.surface.actions.form.create'
+    | 'plugins.triage.surface.actions.form.update'
+    | 'plugins.triage.surface.actions.moveDown'
+    | 'plugins.triage.surface.actions.moveUp'
+    | 'plugins.triage.surface.actions.noLongerAvailable'
+    | 'plugins.triage.surface.actions.reapply'
+    | 'plugins.triage.surface.actions.rejected.appliesTo'
+    | 'plugins.triage.surface.actions.rejected.label'
+    | 'plugins.triage.surface.actions.rejected.other'
+    | 'plugins.triage.surface.actions.reload'
+    | 'plugins.triage.surface.actions.remove'
+    | 'plugins.triage.surface.actions.retry'
+    | 'plugins.triage.surface.actions.save'
+    | 'plugins.triage.surface.actions.settled'
+    | 'plugins.triage.surface.actions.startUnavailable'
+    | 'plugins.triage.surface.actions.subject.errorIssue'
+    | 'plugins.triage.surface.actions.subject.issue'
+    | 'plugins.triage.surface.actions.subject.other'
+    | 'plugins.triage.surface.actions.subject.pullRequest'
+    | 'plugins.triage.surface.actions.title'
+    | 'plugins.triage.surface.actions.unavailable'
+    | 'plugins.triage.surface.actions.unknown'
+    | 'plugins.triage.surface.actions.unreadable'
+    | 'plugins.triage.surface.actions.workspace.pullRequest'
+    | 'plugins.triage.surface.actions.workspace.referenceOnly'
+    | 'plugins.triage.surface.actions.workspace.repository'
+    | 'plugins.triage.surface.bulk.action'
+    | 'plugins.triage.surface.bulk.cancel'
+    | 'plugins.triage.surface.bulk.checkoutRequiresNewSessionAuthoring'
+    | 'plugins.triage.surface.bulk.composeRequiresNewSessionAuthoring'
+    | 'plugins.triage.surface.bulk.dispatch'
+    | 'plugins.triage.surface.bulk.instructionMissing'
+    | 'plugins.triage.surface.bulk.label'
+    | 'plugins.triage.surface.bulk.newSession'
+    | 'plugins.triage.surface.bulk.newSessionUnavailable'
+    | 'plugins.triage.surface.bulk.newSessionUnsupported'
+    | 'plugins.triage.surface.bulk.noApplicableActions'
+    | 'plugins.triage.surface.bulk.noEntriesAvailable'
+    | 'plugins.triage.surface.bulk.oneSession'
+    | 'plugins.triage.surface.bulk.preparedWorkspaceUnsupported'
+    | 'plugins.triage.surface.bulk.profileMissing'
+    | 'plugins.triage.surface.bulk.profileUnavailable'
+    | 'plugins.triage.surface.bulk.promptInvalid'
+    | 'plugins.triage.surface.bulk.promptMissing'
+    | 'plugins.triage.surface.bulk.promptUnavailable'
+    | 'plugins.triage.surface.bulk.resolving'
+    | 'plugins.triage.surface.bulk.retry'
+    | 'plugins.triage.surface.bulk.reviewStartUnsupported'
+    | 'plugins.triage.surface.bulk.seeded'
+    | 'plugins.triage.surface.bulk.selectionRetainedWhileRunning'
+    | 'plugins.triage.surface.bulk.sessionPerEntry'
+    | 'plugins.triage.surface.bulk.settled'
+    | 'plugins.triage.surface.bulk.sharedPlacementIncompatible'
+    | 'plugins.triage.surface.bulk.starting'
+    | 'plugins.triage.surface.close'
+    | 'plugins.triage.surface.column.age'
+    | 'plugins.triage.surface.column.entry'
+    | 'plugins.triage.surface.column.reason'
+    | 'plugins.triage.surface.column.signal'
+    | 'plugins.triage.surface.column.where'
+    | 'plugins.triage.surface.comparisonUnavailable'
+    | 'plugins.triage.surface.detail.accountError.description'
+    | 'plugins.triage.surface.detail.accountError.title'
+    | 'plugins.triage.surface.detail.agent.action'
+    | 'plugins.triage.surface.detail.agent.archived'
+    | 'plugins.triage.surface.detail.agent.failed'
+    | 'plugins.triage.surface.detail.agent.findings'
+    | 'plugins.triage.surface.detail.agent.input'
+    | 'plugins.triage.surface.detail.agent.offline'
+    | 'plugins.triage.surface.detail.agent.permission'
+    | 'plugins.triage.surface.detail.agent.ready'
+    | 'plugins.triage.surface.detail.agent.seeAll'
+    | 'plugins.triage.surface.detail.agent.working'
+    | 'plugins.triage.surface.detail.connection'
+    | 'plugins.triage.surface.detail.connectionUnhealthy'
+    | 'plugins.triage.surface.detail.entryAbsent'
+    | 'plugins.triage.surface.detail.entryUnresolved'
+    | 'plugins.triage.surface.detail.fixPr.closed'
+    | 'plugins.triage.surface.detail.fixPr.conflict'
+    | 'plugins.triage.surface.detail.fixPr.failed'
+    | 'plugins.triage.surface.detail.fixPr.incomplete'
+    | 'plugins.triage.surface.detail.fixPr.link'
+    | 'plugins.triage.surface.detail.fixPr.merged'
+    | 'plugins.triage.surface.detail.fixPr.open'
+    | 'plugins.triage.surface.detail.fixPr.readFailed'
+    | 'plugins.triage.surface.detail.fixPr.title'
+    | 'plugins.triage.surface.detail.fixPr.unlink'
+    | 'plugins.triage.surface.detail.lastKnown'
+    | 'plugins.triage.surface.detail.mountError.description'
+    | 'plugins.triage.surface.detail.mountError.title'
+    | 'plugins.triage.surface.detail.noConnection.description'
+    | 'plugins.triage.surface.detail.noConnection.title'
+    | 'plugins.triage.surface.detail.noDetail.description'
+    | 'plugins.triage.surface.detail.noDetail.title'
+    | 'plugins.triage.surface.detail.openAtSource'
+    | 'plugins.triage.surface.detail.permission.allowForSession'
+    | 'plugins.triage.surface.detail.permission.allowOnce'
+    | 'plugins.triage.surface.detail.permission.deny'
+    | 'plugins.triage.surface.detail.permission.notYours'
+    | 'plugins.triage.surface.detail.permission.refused'
+    | 'plugins.triage.surface.detail.permission.title'
+    | 'plugins.triage.surface.detail.permission.titleNamed'
+    | 'plugins.triage.surface.detail.prepareError.description'
+    | 'plugins.triage.surface.detail.prepareError.title'
+    | 'plugins.triage.surface.detail.reading'
+    | 'plugins.triage.surface.detail.removedConnection.description'
+    | 'plugins.triage.surface.detail.removedConnection.title'
+    | 'plugins.triage.surface.detail.scope'
+    | 'plugins.triage.surface.detail.session'
+    | 'plugins.triage.surface.detail.session.open'
+    | 'plugins.triage.surface.detail.session.picker'
+    | 'plugins.triage.surface.detail.session.unavailableHere'
+    | 'plugins.triage.surface.detail.sessionOpenFailed'
+    | 'plugins.triage.surface.detail.sessionUnavailable'
+    | 'plugins.triage.surface.detail.sessions'
+    | 'plugins.triage.surface.detail.sessionsLoadFailed'
+    | 'plugins.triage.surface.detail.source'
+    | 'plugins.triage.surface.detail.state'
+    | 'plugins.triage.surface.detail.story.agent'
+    | 'plugins.triage.surface.detail.tab.activity'
+    | 'plugins.triage.surface.detail.tab.checks'
+    | 'plugins.triage.surface.detail.tab.details'
+    | 'plugins.triage.surface.detail.tab.files'
+    | 'plugins.triage.surface.detail.tab.overview'
+    | 'plugins.triage.surface.detail.tab.session'
+    | 'plugins.triage.surface.detail.tabs'
+    | 'plugins.triage.surface.detail.type'
+    | 'plugins.triage.surface.detail.via'
+    | 'plugins.triage.surface.drop.linkSession'
+    | 'plugins.triage.surface.empty.healthy.description'
+    | 'plugins.triage.surface.empty.healthy.title'
+    | 'plugins.triage.surface.empty.incomplete.description'
+    | 'plugins.triage.surface.empty.incomplete.title'
+    | 'plugins.triage.surface.empty.noMatch.description'
+    | 'plugins.triage.surface.empty.noMatch.title'
+    | 'plugins.triage.surface.empty.noMatchYet.description'
+    | 'plugins.triage.surface.empty.noMatchYet.title'
+    | 'plugins.triage.surface.empty.noSearchMatch.description'
+    | 'plugins.triage.surface.empty.noSearchMatch.title'
+    | 'plugins.triage.surface.empty.noSearchMatchYet.description'
+    | 'plugins.triage.surface.empty.noSearchMatchYet.title'
+    | 'plugins.triage.surface.empty.reading.description'
+    | 'plugins.triage.surface.empty.reading.title'
+    | 'plugins.triage.surface.entryGone.description'
+    | 'plugins.triage.surface.entryGone.heading'
+    | 'plugins.triage.surface.entryGone.title'
+    | 'plugins.triage.surface.entryNotInFilter.description'
+    | 'plugins.triage.surface.entryNotInFilter.heading'
+    | 'plugins.triage.surface.failure.authentication'
+    | 'plugins.triage.surface.failure.permission'
+    | 'plugins.triage.surface.failure.rateLimit'
+    | 'plugins.triage.surface.failure.some'
+    | 'plugins.triage.surface.failure.suffix'
+    | 'plugins.triage.surface.failure.transient'
+    | 'plugins.triage.surface.failure.unknown'
+    | 'plugins.triage.surface.failure.unsupportedContract'
+    | 'plugins.triage.surface.filters'
+    | 'plugins.triage.surface.filters.attention'
+    | 'plugins.triage.surface.filters.attention.none'
+    | 'plugins.triage.surface.filters.attention.required'
+    | 'plugins.triage.surface.filters.attention.suggested'
+    | 'plugins.triage.surface.filters.clear'
+    | 'plugins.triage.surface.filters.remove'
+    | 'plugins.triage.surface.filters.scope'
+    | 'plugins.triage.surface.filters.source'
+    | 'plugins.triage.surface.filters.state'
+    | 'plugins.triage.surface.filters.state.absent'
+    | 'plugins.triage.surface.filters.state.done'
+    | 'plugins.triage.surface.filters.state.open'
+    | 'plugins.triage.surface.filters.state.unresolved'
+    | 'plugins.triage.surface.filters.type'
+    | 'plugins.triage.surface.group.everythingElse.description'
+    | 'plugins.triage.surface.group.everythingElse.title'
+    | 'plugins.triage.surface.group.inReview.description'
+    | 'plugins.triage.surface.group.inReview.title'
+    | 'plugins.triage.surface.group.needsYou.description'
+    | 'plugins.triage.surface.group.needsYou.title'
+    | 'plugins.triage.surface.group.withAgent.description'
+    | 'plugins.triage.surface.group.withAgent.title'
+    | 'plugins.triage.surface.lastKnown'
+    | 'plugins.triage.surface.lensTooLong.description'
+    | 'plugins.triage.surface.lensTooLong.title'
+    | 'plugins.triage.surface.listFailed'
+    | 'plugins.triage.surface.listFailed.permanent'
+    | 'plugins.triage.surface.listFailed.retryable'
+    | 'plugins.triage.surface.loadMore'
+    | 'plugins.triage.surface.loadMore.retry'
+    | 'plugins.triage.surface.loadMorePins'
+    | 'plugins.triage.surface.more'
+    | 'plugins.triage.surface.moreEntries.description'
+    | 'plugins.triage.surface.moreEntries.failed.description'
+    | 'plugins.triage.surface.moreEntries.failed.title'
+    | 'plugins.triage.surface.moreEntries.title'
+    | 'plugins.triage.surface.moreEntries.unresumable.description'
+    | 'plugins.triage.surface.moreEntries.unresumable.title'
+    | 'plugins.triage.surface.morePins.description'
+    | 'plugins.triage.surface.morePins.failed.description'
+    | 'plugins.triage.surface.morePins.failed.title'
+    | 'plugins.triage.surface.morePins.title'
+    | 'plugins.triage.surface.morePins.unresumable.description'
+    | 'plugins.triage.surface.morePins.unresumable.title'
+    | 'plugins.triage.surface.noSources.configure'
+    | 'plugins.triage.surface.noSources.description'
+    | 'plugins.triage.surface.noSources.openFailed'
+    | 'plugins.triage.surface.noSources.title'
+    | 'plugins.triage.surface.order'
+    | 'plugins.triage.surface.order.newest'
+    | 'plugins.triage.surface.order.oldest'
+    | 'plugins.triage.surface.order.smart'
+    | 'plugins.triage.surface.organizeList'
+    | 'plugins.triage.surface.peek.open'
+    | 'plugins.triage.surface.peek.pin'
+    | 'plugins.triage.surface.pin.conflict'
+    | 'plugins.triage.surface.pin.pinned'
+    | 'plugins.triage.surface.pin.unavailable'
+    | 'plugins.triage.surface.pin.unpinned'
+    | 'plugins.triage.surface.pinsUnavailable'
+    | 'plugins.triage.surface.readingList'
+    | 'plugins.triage.surface.refresh'
+    | 'plugins.triage.surface.refreshing'
+    | 'plugins.triage.surface.reviewChooser.empty'
+    | 'plugins.triage.surface.reviewChooser.engines'
+    | 'plugins.triage.surface.reviewChooser.findingsOnly'
+    | 'plugins.triage.surface.reviewChooser.listFailed'
+    | 'plugins.triage.surface.reviewChooser.loading'
+    | 'plugins.triage.surface.reviewChooser.narrator'
+    | 'plugins.triage.surface.reviewChooser.noNarrator'
+    | 'plugins.triage.surface.reviewChooser.open'
+    | 'plugins.triage.surface.reviewChooser.openFailed'
+    | 'plugins.triage.surface.reviewChooser.opening'
+    | 'plugins.triage.surface.reviewChooser.partial'
+    | 'plugins.triage.surface.reviewChooser.refused'
+    | 'plugins.triage.surface.reviewChooser.required'
+    | 'plugins.triage.surface.reviewChooser.start'
+    | 'plugins.triage.surface.reviewChooser.starting'
+    | 'plugins.triage.surface.reviewChooser.unknown'
+    | 'plugins.triage.surface.reviewChooser.walkthrough'
+    | 'plugins.triage.surface.routeTooLong.description'
+    | 'plugins.triage.surface.routeTooLong.title'
+    | 'plugins.triage.surface.routeWriteFailed.rejected'
+    | 'plugins.triage.surface.routeWriteFailed.title'
+    | 'plugins.triage.surface.routeWriteFailed.unavailable'
+    | 'plugins.triage.surface.row.absent'
+    | 'plugins.triage.surface.row.deselect'
+    | 'plugins.triage.surface.row.moreActions'
+    | 'plugins.triage.surface.row.notSynchronized'
+    | 'plugins.triage.surface.row.pin'
+    | 'plugins.triage.surface.row.select'
+    | 'plugins.triage.surface.row.stale'
+    | 'plugins.triage.surface.row.staleSince'
+    | 'plugins.triage.surface.row.state.active'
+    | 'plugins.triage.surface.row.state.closed'
+    | 'plugins.triage.surface.row.state.resolved'
+    | 'plugins.triage.surface.row.state.suppressed'
+    | 'plugins.triage.surface.row.state.unknown'
+    | 'plugins.triage.surface.row.unpin'
+    | 'plugins.triage.surface.row.unpinShort'
+    | 'plugins.triage.surface.row.unresolved'
+    | 'plugins.triage.surface.search'
+    | 'plugins.triage.surface.section.pinned'
+    | 'plugins.triage.surface.session.ask'
+    | 'plugins.triage.surface.session.codeReview'
+    | 'plugins.triage.surface.session.creationAccepted'
+    | 'plugins.triage.surface.session.creationFailed'
+    | 'plugins.triage.surface.session.creationUnknown'
+    | 'plugins.triage.surface.session.deliveryFailed'
+    | 'plugins.triage.surface.session.deliveryUnknown'
+    | 'plugins.triage.surface.session.dispatchFailed'
+    | 'plugins.triage.surface.session.fix'
+    | 'plugins.triage.surface.session.instructionMissing'
+    | 'plugins.triage.surface.session.linkPending'
+    | 'plugins.triage.surface.session.linkedNotOpened'
+    | 'plugins.triage.surface.session.newSessionUnavailable'
+    | 'plugins.triage.surface.session.newSessionUnsupported'
+    | 'plugins.triage.surface.session.noSelection'
+    | 'plugins.triage.surface.session.openPending'
+    | 'plugins.triage.surface.session.preparationUnsupported'
+    | 'plugins.triage.surface.session.profileMissing'
+    | 'plugins.triage.surface.session.profileUnavailable'
+    | 'plugins.triage.surface.session.promptInvalid'
+    | 'plugins.triage.surface.session.promptMissing'
+    | 'plugins.triage.surface.session.promptUnavailable'
+    | 'plugins.triage.surface.session.rejected.existingSession'
+    | 'plugins.triage.surface.session.rejected.preparedWorkspace'
+    | 'plugins.triage.surface.session.rejected.preparedWorkspaceEntryMismatch'
+    | 'plugins.triage.surface.session.rejected.referenceOnly'
+    | 'plugins.triage.surface.session.rejected.selectedProject'
+    | 'plugins.triage.surface.session.resolving'
+    | 'plugins.triage.surface.session.review'
+    | 'plugins.triage.surface.session.reviewStartUnsupported'
+    | 'plugins.triage.surface.session.starting'
+    | 'plugins.triage.surface.session.workspaceRefused'
+    | 'plugins.triage.surface.session.workspaceUnavailable'
+    | 'plugins.triage.surface.sessionActivity.reading'
+    | 'plugins.triage.surface.sessionActivity.unavailable'
+    | 'plugins.triage.surface.smartPolicy'
+    | 'plugins.triage.surface.smartPolicy.activityFirst'
+    | 'plugins.triage.surface.smartPolicy.attentionFirst'
+    | 'plugins.triage.surface.sourceUnavailable'
+    | 'plugins.triage.surface.sources.add'
+    | 'plugins.triage.surface.sources.changedTitle'
+    | 'plugins.triage.surface.sources.conflict'
+    | 'plugins.triage.surface.sources.manage'
+    | 'plugins.triage.surface.sources.missing'
+    | 'plugins.triage.surface.sources.none'
+    | 'plugins.triage.surface.sources.remove'
+    | 'plugins.triage.surface.sources.remove.confirm'
+    | 'plugins.triage.surface.sources.title'
+    | 'plugins.triage.surface.sources.unavailable'
+    | 'plugins.triage.surface.sources.unavailableTitle'
+    | 'plugins.triage.surface.sourcesUnreachable.description'
+    | 'plugins.triage.surface.sourcesUnreachable.title'
+    | 'plugins.triage.surface.tryAgain'
+    | 'plugins.triage.surface.upToDate'
+    | 'plugins.triage.surface.view.board'
+    | 'plugins.triage.surface.view.label'
+    | 'plugins.triage.surface.view.list'
+    | 'plugins.triage.surface.views'
+    | 'plugins.triage.surface.views.cancel'
+    | 'plugins.triage.surface.views.confirm'
+    | 'plugins.triage.surface.views.conflict'
+    | 'plugins.triage.surface.views.delete'
+    | 'plugins.triage.surface.views.modified'
+    | 'plugins.triage.surface.views.name'
+    | 'plugins.triage.surface.views.none'
+    | 'plugins.triage.surface.views.operations'
+    | 'plugins.triage.surface.views.rejected.label'
+    | 'plugins.triage.surface.views.rejected.other'
+    | 'plugins.triage.surface.views.rejected.tooLarge'
+    | 'plugins.triage.surface.views.rename'
+    | 'plugins.triage.surface.views.retry'
+    | 'plugins.triage.surface.views.save'
+    | 'plugins.triage.surface.views.settled'
+    | 'plugins.triage.surface.views.unavailable'
+    | 'plugins.triage.surface.views.unavailableSources'
+    | 'plugins.triage.surface.views.unknown'
+    | 'plugins.triage.surface.views.unreadable'
+    | 'plugins.triage.surface.views.update'
+    | 'plugins.triage.surface.waiting'
+    | 'plugins.triage.surface.waiting.backoff'
+    | 'plugins.triage.surface.waiting.recent'
+    | 'plugins.triage.surface.waiting.retryAt'
+    | 'plugins.triage.surface.waiting.source'
+    | 'plugins.triage.surface.walkthrough'
+    | 'plugins.triage.surface.window.complete'
+    | 'plugins.triage.surface.window.loaded'
+    | 'plugins.triage.surface.window.more'
+    | 'plugins.triage.widget.empty'
+    | 'plugins.triage.widget.error'
+    | 'plugins.triage.widget.latest'
+    | 'plugins.triage.widget.loading'
+    | 'plugins.triage.widget.noSources'
+    | 'plugins.triage.widget.retry'
+    | 'plugins.triage.widget.setUp'
+    | 'profiles.aiBackend.devinSubtitleExperimental'
+    | 'profiles.aiBackend.droidSubtitleExperimental'
+    | 'profiles.aiBackend.fxSubtitleExperimental'
+    | 'profiles.aiBackend.grokSubtitleExperimental'
+    | 'profiles.aiBackend.kimiSubtitleExperimental'
+    | 'session.subagents.panel.launchClaudeTeamsSubtitle'
+    | 'session.subagents.panel.launchTeammateAction'
+    | 'sessionInfo.devinSessionId'
+    | 'sessionInfo.devinSessionIdCopied'
+    | 'sessionInfo.droidSessionId'
+    | 'sessionInfo.droidSessionIdCopied'
+    | 'sessionInfo.fxSessionId'
+    | 'sessionInfo.fxSessionIdCopied'
+    | 'sessionInfo.grokSessionId'
+    | 'sessionInfo.grokSessionIdCopied'
+    | 'sessionInfo.kimiSessionId'
+    | 'sessionInfo.kimiSessionIdCopied'
+    | 'settingsAgents.plugins.devin.title'
+    | 'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle'
+    | 'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title'
+    | 'settingsAgents.plugins.ohmypi.sections.storage.footer'
+    | 'settingsAgents.plugins.ohmypi.sections.storage.title'
+    | 'settingsAgents.plugins.ohmypi.title'
+    | 'settingsAgents.plugins.pi.fields.piAgentDir.subtitle'
+    | 'settingsAgents.plugins.pi.fields.piAgentDir.title'
+    | 'settingsAgents.plugins.pi.sections.storage.footer'
+    | 'settingsAgents.plugins.pi.sections.storage.title'
+    | 'settingsAgents.plugins.pi.title'
+    | 'settingsVoice.mode.codexRealtime'
+    | 'settingsVoice.mode.codexRealtimeSubtitle'
+    | 'settingsVoice.realtimeProviders.elevenLabs.accountFooter'
+    | 'settingsVoice.realtimeProviders.elevenLabs.agentConfigured'
+    | 'settingsVoice.realtimeProviders.elevenLabs.agentIdDescription'
+    | 'settingsVoice.realtimeProviders.elevenLabs.agentMissing'
+    | 'settingsVoice.realtimeProviders.elevenLabs.agentTitle'
+    | 'settingsVoice.realtimeProviders.elevenLabs.groups.account'
+    | 'settingsVoice.realtimeProviders.elevenLabs.groups.conversation'
+    | 'settingsVoice.realtimeProviders.elevenLabs.groups.voice'
+    | 'settingsVoice.realtimeProviders.elevenLabs.manageApiKeys'
+    | 'settingsVoice.realtimeProviders.elevenLabs.modelDescription'
+    | 'settingsVoice.realtimeProviders.elevenLabs.openAccount'
+    | 'settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure'
+    | 'settingsVoice.realtimeProviders.elevenLabs.resourcesTitle'
+    | 'settingsVoice.realtimeProviders.elevenLabs.similarityDescription'
+    | 'settingsVoice.realtimeProviders.elevenLabs.speedDescription'
+    | 'settingsVoice.realtimeProviders.elevenLabs.stabilityDescription'
+    | 'settingsVoice.realtimeProviders.google.sttPrivacyDisclosure'
+    | 'settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure'
+    | 'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt'
+    | 'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts'
+    | 'subAgentGuidance.settings.agents.claude.footer'
+    | 'subAgentGuidance.settings.agents.claude.openSubtitle'
+    | 'subAgentGuidance.settings.agents.claude.openTitle'
+    | 'subAgentGuidance.settings.agents.claude.title';

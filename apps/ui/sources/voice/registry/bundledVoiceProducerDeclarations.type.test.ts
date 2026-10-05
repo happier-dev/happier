@@ -46,6 +46,7 @@ describe('bundled voice producer projection', () => {
       );
       expect(presentation).toBeDefined();
       expect(presentation).not.toHaveProperty('declaration');
+      expect(presentation).not.toHaveProperty('mark');
       expect(presentation).not.toHaveProperty('roles');
       expect(presentation).not.toHaveProperty('requirements');
       expect(presentation).not.toHaveProperty('providerSettings');

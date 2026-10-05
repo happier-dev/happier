@@ -11597,9 +11597,9 @@
       },
       {
         "confirmation": {
-          "body": "This changes the Session’s saved pull request link or its scoped triggers.",
-          "confirmLabel": "Save binding",
-          "title": "Change Session pull request binding?"
+          "body": "This can attach a pull request to the selected session or change its scoped conversation trigger bindings.",
+          "confirmLabel": "Continue",
+          "title": "Manage session pull request binding?"
         },
         "dangerLevel": "writesLocal",
         "description": "Attaches native SCM PR links and scoped triggers through conversation bindings.",
@@ -22762,9 +22762,12 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -35597,7 +35600,56 @@
         {
           "container": "widget",
           "id": "session-conversations-widget",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "session": {
+                "additionalProperties": false,
+                "properties": {
+                  "serverId": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "serverId",
+                  "sessionId"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "session"
+            ],
+            "type": "object"
+          },
+          "inputs": {
+            "fields": [
+              {
+                "optionsSourceId": "sessions",
+                "path": "session",
+                "required": true,
+                "title": "Session",
+                "widget": "json"
+              }
+            ]
+          },
           "renderer": "channels-renderer",
+          "resources": [
+            {
+              "localId": "session-conversations-v1",
+              "pluginId": "happier.channels"
+            },
+            {
+              "localId": "connections-v1",
+              "pluginId": "happier.channels"
+            }
+          ],
+          "sessionInputPath": "session",
           "target": {
             "kind": "session"
           },
@@ -35635,6 +35687,16 @@
           "icon": "conversations",
           "id": "conversations-widget",
           "renderer": "channels-glance",
+          "resources": [
+            {
+              "localId": "bindings-v1",
+              "pluginId": "happier.channels"
+            },
+            {
+              "localId": "connections-v1",
+              "pluginId": "happier.channels"
+            }
+          ],
           "target": {
             "kind": "app"
           },

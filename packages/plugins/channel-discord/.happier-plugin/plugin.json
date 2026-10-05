@@ -2456,6 +2456,8 @@
       }
     ],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [
       {
         "automation": {
@@ -2598,6 +2600,7 @@
     ],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],

@@ -358,6 +358,7 @@
             },
             "sources": [
               {
+                "contentSearch": true,
                 "instances": [
                   {
                     "constants": {},
@@ -489,6 +490,8 @@
       }
     ],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [
@@ -515,6 +518,7 @@
         "scope": "daemon"
       }
     ],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [
