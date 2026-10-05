@@ -90,17 +90,26 @@ test('compiler-only typecheck executes compilers after preparation and reports c
   assert.ok(executed.length > 2);
   const uiCommands = executed.filter((args) => args.includes('apps/ui'));
   assert.deepEqual(uiCommands, [['--cwd', 'apps/ui', '-s', 'typecheck']]);
+  const cliCommands = executed.filter((args) => args.includes('apps/cli'));
+  assert.deepEqual(cliCommands, [['--cwd', 'apps/cli', '-s', 'typecheck']]);
   const uiPackage = JSON.parse(readFileSync('apps/ui/package.json', 'utf8')) as {
     scripts: Record<string, string>;
   };
   assert.equal(uiPackage.scripts.typecheck, '../stack/bin/hstack-exec --script=typecheck:local');
   assert.equal(uiPackage.scripts['typecheck:local'], 'yarn -s typecheck:source:finite');
   assert.equal(uiPackage.scripts['typecheck:source:finite'],
-    'node ../../scripts/workspaces/runTypeScriptCli.mjs --project tsconfig.source.json --project tsconfig.test.json');
+    'node ../../scripts/workspaces/runTypeScriptCli.mjs --project tsconfig.foundation.json --project tsconfig.core.json --project tsconfig.source.json --project tsconfig.test.json');
   for (const args of executed.slice(2)) {
-    if (!uiCommands.includes(args)) {
+    if (!uiCommands.includes(args) && !cliCommands.includes(args)) {
       assert.equal(args[0], 'tsc');
       assert.ok(args.includes('--noEmit'));
     }
   }
+  const cliPackage = JSON.parse(readFileSync('apps/cli/package.json', 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+  assert.equal(cliPackage.scripts.typecheck, '../stack/bin/hstack-exec --script=typecheck:local');
+  assert.equal(cliPackage.scripts['typecheck:local'], 'yarn -s typecheck:source:finite');
+  assert.equal(cliPackage.scripts['typecheck:source:finite'],
+    'node ../../scripts/workspaces/runTypeScriptCli.mjs --project tsconfig.source.json --project tsconfig.test.json');
 });
