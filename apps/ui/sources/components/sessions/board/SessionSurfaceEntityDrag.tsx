@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { sameStrictJsonValue } from '@happier-dev/protocol';
 import { I18nManager, Platform, Pressable, View, type ScrollView, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import type { EntityDragItemV1, EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
@@ -14,7 +15,7 @@ import type { TreeDropMeasurableRef } from '@/components/ui/treeDragDrop/registr
 import { t } from '@/text';
 import { CurrentSessionPresentationActionInputV1Schema, type SessionCompanionPresentationItemRefV1 } from '@happier-dev/protocol/sessions';
 import { resolveSessionSurfaceIndicatorEdge } from './sessionSurfaceIndicatorEdge';
-import { executeWidgetEntityMovement } from '@/sync/ops/actions/widgetEntityMovement';
+import { executeWidgetEntityMovement, type WidgetEntityMovementPort } from '@/sync/ops/actions/widgetEntityMovement';
 import { resolveSessionSurfaceKeyboardRoute } from './sessionSurfaceKeyboardDestination';
 import { useEntityDragChooser } from '@/components/ui/treeDragDrop/useEntityDragChooser';
 
@@ -24,11 +25,13 @@ export type SessionSurfaceEntityBinding = Readonly<{
     getItem(): EntityDragItemV1 | null;
     title: string;
     admitWidgetMovement?: (effect: import('@happier-dev/protocol/plugins/ui').EntityDropEffectV1) => import('@happier-dev/protocol/plugins/ui').EntityDropAdmissionV1;
+    widgetMovement?: WidgetEntityMovementPort;
     target?: Omit<EntityDropTarget, 'id' | 'scope' | 'getBounds' | 'isCurrent'>;
     /** Content-coordinate owner supplies current native bounds after scroll/resize. */
     getNativeBounds?: () => WindowBounds | null;
     getCompanionTarget?: () => Readonly<{ itemKey: string; items: readonly SessionCompanionPresentationItemRefV1[] }>;
     getBoardTarget?: () => NonNullable<Parameters<typeof resolveSessionSurfaceIndicatorEdge>[0]['boardTarget']>;
+    getWidgetAreaTarget?: () => NonNullable<Parameters<typeof resolveSessionSurfaceIndicatorEdge>[0]['widgetAreaTarget']>;
     pointerDestination?: (bounds: WindowBounds, pointer: Readonly<{ x: number; y: number }>) => import('@happier-dev/protocol/plugins/ui').PluginUiJsonValueV1;
     keyboardDestination?: (intent: 'previous' | 'next' | 'in' | 'out', selected: EntityDropDestination | null, destinations: readonly EntityDropDestination[]) => EntityDropDestination | null;
 }>;
@@ -81,7 +84,7 @@ export function useSessionSurfaceEntityDrag(binding: SessionSurfaceEntityBinding
                     ? latest.current?.admitWidgetMovement?.(admission.effect) ?? { status: 'refused', reason: { code: 'widget_admission_unavailable', message: t('entityDragDrop.surface.widgetMoveUnavailable') } }
                     : admission;
             },
-            execute: effect => effect.actionId === 'widgets.instance.move' ? executeWidgetEntityMovement(effect, scope)
+            execute: effect => effect.actionId === 'widgets.instance.move' ? (latest.current?.widgetMovement?.execute ?? executeWidgetEntityMovement)(effect, scope)
                 : latest.current?.target?.execute(effect) ?? Promise.resolve({ status: 'refused', reason: { code: 'target-gone', message: t('entityDragDrop.reasons.gone') } }),
             autoscroll: pointer => latest.current?.target?.autoscroll?.(pointer),
             containsPointer: pointer => latest.current?.target?.containsPointer?.(pointer) !== false,
@@ -107,7 +110,8 @@ export function useSessionSurfaceEntityDrag(binding: SessionSurfaceEntityBinding
     }, [runtime, sourceId, targetId]);
     const getCompanionTarget = React.useCallback(() => latest.current?.getCompanionTarget?.(), []);
     const getBoardTarget = React.useCallback(() => latest.current?.getBoardTarget?.(), []);
-    return { runtime, sourceId, targetId, node, ref, gesture, onLayout, refresh, getBounds: bounds, keyboardDestination, getCompanionTarget, getBoardTarget };
+    const getWidgetAreaTarget = React.useCallback(() => latest.current?.getWidgetAreaTarget?.(), []);
+    return { runtime, sourceId, targetId, node, ref, gesture, onLayout, refresh, getBounds: bounds, keyboardDestination, getCompanionTarget, getBoardTarget, getWidgetAreaTarget };
 }
 
 export type SessionSurfaceEntityDrag = ReturnType<typeof useSessionSurfaceEntityDrag>;
@@ -123,14 +127,16 @@ export function useSessionSurfaceGeometryRefresh(refresh: () => void) {
 }
 
 /** Shared grip/chooser/dock; arrows stage the same semantic destination that a pointer resolves. */
-export function SessionSurfaceEntityDragHandle(props: Readonly<{ drag: SessionSurfaceEntityDrag; title: string; testID: string }>) {
+export function SessionSurfaceEntityDragHandle(props: Readonly<{ drag: SessionSurfaceEntityDrag; title: string; testID: string;
+    renderTrigger?: (input: Readonly<{ toggle(): void; grip: React.ReactNode }>) => React.ReactNode;
+}>) {
     const { runtime, sourceId } = props.drag;
     const state = useEntityDragSourceState(runtime, sourceId);
     const chooser = useEntityDragChooser(runtime, sourceId);
     const { open, onOpenChange } = chooser;
     const carry = React.useRef<EntityDragCarry | null>(null);
     const selected = React.useRef<EntityDropDestination | null>(null);
-    const destinations = open || state.active ? runtime.getDestinations(sourceId) : [];
+    const destinations = chooser.destinations;
     const sections = resolveHappierDropChooserSections({ options: destinations.map((destination, index) => ({
         id: String(index), label: destination.label ?? t('entityDragDrop.organize.title'), group: destination.group,
         refusedReason: destination.admission.status === 'refused' ? destination.admission.reason.message : null,
@@ -155,22 +161,27 @@ export function SessionSurfaceEntityDragHandle(props: Readonly<{ drag: SessionSu
         <DropdownMenu open={open} onOpenChange={onOpenChange} selectedId={null} closeOnSelect={false}
             items={sections.flatMap(section => section.options.map(option => ({ id: option.id, title: option.label, subtitle: option.detail, disabled: option.disabled, category: section.title })))}
             onSelect={id => chooser.select(destinations[Number(id)])}
-            trigger={({ toggle }) => <GestureDetector gesture={props.drag.gesture}><Pressable testID={props.testID}
+            trigger={({ toggle }) => {
+                const grip = <GestureDetector gesture={props.drag.gesture}><Pressable testID={props.testID}
                 accessibilityRole="button" accessibilityLabel={t('entityDragDrop.organize.grip', { item: props.title })}
                 onPress={toggle} {...(Platform.OS === 'web' ? { onKeyDown, tabIndex: 0, 'aria-grabbed': state.active } : {})}>
                 <EntityDragGrip active={state.active} accessibilityLabel={t('entityDragDrop.organize.grip', { item: props.title })} />
-            </Pressable></GestureDetector>} />
+                </Pressable></GestureDetector>;
+                return props.renderTrigger ? props.renderTrigger({ toggle, grip }) : grip;
+            }} />
     </>;
 }
 
-export function SessionSurfaceEntityFeedback(props: Readonly<{ kind: 'session-board-item' | 'companion-item' | 'home-section'; scope: EntityDragScopeV1 | null; address: import('@/sync/domains/session/sessionAddress').SessionAddress | null; testID: string }>) {
+export function SessionSurfaceEntityFeedback(props: Readonly<{ kind: 'session-board-item' | 'companion-item' | 'home-section' | 'widget-area-instance'; scope: EntityDragScopeV1 | null; address: import('@/sync/domains/session/sessionAddress').SessionAddress | null; widgetSurface?: import('@happier-dev/protocol/widgets').WidgetSurfaceRefV1; testID: string }>) {
     const runtime = useEntityDragDropRuntime();
     // Leaf-only semantic subscription: neither the Board nor the rail subscribes to pointer frames.
     const snapshot = useEntityDragDropSnapshot(runtime);
     if ((snapshot.phase !== 'carrying' && snapshot.phase !== 'pending' && snapshot.phase !== 'settled')
         || snapshot.item?.kind !== props.kind || !props.scope
         || snapshot.item.scope.serverId !== props.scope.serverId || snapshot.item.scope.accountId !== props.scope.accountId
-        || snapshot.item.kind !== 'home-section' && (!('address' in snapshot.item) || !props.address || snapshot.item.address.sessionId !== props.address.sessionId)
+        || (snapshot.item.kind === 'widget-area-instance'
+        ? !props.widgetSurface || !sameStrictJsonValue(snapshot.item.ref.surface, props.widgetSurface)
+            : snapshot.item.kind !== 'home-section' && (!('address' in snapshot.item) || !props.address || snapshot.item.address.sessionId !== props.address.sessionId))
         || runtime.getPointer() !== null || !snapshot.admission) return null;
     const admission = snapshot.admission;
     const copy = admission.status === 'allowed' && admission.effect.actionId === 'session.presentation.apply'
@@ -200,7 +211,8 @@ export function SessionSurfaceEntityTargetFeedback(props: Readonly<{ drag: Sessi
     const pointer = props.drag.runtime.getPointer();
     const companionTarget = props.drag.getCompanionTarget();
     const boardTarget = props.drag.getBoardTarget();
-    const edge = resolveSessionSurfaceIndicatorEdge({ effect, bounds, pointer, ...(companionTarget ? { companionTarget } : {}), ...(boardTarget ? { boardTarget } : {}) });
+    const widgetAreaTarget = props.drag.getWidgetAreaTarget();
+    const edge = resolveSessionSurfaceIndicatorEdge({ effect, bounds, pointer, ...(companionTarget ? { companionTarget } : {}), ...(boardTarget ? { boardTarget } : {}), ...(widgetAreaTarget ? { widgetAreaTarget } : {}) });
     const outline = isCopy || effect.actionId === 'widgets.instance.move' && !edge;
     if (!outline && !edge) return null;
     return <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>

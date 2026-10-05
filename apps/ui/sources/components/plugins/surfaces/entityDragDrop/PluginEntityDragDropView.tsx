@@ -9,7 +9,7 @@ import { usePluginUiClientExecutableRegistrationRevision } from '@/components/pl
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
 import { describeSessionListDropOutcome } from '@/components/sessions/shell/dropPreview/sessionListDropPresentation';
 import { createEntityDragGestureAdapter, ENTITY_DRAG_ACTIVATION_DISTANCE_PX } from '@/components/ui/treeDragDrop/entityDragGestureAdapter';
-import { useEntityDragSourceState, useEntityDropTargetState } from '@/components/ui/treeDragDrop/entityDragDropHooks';
+import { useEntityDragDestinations, useEntityDragSourceState, useEntityDropTargetState } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { isSecondaryEntityRowControl, useEntityDragDomBinding, useEntityDropDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
 import { measureWindowBounds, readWindowBounds, toTreeDropMeasurableRef } from '@/components/ui/treeDragDrop/registry/measureWindowBounds';
 import { EntityDragGrip, EntityStagedMoveDock } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
@@ -63,11 +63,6 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
     const pointerInteraction = Platform.OS === 'web' && isHoverCapablePrimaryPointer();
     const enabled = source !== null && props.disabled !== true;
     const [chooserOpen, setChooserOpen] = React.useState(false);
-    const [, refreshChooser] = React.useReducer((revision: number) => revision + 1, 0);
-    React.useEffect(() => {
-        // Membership notifications preserve the carry snapshot; only an open chooser needs to reread destinations.
-        if (chooserOpen) return runtime.subscribe(refreshChooser);
-    }, [runtime, chooserOpen]);
     const [selected, setSelected] = React.useState<EntityDropDestination | null>(null);
     const keyboardCarry = React.useRef<EntityDragCarry | null>(null);
     const gestureAdapter = React.useRef<ReturnType<typeof createEntityDragGestureAdapter> | null>(null);
@@ -105,7 +100,7 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
         if (props.organizing !== true) gestureAdapter.current?.cancel();
     }, [props.organizing]);
 
-    const destinations = chooserOpen ? runtime.getDestinations(sourceId) : [];
+    const destinations = useEntityDragDestinations(runtime, sourceId, chooserOpen);
     const sections = resolveHappierDropChooserSections({ options: destinations.map((destination, index) => ({
         id: String(index), label: destination.label ?? (destination.admission.status === 'allowed'
             ? destination.admission.effect.preview.verb : destination.admission.reason.message),
@@ -113,8 +108,8 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
     })), unavailableTitle: t('entityDragDrop.chooser.unavailable') });
     const onKeyDown = (event: React.KeyboardEvent) => {
         if (!enabled || event.defaultPrevented) return;
-        const target = event.target instanceof Element ? event.target : null;
-        if (target?.closest('input,textarea,select,[contenteditable="true"]')) return;
+        // This named entry owns staged movement; primary and secondary child controls keep activation.
+        if (event.target !== event.currentTarget) return;
         const carrying = runtime.getSnapshot().sourceId === sourceId && runtime.getSnapshot().phase === 'carrying';
         const intent = resolveHappierStagedMoveKey({ key: event.key, repeat: event.repeat, staged: carrying, rtl: I18nManager.isRTL });
         if (!intent) return;
@@ -149,7 +144,7 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
         </Pressable></GestureDetector>} /> : null;
     return <View ref={attachDrag} testID={props.testID}
         style={{ opacity: state.active ? HAPPIER_CARRIED_SOURCE_OPACITY : 1 }}
-        {...(Platform.OS === 'web' ? { onKeyDown } : {})}>
+        {...(Platform.OS === 'web' ? { onKeyDown, tabIndex: enabled ? 0 : undefined, role: 'group' as const, accessibilityLabel: label } : {})}>
         <View style={grip ? { flexDirection: 'row', alignItems: 'center' } : undefined}>{grip}<View style={grip ? { flex: 1, minWidth: 0 } : undefined}>{props.children}</View></View>
         <PluginSourceStagedFeedback binding={binding} sourceId={sourceId} testID={props.testID} />
     </View>;

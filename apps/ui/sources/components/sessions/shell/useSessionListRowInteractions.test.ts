@@ -140,7 +140,7 @@ describe('useSessionListRowInteractions', () => {
         getStorage().setState({ profileScope: scope } as never);
         const nativeItems = twoSessionListItems.map(item => ({ ...item, serverId: scope.serverId,
             workspace: { ...workspace, serverId: scope.serverId } }));
-        const setOrder = vi.fn(async () => {});
+        const setOrder = vi.fn(async (_next: Record<string, string[]>) => {});
         const initialInput = buildInteractionsInput({ listItems: nativeItems, setSessionListGroupOrderV1: setOrder });
         const hook = await renderHook(
             (input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input),

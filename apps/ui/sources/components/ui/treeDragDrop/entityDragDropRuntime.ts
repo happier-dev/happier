@@ -62,9 +62,10 @@ export function createEntityDragDropRuntime(options: Readonly<{
         if (snapshot.phase === next.phase && snapshot.sourceId === next.sourceId
             && snapshot.targetId === next.targetId && snapshot.item === next.item
             && JSON.stringify(snapshot.admission) === JSON.stringify(next.admission)
-            && snapshot.outcome === next.outcome) return;
+            && snapshot.outcome === next.outcome) return false;
         snapshot = next;
         notify();
+        return true;
     };
     const cancel = (_reason?: string) => {
         if (carry?.dispatched || snapshot.phase === 'pending') return;
@@ -147,7 +148,7 @@ export function createEntityDragDropRuntime(options: Readonly<{
         }
         return selected;
     };
-    const refresh = () => {
+    const refresh = (notifyDestinations = false) => {
         const active = carry;
         if (!active || active.dispatched) return;
         if (!sourceCurrent(active)) { cancel('source-retired'); return; }
@@ -156,8 +157,11 @@ export function createEntityDragDropRuntime(options: Readonly<{
         active.selected = target;
         const admission = target ? resolve(active, target) : null;
         if (carry !== active) return;
-        publish({ phase: 'carrying', item: active.item, sourceId: active.source.id,
-            targetId: target?.id ?? null, admission, outcome: null });
+        if (!publish({ phase: 'carrying', item: active.item, sourceId: active.source.id,
+            targetId: target?.id ?? null, admission, outcome: null }) && notifyDestinations) {
+            // A chooser has no selected target yet; current destination admission can still change.
+            notify();
+        }
     };
     const matchingMeasurementTargets = (active: Carry) => active.input === 'pointer' ? [...targets.values()].filter(target =>
         targetCurrent(target) && accepts(target, active.item)
@@ -286,7 +290,7 @@ export function createEntityDragDropRuntime(options: Readonly<{
             };
         },
         begin: (sourceId, input = 'pointer') => start(sourceId, input),
-        move, choose, release, cancel, refresh, refreshMeasurements,
+        move, choose, release, cancel, refresh: () => refresh(true), refreshMeasurements,
         autoscroll: () => {
             refresh();
             if (carry && !carry.dispatched && pointer && snapshot.admission?.status === 'allowed') carry.selected?.autoscroll?.(pointer);

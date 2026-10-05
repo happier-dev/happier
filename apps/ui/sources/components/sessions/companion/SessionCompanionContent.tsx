@@ -658,7 +658,7 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
             : { status: 'refused', reason: { code: outcome.status, message: t(outcome.status === 'unchanged' ? 'entityDragDrop.reasons.noChange' : 'entityDragDrop.reasons.gone') } };
     }, [props.session.id]);
     const target = (key?: string): NonNullable<SessionSurfaceEntityBinding['target']> => ({
-        acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget'],
+        acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget', 'widget-area-instance'],
         listDestinations: item => {
             const source = item.kind === 'session-board-item' ? liveDrop.current.board?.itemsById.get(item.itemId)?.state : null;
             return key === undefined

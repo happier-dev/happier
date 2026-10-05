@@ -192,7 +192,7 @@ const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
     const [focused, setFocused] = React.useState(false);
     const chooser = useEntityDragChooser(runtime, sourceId, () => latest.current.onPlaced?.());
     const chooserOpen = chooser.open;
-    const destinations = chooserOpen ? runtime.getDestinations(sourceId) : [];
+    const destinations = chooser.destinations;
     const sections = resolveHappierDropChooserSections({ options: destinations.map((destination, index) => ({
         id: String(index), label: destination.label ?? t('entityDragDrop.organize.title'), group: destination.group,
         refusedReason: destination.admission.status === 'refused' ? destination.admission.reason.message : null,

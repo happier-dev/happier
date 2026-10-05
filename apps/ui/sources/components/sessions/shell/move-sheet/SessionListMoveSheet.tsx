@@ -18,8 +18,22 @@ export function SessionListMoveSheet(props: SessionListMoveSheetProps): React.Re
     const chooser = useEntityDragChooser(props.runtime, props.sourceId);
     useEntityDragDropSnapshot(props.runtime);
     const onOpenChange = chooser.onOpenChange;
-    React.useEffect(() => { onOpenChange(true); }, [onOpenChange]);
-    const destinations = props.runtime.getDestinations(props.sourceId);
+    const selecting = React.useRef(false);
+    const cancelled = React.useRef(false);
+    const onCancel = React.useRef(props.onCancel);
+    onCancel.current = props.onCancel;
+    React.useEffect(() => {
+        onOpenChange(true);
+        const retire = () => {
+            const current = props.runtime.getSnapshot();
+            if (selecting.current || cancelled.current || current.sourceId === props.sourceId) return;
+            cancelled.current = true;
+            onCancel.current();
+        };
+        retire();
+        return props.runtime.subscribe(retire);
+    }, [onOpenChange, props.runtime, props.sourceId]);
+    const destinations = chooser.destinations;
     const sections = resolveHappierDropChooserSections({
         options: destinations.map((destination, index) => ({
             id: String(index), label: destination.label ?? (destination.admission.status === 'allowed'
@@ -36,7 +50,15 @@ export function SessionListMoveSheet(props: SessionListMoveSheetProps): React.Re
             options: section.options.map(option => ({ id: option.id, label: option.label, subtitle: option.detail, disabled: option.disabled })) })),
     };
     return <SelectionList rootStep={rootStep}
-        onSelect={id => { void chooser.select(destinations[Number(id)]).then(outcome => { if (outcome) props.onComplete?.(outcome); }); }}
+        onSelect={id => {
+            const destination = destinations[Number(id)];
+            if (destination?.admission.status !== 'allowed') return;
+            selecting.current = true;
+            void chooser.select(destination).then(outcome => {
+                selecting.current = false;
+                props.onComplete?.(outcome);
+            });
+        }}
         onRequestClose={() => { onOpenChange(false); props.onCancel(); }}
         keyboardHintsEnabled={false} disableTransitions testID="session-list-move-sheet" />;
 }

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps, type PluginJsonSchemaV2 } from '@happier-dev/protocol';
-import { createPluginWidgetAreaHostPortV1 } from '@happier-dev/protocol/plugins/ui';
+import { createPluginWidgetAreaHostPortV1, PluginUiWidgetAreaResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 import {
     createWidgetActionInputResolverV1, createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1,
     type WidgetInstanceV1, type WidgetSurfaceRefV1,
@@ -20,6 +20,7 @@ import { createPluginUiPrivatePresentationHost } from '@/components/plugins/surf
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { CardGridCell } from '@/components/ui/cardGrid/CardGrid';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
 
 import { DeclarativePluginSurface } from '@/components/plugins/surfaces/DeclarativePluginSurface';
@@ -27,7 +28,11 @@ import { createDeclarativeWidgetAreaRender } from '@/components/plugins/surfaces
 import { PluginDeclarativeProjectedModelV1Schema } from '@happier-dev/protocol';
 
 import { PluginPageWidgetArea } from './PluginPageWidgetArea';
-import { ProjectAsideWidgets } from './ProjectWidgetArea';
+import { ProjectAsideWidgets, ProjectWidgetArea } from './ProjectWidgetArea';
+import { SessionSurfaceEntityDragHandle } from '@/components/sessions/board/SessionSurfaceEntityDrag';
+import { storage } from '@/sync/domains/state/storage';
+import { projectWidgetEntityMovementResult, readWidgetEntityMovementAdmission } from '@/sync/ops/actions/widgetEntityMovement';
+import type { WidgetAreaPort } from './useWidgetAreaLayout';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -37,10 +42,9 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 // The signed-in viewer is the area's Account: a widget never reads for another viewer.
 const viewer = vi.hoisted(() => Object.freeze({ serverId: 'home', accountId: 'viewer' }));
-vi.mock('@/sync/domains/state/storage', async () => (await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({
+vi.mock('@/sync/domains/state/storage', async importOriginal => (await import('@/dev/testkit/mocks/storage')).createPartialStorageModuleMock(importOriginal, {
     useActiveServerAccountScope: () => viewer,
 }));
-vi.mock('@/sync/store/hooks', async () => await import('@/sync/domains/state/storage'));
 vi.mock('@react-navigation/native', async () => ({
     ...(await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock(),
     useIsFocused: () => true,
@@ -137,9 +141,130 @@ async function runAction(screen: Awaited<ReturnType<typeof renderScreen>>, id: s
     await flushHookEffects({ cycles: 4 });
 }
 
-afterEach(() => { standardCleanup(); });
+afterEach(() => { standardCleanup(); storage.setState({ artifacts: {} }); });
+
+/**
+ * Public Project-aside fixture: explicit portable identities and the already-injected upstream
+ * Artifact/Action owner, not a Workspace pretending to be the production Project Source producer.
+ */
+function projectMovementFixture() {
+    const boundary = createWorkBoardArtifactBoundary({ v: 1, boards: [] });
+    const accountTransport = boundary.forAccount(scope.accountId);
+    const publish = async (id: string) => {
+        const row = await accountTransport.read(id);
+        if (row) storage.getState().updateArtifact({ id, title: null, headerVersion: row.revision.headerVersion,
+            bodyVersion: row.revision.bodyVersion, seq: row.revision.bodyVersion, createdAt: 0, updatedAt: row.revision.bodyVersion,
+            isDecrypted: true, access: 'owner', ownerAccountId: scope.accountId });
+    };
+    const transport = { ...accountTransport,
+        create: async (input: Parameters<typeof accountTransport.create>[0]) => { const row = await accountTransport.create(input); await publish(input.artifactId); return row; },
+        update: async (input: Parameters<typeof accountTransport.update>[0]) => { const result = await accountTransport.update(input); if (result.ok) await publish(input.artifactId); return result; },
+    };
+    const area = createWidgetAreaActionPortV1(ref => createWidgetSurfaceArtifactPortV1(transport, { surface: ref, isCurrent: () => true }));
+    const widgetInputs = createWidgetActionInputResolverV1({
+        readDescriptor: async () => ({ inputs: { fields }, inputSchema }), readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+        validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
+    });
+    const deps: ActionExecutorDeps = { widgetAccountScope: () => scope, widgetSurfaceActions: { project: area }, widgetInputs };
+    const executor = createActionExecutor(deps);
+    const context = { surface: 'ui' as const, bypassApprovals: true, serverId: scope.serverId, expectedAccountId: scope.accountId };
+    const bind = (projectId: string) => {
+        const ref: WidgetSurfaceRefV1 = { ...scope, owner: { kind: 'project', projectId } };
+        const port: WidgetAreaPort = {
+            execute: async (operation, signal) => {
+                if (operation.actionId !== 'widgets.instance.list') throw new Error('fixture layout writes use its real Artifact owner');
+                return PluginUiWidgetAreaResultV1Schema.parse(await executor.execute(operation.actionId, { surface: ref }, { ...context, signal }));
+            },
+            movement: {
+                readAdmission: (source, destination, signal) => readWidgetEntityMovementAdmission(deps, source, destination, { ...context, signal }),
+                execute: async effect => projectWidgetEntityMovementResult(await executor.execute(effect.actionId, effect.input, context), effect),
+            },
+        };
+        return { surface: ref, port, store: createWidgetSurfaceArtifactPortV1(transport, { surface: ref, isCurrent: () => true }) };
+    };
+    return { first: bind('portable-project-a'), second: bind('portable-project-b') };
+}
 
 describe('a plugin page widget area', () => {
+    it('revalidates the Project-aside anchor against publication during a carry and cancellation never writes', async () => {
+        const fixture = projectMovementFixture();
+        const tail = { ...pin, id: 'tail' };
+        for (const instance of [pin, follow, tail]) await fixture.first.store.apply({ kind: 'add', instance });
+        const screen = await renderScreen(<ProjectWidgetArea projectName="Project A" port={fixture.first.port} context={{ slots: {} }} testID="project-a" />);
+        await flushHookEffects({ cycles: 4 });
+        const drag = screen.root.findAllByType(SessionSurfaceEntityDragHandle)[0]!.props.drag;
+        let carry: ReturnType<typeof drag.runtime.begin>;
+        await act(async () => { carry = drag.runtime.begin(drag.sourceId, 'keyboard'); });
+        await flushHookEffects({ cycles: 4 });
+        const destination = drag.runtime.getDestinations(drag.sourceId).find((entry: { destination?: { anchorId?: string; placement?: string } }) =>
+            entry.destination?.anchorId === follow.id && entry.destination.placement === 'after');
+        expect(destination?.admission).toMatchObject({ status: 'allowed' });
+        await act(async () => {
+            carry?.choose(destination!.targetId, destination!.destination);
+            await fixture.first.store.apply({ kind: 'move', instanceId: follow.id, toIndex: 2 });
+        });
+        await flushHookEffects({ cycles: 4 });
+        await act(async () => { expect((await carry?.release())?.status).toBe('applied'); });
+        await flushHookEffects({ cycles: 4 });
+        expect((await fixture.first.store.read()).instances.map(entry => entry.instance.id)).toEqual(['tail', 'follow', 'pin']);
+        const mounted = screen.root.findAllByType(SessionSurfaceEntityDragHandle)[0]!.props.drag;
+        await act(async () => {
+            const cancelled = mounted.runtime.begin(mounted.sourceId, 'keyboard');
+            cancelled?.choose(destination!.targetId, destination!.destination);
+            cancelled?.cancel();
+            await cancelled?.release();
+        });
+        expect((await fixture.first.store.read()).instances.map(entry => entry.instance.id)).toEqual(['tail', 'follow', 'pin']);
+    });
+    it('moves a public Project-aside copy through chooser admission and the upstream owner, refreshing both mounted areas', async () => {
+        const fixture = projectMovementFixture();
+        await fixture.first.store.apply({ kind: 'add', instance: pin });
+        const screen = await renderScreen(<>
+            <ProjectWidgetArea projectName="Project A" port={fixture.first.port} context={{ slots: {} }} testID="project-a" />
+            <ProjectWidgetArea projectName="Project B" port={fixture.second.port} context={{ slots: {} }} testID="project-b" />
+        </>);
+        await flushHookEffects({ cycles: 4 });
+        const drag = screen.root.findByType(SessionSurfaceEntityDragHandle).props.drag;
+        await act(async () => {
+            const menu = screen.findByTestId('project-a.widget.pin.menu')!.findByType(ItemRowActions);
+            menu.props.actions.find((entry: { id: string }) => entry.id === 'moveTo').onPress();
+            // The real overlay waits for menu teardown before beginning its chooser carry.
+            await vi.waitFor(() => expect(drag.runtime.getSnapshot().phase).toBe('carrying'));
+        });
+        await flushHookEffects({ cycles: 4 });
+        const destinations = drag.runtime.getDestinations(drag.sourceId);
+        const index = destinations.findIndex((entry: { group?: string }) => entry.group === 'Project B');
+        const destination = destinations[index];
+        expect(destination?.admission).toMatchObject({ status: 'allowed' });
+        await act(async () => {
+            const chooser = screen.root.findByType(SessionSurfaceEntityDragHandle).findByType(DropdownMenu);
+            expect((await chooser.props.onSelect(String(index)))?.status).toBe('applied');
+        });
+        await flushHookEffects({ cycles: 4 });
+        expect((await fixture.first.store.read()).instances).toEqual([]);
+        expect((await fixture.second.store.read()).instances.map(entry => entry.instance)).toEqual([pin]);
+        expect(screen.findByTestId('project-a.widget.pin')).toBeNull();
+        expect(screen.findByTestId('project-b.widget.pin')).not.toBeNull();
+        const destinationDrag = screen.root.findByType(SessionSurfaceEntityDragHandle).props.drag;
+        await act(async () => { destinationDrag.runtime.begin(destinationDrag.sourceId, 'keyboard'); });
+        standardCleanup();
+        expect(destinationDrag.runtime.getSnapshot().phase).toBe('idle');
+        expect((await fixture.second.store.read()).instances.map(entry => entry.instance)).toEqual([pin]);
+    });
+    it('mounts a qualified shared carry and retires it when the public page area unmounts', async () => {
+        const area = createArea();
+        await area.store.apply({ kind: 'add', instance: pin });
+        const screen = await renderScreen(page(area.hostApi, 'happier'));
+        await flushHookEffects({ cycles: 4 });
+        const handles = screen.root.findAllByType(SessionSurfaceEntityDragHandle);
+        expect(handles).toHaveLength(1);
+        const drag = handles[0]!.props.drag;
+        await act(async () => { expect(drag.runtime.begin(drag.sourceId, 'keyboard')).not.toBeNull(); });
+        expect(drag.runtime.getSnapshot().item).toEqual({ kind: 'widget-area-instance', scope, ref: { surface, instanceId: pin.id } });
+        standardCleanup();
+        expect(drag.runtime.getSnapshot().phase).toBe('idle');
+        expect((await area.store.read()).instances.map(entry => entry.instance)).toEqual([pin]);
+    });
     it('refuses a generic placement width that the canonical area layout cannot persist', async () => {
         const area = createArea();
         // The mounted Host API transport is the external boundary; its generic DTO can carry Board widths.

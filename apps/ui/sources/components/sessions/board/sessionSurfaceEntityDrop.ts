@@ -67,7 +67,7 @@ export function resolveSessionBoardEntityDrop(input: Context & Readonly<{ viewId
 /** Ordinary Keep beside chat copies a reference; configured copies delegate movement to the widget Action. */
 export function resolveSessionCompanionEntityDrop(input: Context & Readonly<{ items: readonly SessionCompanionPresentationItemRefV1[]; ready: boolean; anchor?: Readonly<{ side: 'before' | 'after'; itemKey: string }> }>): EntityDropAdmissionV1 {
     const configuredRef = widgetEntitySourceRef(input.item);
-    if (configuredRef && (input.item.kind === 'home-section' || input.item.kind === 'work-board-widget' || input.item.kind === 'companion-item' && input.item.address.sessionId !== input.address.sessionId
+    if (configuredRef && (input.item.kind === 'widget-area-instance' || input.item.kind === 'home-section' || input.item.kind === 'work-board-widget' || input.item.kind === 'companion-item' && input.item.address.sessionId !== input.address.sessionId
         || input.item.kind === 'session-board-item' && input.item.address.sessionId !== input.address.sessionId && input.widgetSourceRef)) {
         if (!entityDragScopesEqualV1(input.item.scope, input.scope)) return sessionSurfaceDropRefused('scope-mismatch');
         if (!input.ready) return sessionSurfaceDropRefused('companion-unavailable');

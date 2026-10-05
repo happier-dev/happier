@@ -154,10 +154,10 @@ describe('useSessionInlineDrag', () => {
         const gesture = hook.getCurrent().gesture as unknown as MockGesture;
         await act(async () => { gesture.handlers.onStart?.(); gesture.handlers.onUpdate?.({ absoluteX: 18, absoluteY: 64 }); });
         await hook.rerender();
-        expect(hook.getCurrent().animatedStyle.opacity).toBe(HAPPIER_CARRIED_SOURCE_OPACITY);
+        expect(hook.getCurrent().animatedStyle).toMatchObject({ opacity: HAPPIER_CARRIED_SOURCE_OPACITY });
         await act(async () => { runtime.cancel('window-blur'); });
         await hook.rerender();
-        expect(hook.getCurrent().animatedStyle.opacity).toBe(1);
+        expect(hook.getCurrent().animatedStyle).toMatchObject({ opacity: 1 });
         retire();
         await hook.unmount();
     });

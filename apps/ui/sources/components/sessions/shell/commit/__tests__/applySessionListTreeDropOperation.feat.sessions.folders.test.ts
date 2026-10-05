@@ -255,7 +255,7 @@ describe('applySessionListTreeDropOperation', () => {
             y: 180,
         });
         let assignmentCompleted = false;
-        const setSessionListGroupOrderV1 = vi.fn(() => {
+        const setSessionListGroupOrderV1 = vi.fn(async () => {
             expect(assignmentCompleted).toBe(true);
         });
 

@@ -1,11 +1,11 @@
 import * as React from 'react';
 import type { WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop';
-import { admitWidgetEntityMovement, widgetEntitySourceRef, type WidgetEntityMovementAdmission } from '@/sync/ops/actions/widgetEntityMovement';
+import { admitWidgetEntityMovement, widgetEntitySourceRef, type WidgetEntityMovementAdmission, type WidgetEntityMovementPort } from '@/sync/ops/actions/widgetEntityMovement';
 import type { EntityDropEffectV1 } from '@happier-dev/protocol/plugins/ui';
 
 /** One read-only projection per mounted destination surface; pointer frames never trigger reads. */
-export function useWidgetMovementAdmission(surface: WidgetSurfaceRefV1 | null, basis: unknown) {
+export function useWidgetMovementAdmission(surface: WidgetSurfaceRefV1 | null, basis: unknown, port?: WidgetEntityMovementPort) {
     const runtime = useEntityDragDropRuntime();
     const item = React.useSyncExternalStore(runtime.subscribe, () => runtime.getSnapshot().phase === 'carrying' ? runtime.getSnapshot().item : null, () => null);
     const ref = item ? widgetEntitySourceRef(item) : null;
@@ -15,11 +15,13 @@ export function useWidgetMovementAdmission(surface: WidgetSurfaceRefV1 | null, b
         if (!key || !ref || !surface) return;
         const abort = new AbortController();
         setCurrent(null);
-        void import('@/sync/ops/actions/defaultActionExecutor').then(module => module.readDefaultWidgetMovementAdmission(ref, surface, abort.signal))
+        const read = port ? port.readAdmission(ref, surface, abort.signal)
+            : import('@/sync/ops/actions/defaultActionExecutor').then(module => module.readDefaultWidgetMovementAdmission(ref, surface, abort.signal));
+        void read
             .then(admission => { if (!abort.signal.aborted) setCurrent({ key, basis, admission }); })
             .catch(() => { if (!abort.signal.aborted) setCurrent({ key, basis, admission: { status: 'refused', code: 'widget_admission_unavailable' } }); });
         return () => abort.abort();
-    }, [key, basis]);
+    }, [key, basis, port]);
     React.useEffect(() => { runtime.refresh(); }, [runtime, current]);
     const admission = current?.key === key && current.basis === basis ? current.admission : null;
     const admit = React.useCallback((effect: EntityDropEffectV1) => admitWidgetEntityMovement(effect, admission), [admission]);

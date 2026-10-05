@@ -80,6 +80,8 @@ function CarriedCardPosition(props: EntityDragCarriedPreviewProps): React.ReactE
     const placement = touch
         ? { left: TOUCH_CARD_INSET_PX, top: Math.max(0, point.y - TOUCH_CARD_LIFT_PX), side: 'right' as const }
         : resolveHappierCarriedPreviewPlacement({ pointer: point, size, viewport });
+    const placementRef = React.useRef(placement);
+    placementRef.current = placement;
     const returnX = useSharedValue(0);
     const returnY = useSharedValue(0);
     const opacity = useSharedValue(1);
@@ -105,8 +107,8 @@ function CarriedCardPosition(props: EntityDragCarriedPreviewProps): React.ReactE
                 if (finished) scheduleOnRN(finish);
             });
         } else {
-            returnX.value = withSpring(bounds.x - placement.left, reanimatedMotionTokens.spring.travel);
-            returnY.value = withSpring(bounds.y - placement.top, reanimatedMotionTokens.spring.travel, (finished) => {
+            returnX.value = withSpring(bounds.x - placementRef.current.left, reanimatedMotionTokens.spring.travel);
+            returnY.value = withSpring(bounds.y - placementRef.current.top, reanimatedMotionTokens.spring.travel, (finished) => {
                 'worklet';
                 if (finished) scheduleOnRN(finish);
             });
@@ -116,7 +118,7 @@ function CarriedCardPosition(props: EntityDragCarriedPreviewProps): React.ReactE
             cancelAnimation(returnY);
             cancelAnimation(opacity);
         };
-    }, [opacity, placement.left, placement.top, props.runtime, reducedMotion, returnX, returnY, returning, snapshot]);
+    }, [opacity, props.runtime, reducedMotion, returnX, returnY, returning, snapshot]);
     const animatedStyle = useAnimatedStyle(() => ({
         transform: [{ translateX: returnX.value }, { translateY: returnY.value }],
         opacity: opacity.value,

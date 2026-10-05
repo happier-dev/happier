@@ -15,7 +15,7 @@ import { usePopoverScrollSourceRef } from '@/components/ui/popover/PopoverScroll
 import { t } from '@/text';
 import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { createEntityDragGestureAdapter, ENTITY_DRAG_ACTIVATION_DISTANCE_PX } from '../entityDragGestureAdapter';
-import { useEntityDragDropRuntime, useEntityDragDropSnapshot, useEntityDragSource, useEntityDragSourceState, useEntityDropTarget } from '../entityDragDropHooks';
+import { useEntityDragDestinations, useEntityDragDropRuntime, useEntityDragDropSnapshot, useEntityDragSource, useEntityDragSourceState, useEntityDropTarget } from '../entityDragDropHooks';
 import type { EntityDragDropRuntime, EntityDragCarry } from '../entityDragDropTypes';
 import { useTreeDropRegistry } from '../registry/useTreeDropRegistry';
 import { measureWindowBounds, readWindowBounds } from '../registry/measureWindowBounds';
@@ -315,7 +315,7 @@ function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow>
             keyboardCarry.current?.choose(rowTargetId(context, position.anchorId ?? id), position);
         }
     };
-    const destinations = chooserOpen ? runtime.getDestinations(sourceId).filter(destination => context.binding.items.some(item => rowTargetId(context, item.id) === destination.targetId)) : [];
+    const destinations = useEntityDragDestinations(runtime, sourceId, chooserOpen).filter(destination => context.binding.items.some(item => rowTargetId(context, item.id) === destination.targetId));
     const sections = resolveHappierDropChooserSections({ options: destinations.map((destination, index) => ({
         id: String(index), label: destination.label ?? t('entityDragDrop.organize.title'),
         refusedReason: destination.admission.status === 'refused' ? destination.admission.reason.message : null,

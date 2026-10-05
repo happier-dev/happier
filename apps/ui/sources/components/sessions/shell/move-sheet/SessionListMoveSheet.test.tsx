@@ -6,6 +6,18 @@ import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop';
 import { SessionListMoveSheet } from './SessionListMoveSheet';
 
 describe('SessionListMoveSheet runtime destinations', () => {
+    it('retires an open chooser when its canonical carry is cancelled externally', async () => {
+        const runtime = createEntityDragDropRuntime();
+        const scope = { serverId: 'home', accountId: 'account' };
+        runtime.registerSource({ id: 'source', scope, getItem: () => ({ kind: 'session', scope,
+            address: { serverId: 'home', sessionId: 'session' } }), isCurrent: () => true });
+        const onCancel = vi.fn();
+        const screen = await renderScreen(<SessionListMoveSheet sourceLabel="Session" runtime={runtime} sourceId="source" onCancel={onCancel} />);
+        expect(onCancel).not.toHaveBeenCalled();
+        await act(async () => runtime.cancel('account-retired'));
+        expect(onCancel).toHaveBeenCalledOnce();
+        await screen.unmount();
+    });
     it('offers a mounted pane and its refusal, then executes the selected destination through the owner', async () => {
         const runtime = createEntityDragDropRuntime();
         const scope = { serverId: 'home', accountId: 'account' };

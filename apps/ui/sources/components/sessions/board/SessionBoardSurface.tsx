@@ -683,7 +683,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
             }
             return null;
         },
-        target: { acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget'],
+        target: { acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget', 'widget-area-instance'],
             listDestinations: () => (controller.snapshot?.views ?? []).filter(view => !view.synthetic).map(view => ({ destination: { viewId: view.id }, label: resolveSessionBoardViewTitle(view), group: t('sessionBoard.views.label') })),
             resolve: ({ item, destination }) => {
                 const parsed = SessionBoardViewDestinationSchema.safeParse(destination);
@@ -981,7 +981,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                         translationY: pointer.y - viewport.y - gridContentY.current + scrollOffsetY.current - sourceRect.y - sourceRect.height / 2 });
                     return anchor ? { ...anchor, viewId: activeView.id } : null;
                 },
-                target: { acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget'] as const,
+                target: { acceptedKinds: ['session-board-item', 'companion-item', 'home-section', 'work-board-widget', 'widget-area-instance'] as const,
                     containsPointer: pointer => {
                         const viewport = readWindowBounds(sessionSurfaceMeasurable(scrollRef.current)) ?? scrollWindow.current;
                         return !!viewport && pointer.y >= viewport.y && pointer.y <= viewport.y + viewport.height && pointer.x >= viewport.x && pointer.x <= viewport.x + viewport.width;

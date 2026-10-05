@@ -14,6 +14,7 @@ export function resolveSessionSurfaceIndicatorEdge(input: Readonly<{
     pointer: WindowPointer | null;
     companionTarget?: Readonly<{ itemKey: string; items: readonly SessionCompanionPresentationItemRefV1[] }>;
     boardTarget?: Readonly<{ surface: WidgetSurfaceRefV1; tabId: string; itemId: string; itemIds: readonly string[] }>;
+    widgetAreaTarget?: Readonly<{ surface: WidgetSurfaceRefV1; itemId: string; itemIds: readonly string[] }>;
 }>): 'top' | 'bottom' | null {
     if (input.effect.actionId === 'session.board.layout.update') {
         const parsed = SessionBoardLayoutUpdateInputV1Schema.safeParse(input.effect.input);
@@ -51,6 +52,17 @@ export function resolveSessionSurfaceIndicatorEdge(input: Readonly<{
             if (!sameStrictJsonValue(to.surface, target.surface) || to.tabId !== target.tabId) return null;
             const remaining = sameStrictJsonValue(ref.surface, to.surface)
                 ? target.itemIds.filter(id => id !== ref.instanceId) : target.itemIds;
+            const index = remaining.indexOf(target.itemId);
+            return index < 0 ? null : to.index <= index ? 'top' : 'bottom';
+        }
+    }
+    if (input.effect.actionId === 'widgets.instance.move' && input.widgetAreaTarget) {
+        const move = WidgetInstanceActionInputSchemasV1['widgets.instance.move'].safeParse(input.effect.input);
+        if (move.success && 'to' in move.data) {
+            const { ref, to } = move.data;
+            const target = input.widgetAreaTarget;
+            if (!sameStrictJsonValue(to.surface, target.surface)) return null;
+            const remaining = sameStrictJsonValue(ref.surface, to.surface) ? target.itemIds.filter(id => id !== ref.instanceId) : target.itemIds;
             const index = remaining.indexOf(target.itemId);
             return index < 0 ? null : to.index <= index ? 'top' : 'bottom';
         }

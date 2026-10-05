@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { sameStrictJsonValue } from '@happier-dev/protocol';
 import type { PluginUiWidgetAreaOperationV1, PluginUiWidgetAreaResultV1 } from '@happier-dev/protocol/plugins/ui';
-import { WidgetAreaLayoutV1Schema, WidgetSurfaceReadV1Schema, type WidgetAreaLayoutV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { buildWidgetSurfaceArtifactIdV1, WidgetAreaLayoutV1Schema, WidgetSurfaceReadV1Schema, type WidgetAreaLayoutV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { useArtifact } from '@/sync/domains/state/storage';
+import type { WidgetEntityMovementPort } from '@/sync/ops/actions/widgetEntityMovement';
 
 /**
  * One personal widget area's operations (a plugin page's declared area, a Project aside). The host
@@ -12,6 +14,8 @@ import { WidgetAreaLayoutV1Schema, WidgetSurfaceReadV1Schema, type WidgetAreaLay
  */
 export type WidgetAreaPort = Readonly<{
     execute(operation: PluginUiWidgetAreaOperationV1, signal?: AbortSignal): Promise<PluginUiWidgetAreaResultV1>;
+    /** Only the host that already binds the layout owner may bind its existing movement owner. */
+    movement?: WidgetEntityMovementPort;
 }>;
 
 /** A write that was refused or failed: the area keeps its last good layout and says so once. */
@@ -63,6 +67,8 @@ function reconcile<C>(previous: WidgetAreaLayoutState<C>, next: WidgetAreaLayout
  */
 export function useWidgetAreaLayout<C>(port: WidgetAreaPort, context: C): WidgetAreaLayout<C> {
     const [state, setState] = React.useState<WidgetAreaLayoutState<C>>({ status: 'loading' });
+    const artifactId = state.status === 'ready' ? buildWidgetSurfaceArtifactIdV1(state.surface) : '';
+    const artifact = useArtifact(artifactId);
     const generation = React.useRef(0);
     const mounted = React.useRef(true);
     React.useEffect(() => {
@@ -94,6 +100,14 @@ export function useWidgetAreaLayout<C>(port: WidgetAreaPort, context: C): Widget
         void read(controller.signal);
         return () => controller.abort();
     }, [read]);
+
+    React.useEffect(() => {
+        if (!artifactId) return;
+        const controller = new AbortController();
+        // Canonical Artifact publication reaches both ends of an Action-driven transfer.
+        void read(controller.signal);
+        return () => controller.abort();
+    }, [artifactId, artifact, read]);
 
     const write = React.useCallback(async (operation: PluginUiWidgetAreaOperationV1): Promise<WidgetAreaWriteOutcome> => {
         let outcome: WidgetAreaWriteOutcome;

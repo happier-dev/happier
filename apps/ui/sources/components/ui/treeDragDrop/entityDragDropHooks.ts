@@ -16,6 +16,12 @@ export function useEntityDragPointer(runtime: EntityDragDropRuntime = realmRunti
     return useSyncExternalStore(runtime.subscribePointer, runtime.getPointer, runtime.getPointer);
 }
 
+/** Only an open chooser observes destination semantics; pointer frames do not rerender its host. */
+export function useEntityDragDestinations(runtime: EntityDragDropRuntime, sourceId: string, enabled: boolean) {
+    const key = useSyncExternalStore(runtime.subscribe, () => enabled ? JSON.stringify(runtime.getDestinations(sourceId)) : '', () => '');
+    return useMemo(() => enabled ? runtime.getDestinations(sourceId) : [], [runtime, sourceId, enabled, key]);
+}
+
 export function useEntityDragSourceState(runtime: EntityDragDropRuntime, sourceId: string) {
     const phase = useSyncExternalStore(runtime.subscribe, () => {
         const snapshot = runtime.getSnapshot();

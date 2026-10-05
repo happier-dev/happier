@@ -14,7 +14,7 @@ export function createSessionListOrganizationActionAdapter(
         if (signal?.aborted) return { status: 'refused', reason: 'cancelled' };
         let context: CommitSessionListDragIntentContext | null;
         try { mutationScope.assertCurrent?.(); context = getContext(mutationScope); }
-        catch { return { status: 'unavailable', reason: 'scope-mismatch' }; }
+        catch { return { status: 'unavailable' }; }
         if (!context) return { status: 'unavailable' };
         const intent = { ...parsed.data, sourceSnapshotSignature: '' };
         const admission = resolveSessionListDragIntent({ intent, context });
