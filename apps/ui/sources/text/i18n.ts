@@ -116,6 +116,24 @@ function normalizeDeviceLanguageCode(languageCode: string | null | undefined, la
     return isSupportedLanguage(normalizedLanguageCode) ? normalizedLanguageCode : null;
 }
 
+/** Resolve an explicit language tag; unlike device selection, an unknown language has no fallback. */
+export function resolveSupportedLanguageFromTag(languageTag: string): SupportedLanguage | null {
+    let canonical: string | undefined;
+    try {
+        // Hermes exposes this API, but not Intl.Locale/maximize.
+        canonical = Intl.getCanonicalLocales(languageTag.trim())[0];
+    } catch {
+        return null;
+    }
+    if (!canonical) return null;
+    const [languageCode, ...subtags] = canonical.split('-');
+    if (languageCode !== 'zh') return normalizeDeviceLanguageCode(languageCode, null);
+    const script = /^[A-Z][a-z]{3}$/u.test(subtags[0] ?? '') ? subtags[0] : undefined;
+    if (script && script !== 'Hans' && script !== 'Hant') return null;
+    const chineseScript = script ?? (subtags.some((subtag) => ['TW', 'HK', 'MO'].includes(subtag)) ? 'Hant' : 'Hans');
+    return normalizeDeviceLanguageCode(languageCode, chineseScript);
+}
+
 function resolveLanguageFromDeviceLocales(): SupportedLanguage {
     if (cachedDeviceLanguage) return cachedDeviceLanguage;
     for (const locale of getDeviceLocales()) {
@@ -211,7 +229,9 @@ export function hasTranslation(key: string): boolean {
     return resolveRawTranslationValue(key) !== undefined;
 }
 
-export function getTranslationValue(key: string): unknown {
+export function getTranslationValue(key: string, language?: SupportedLanguage): unknown {
+    // Explicit language lookups must not silently substitute the active UI or English locale.
+    if (language) return getValueAtPath(getTranslationTree(language), key);
     return resolveRawTranslationValue(key);
 }
 

@@ -15,6 +15,7 @@ import {
   QualifiedConnectedAccountRefSchema,
   QualifiedConnectedAccountServiceRefSchema,
   encodeQualifiedConnectedAccountV4StructuredQueryValue,
+  buildQualifiedConnectedAccountGroupMutationRequestV4,
   type QualifiedConnectedAccountConfigurationSnapshotV4,
   type QualifiedConnectedAccountCredentialSnapshotV4,
   type QualifiedConnectedAccountGroupRef,
@@ -200,12 +201,9 @@ export async function createQualifiedConnectedAccountGroupV4(
   credentials: AuthCredentials,
   params: z.input<typeof QualifiedConnectedAccountGroupCreateV4Schema>,
 ): Promise<{ group: QualifiedConnectedAccountGroupV4 }> {
-  const body = QualifiedConnectedAccountGroupCreateV4Schema.parse(params);
   return await mutateQualifiedSnapshot({
     credentials,
-    path: '/v4/connect/qualified/groups',
-    method: 'POST',
-    body,
+    ...buildQualifiedConnectedAccountGroupMutationRequestV4('create', params),
     parse: (value) =>
       QualifiedConnectedAccountGroupResponseV4Schema.parse(value),
   });
@@ -215,12 +213,9 @@ export async function patchQualifiedConnectedAccountGroupV4(
   credentials: AuthCredentials,
   params: z.input<typeof QualifiedConnectedAccountGroupPatchV4Schema>,
 ): Promise<{ group: QualifiedConnectedAccountGroupV4 }> {
-  const body = QualifiedConnectedAccountGroupPatchV4Schema.parse(params);
   return await mutateQualifiedSnapshot({
     credentials,
-    path: '/v4/connect/qualified/group',
-    method: 'PATCH',
-    body,
+    ...buildQualifiedConnectedAccountGroupMutationRequestV4('patch', params),
     parse: (value) =>
       QualifiedConnectedAccountGroupResponseV4Schema.parse(value),
   });
@@ -230,27 +225,9 @@ export async function deleteQualifiedConnectedAccountGroupV4(
   credentials: AuthCredentials,
   params: z.input<typeof QualifiedConnectedAccountGroupDeleteV4Schema>,
 ): Promise<boolean> {
-  const mutation = QualifiedConnectedAccountGroupDeleteV4Schema.parse(params);
-  const query = new URLSearchParams();
-  query.set(
-    'group',
-    encodeQualifiedConnectedAccountV4StructuredQueryValue(
-      QualifiedConnectedAccountGroupRefSchema,
-      mutation.group,
-    ),
-  );
-  query.set('expectedIncarnation', mutation.expectedIncarnation);
-  query.set('expectedGeneration', String(mutation.expectedGeneration));
-  if (mutation.expectedRuntimeStateRevision !== undefined) {
-    query.set(
-      'expectedRuntimeStateRevision',
-      String(mutation.expectedRuntimeStateRevision),
-    );
-  }
   await mutateQualifiedSnapshot({
     credentials,
-    path: `/v4/connect/qualified/group?${query.toString()}`,
-    method: 'DELETE',
+    ...buildQualifiedConnectedAccountGroupMutationRequestV4('delete', params),
     parse: (value) => {
       if (
         typeof value !== 'object'
@@ -271,13 +248,9 @@ export async function addQualifiedConnectedAccountGroupMemberV4(
     typeof QualifiedConnectedAccountGroupMemberMutationV4Schema
   >,
 ): Promise<{ group: QualifiedConnectedAccountGroupV4 }> {
-  const body =
-    QualifiedConnectedAccountGroupMemberMutationV4Schema.parse(params);
   return await mutateQualifiedSnapshot({
     credentials,
-    path: '/v4/connect/qualified/group/members',
-    method: 'POST',
-    body,
+    ...buildQualifiedConnectedAccountGroupMutationRequestV4('addMember', params),
     parse: (value) =>
       QualifiedConnectedAccountGroupResponseV4Schema.parse(value),
   });
@@ -289,13 +262,9 @@ export async function patchQualifiedConnectedAccountGroupMemberV4(
     typeof QualifiedConnectedAccountGroupMemberMutationV4Schema
   >,
 ): Promise<{ group: QualifiedConnectedAccountGroupV4 }> {
-  const body =
-    QualifiedConnectedAccountGroupMemberMutationV4Schema.parse(params);
   return await mutateQualifiedSnapshot({
     credentials,
-    path: '/v4/connect/qualified/group/member',
-    method: 'PATCH',
-    body,
+    ...buildQualifiedConnectedAccountGroupMutationRequestV4('patchMember', params),
     parse: (value) =>
       QualifiedConnectedAccountGroupResponseV4Schema.parse(value),
   });
@@ -307,16 +276,9 @@ export async function removeQualifiedConnectedAccountGroupMemberV4(
     typeof QualifiedConnectedAccountGroupMemberDeleteV4Schema
   >,
 ): Promise<{ group: QualifiedConnectedAccountGroupV4 }> {
-  const mutation =
-    QualifiedConnectedAccountGroupMemberDeleteV4Schema.parse(params);
   return await mutateQualifiedSnapshot({
     credentials,
-    path: `/v4/connect/qualified/group/member?${structuredQuery(
-      'mutation',
-      QualifiedConnectedAccountGroupMemberDeleteV4Schema,
-      mutation,
-    )}`,
-    method: 'DELETE',
+    ...buildQualifiedConnectedAccountGroupMutationRequestV4('removeMember', params),
     parse: (value) =>
       QualifiedConnectedAccountGroupResponseV4Schema.parse(value),
   });

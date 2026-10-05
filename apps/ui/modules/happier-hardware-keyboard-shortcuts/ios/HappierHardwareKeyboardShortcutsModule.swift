@@ -20,14 +20,14 @@ private enum HardwareKeyboardShortcutMode: Hashable {
 private final class HardwareKeyboardTextViewInterceptor {
   static let shared = HardwareKeyboardTextViewInterceptor()
 
-  private let textViewClassName = "RCTUITextView"
+  private let textInputClassNames = ["RCTUITextView", "RCTUITextField"]
   private let originalSelector = #selector(UIResponder.pressesBegan(_:with:))
   private let interceptedSelector = Selector(("happierHardwareKeyboardShortcuts_pressesBegan:withEvent:"))
   private let methodEncoding = "v@:@@"
 
   private var activeModes = Set<HardwareKeyboardShortcutMode>()
   private var nativeConsumableEventSignatures = Set<String>()
-  private var isInstalled = false
+  private var installedClassNames = Set<String>()
   private var onHardwareKey: HardwareKeyHandler?
 
   private init() {}
@@ -48,11 +48,13 @@ private final class HardwareKeyboardTextViewInterceptor {
   }
 
   private func installIfNeeded() {
-    guard !isInstalled else {
-      return
+    for className in textInputClassNames where !installedClassNames.contains(className) {
+      install(className: className)
     }
+  }
 
-    guard let textViewClass = NSClassFromString(textViewClassName) else {
+  private func install(className: String) {
+    guard let textViewClass = NSClassFromString(className) else {
       return
     }
 
@@ -71,7 +73,9 @@ private final class HardwareKeyboardTextViewInterceptor {
 
     let interceptedImplementation = imp_implementationWithBlock(interceptedBlock)
     guard class_addMethod(textViewClass, interceptedSelector, interceptedImplementation, methodEncoding) else {
-      isInstalled = class_getInstanceMethod(textViewClass, interceptedSelector) != nil
+      if class_getInstanceMethod(textViewClass, interceptedSelector) != nil {
+        installedClassNames.insert(className)
+      }
       return
     }
 
@@ -98,7 +102,7 @@ private final class HardwareKeyboardTextViewInterceptor {
       method_exchangeImplementations(originalMethod, interceptedMethod)
     }
 
-    isInstalled = true
+    installedClassNames.insert(className)
   }
 
   private func handlePresses(receiver: AnyObject, presses: NSSet) -> Bool {
@@ -107,6 +111,12 @@ private final class HardwareKeyboardTextViewInterceptor {
     }
 
     guard let responder = receiver as? UIResponder, responder.isFirstResponder else {
+      return false
+    }
+
+    // UIKit owns marked-text confirmation/cancellation. Returning false calls the
+    // original responder without emitting or consuming a Find/composer shortcut.
+    if let textInput = receiver as? UITextInput, textInput.markedTextRange != nil {
       return false
     }
 
@@ -143,7 +153,7 @@ private final class HardwareKeyboardTextViewInterceptor {
         "modifiers": modifiers,
         "repeat": false,
         "target": "reactNativeTextInput",
-        // This interceptor is installed on the first-responder RCT text view itself,
+        // This interceptor is installed on the first-responder RCT text input itself,
         // so native owns an exact editable-focus fact instead of asking JS to guess.
         "isEditableTarget": true,
       ]
@@ -159,6 +169,10 @@ private final class HardwareKeyboardTextViewInterceptor {
       return "Enter"
     case UIKeyboardHIDUsage.keyboardEscape:
       return "Escape"
+    case UIKeyboardHIDUsage.keyboardUpArrow:
+      return "ArrowUp"
+    case UIKeyboardHIDUsage.keyboardDownArrow:
+      return "ArrowDown"
     case UIKeyboardHIDUsage.keyboardK:
       return "k"
     default:
@@ -178,6 +192,10 @@ private final class HardwareKeyboardTextViewInterceptor {
       return "NumpadEnter"
     case UIKeyboardHIDUsage.keyboardEscape:
       return "Escape"
+    case UIKeyboardHIDUsage.keyboardUpArrow:
+      return "ArrowUp"
+    case UIKeyboardHIDUsage.keyboardDownArrow:
+      return "ArrowDown"
     case UIKeyboardHIDUsage.keyboardK:
       return "KeyK"
     default:

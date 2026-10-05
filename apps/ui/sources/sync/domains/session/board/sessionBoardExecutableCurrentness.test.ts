@@ -18,8 +18,8 @@ const EXECUTABLE_ITEM: SessionSurfaceItemV1 = {
 const INSTALLED_ITEM: SessionSurfaceItemV1 = {
     ...EXECUTABLE_ITEM,
     source: {
-        kind: 'installedSurface',
-        surface: { pluginId: 'acme.review', localId: 'status' },
+        kind: 'widget',
+        instance: { v: 1, id: 'instance-1', definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'status' } }, bindings: {} },
     },
 };
 

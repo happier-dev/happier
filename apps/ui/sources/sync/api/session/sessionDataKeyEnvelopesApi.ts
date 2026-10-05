@@ -4,12 +4,10 @@ import {
     SessionDataKeyEnvelopePageV1Schema,
     type SessionDataKeyEnvelopeItemV1,
     type SessionDataKeyEnvelopeSummaryV1,
+    runSessionDataKeyPreparationDetached,
 } from '@happier-dev/protocol';
 
 import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
-import {
-    runSessionDataKeyPreparationDetached,
-} from '@/sync/encryption/sessionDataKeyPreparationPass';
 import {
     prepareCurrentSessionDataKeyEnvelopes,
     type CurrentSessionDataKeyEnvelopeTransport,

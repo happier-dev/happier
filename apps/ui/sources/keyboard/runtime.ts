@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
 import { resolveHappierPointerPlatform } from '@happier-dev/plugin-ui/presentation';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { defaultKeyboardCommands } from './commands';
 import { formatKeybindingLabel, matchKeybindingRule, parseKeybindingRule } from './bindings';
@@ -9,17 +10,31 @@ import type {
     KeyboardContext,
     KeyboardPlatform,
     KeyboardSurface,
+    KeyboardWebHost,
     KeybindingRule,
     NormalizedKeyboardEvent,
 } from './types';
 
-export type KeyboardShortcutHandlers = Partial<Record<KeyboardCommandId, () => void>>;
+export type KeyboardShortcutDisposition = 'handled' | 'pass';
+type FindKeyboardCommandId = Extract<KeyboardCommandId, `find.${string}`>;
+// Ordinary callbacks keep their released zero-argument contract and ignored return values.
+// Find also consumes keyboard events; any handler may explicitly release a chord.
+export type KeyboardShortcutHandlers = Partial<{
+    [Id in KeyboardCommandId]: Id extends FindKeyboardCommandId
+        ? ((event?: NormalizedKeyboardEvent) => void) | ((event?: NormalizedKeyboardEvent) => KeyboardShortcutDisposition)
+        : (() => void) | (() => KeyboardShortcutDisposition);
+}>;
+
+export function isFindKeyboardCommand(commandId: KeyboardCommandId): commandId is FindKeyboardCommandId {
+    return commandId === 'find.open' || commandId === 'find.next' || commandId === 'find.previous';
+}
 
 export type KeyboardShortcutDispatcherOptions = Readonly<{
     enabled: boolean;
     enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
     platform: KeyboardPlatform;
     surface?: KeyboardSurface;
+    webHost?: KeyboardWebHost;
     singleKeyShortcutsEnabled: boolean;
     disabledCommandIds: readonly string[];
     overrides: Readonly<Record<string, readonly KeybindingRule[]>>;
@@ -28,6 +43,7 @@ export type KeyboardShortcutDispatcherOptions = Readonly<{
 }>;
 
 export type KeyboardShortcutLabelOptions = Readonly<{
+    webHost?: KeyboardWebHost;
     disabledCommandIds?: readonly string[];
     overrides?: Readonly<Record<string, readonly KeybindingRule[]>>;
     singleKeyShortcutsEnabled?: boolean;
@@ -88,6 +104,7 @@ export function isKeybindingRuleAvailable(
     options: Readonly<{
         platform: KeyboardPlatform;
         surface: KeyboardSurface;
+        webHost?: KeyboardWebHost;
         singleKeyShortcutsEnabled: boolean;
     }>,
 ): boolean {
@@ -100,7 +117,9 @@ export function isKeybindingRuleAvailable(
         return false;
     }
     if (parsed.blockedSurfaces?.includes(options.surface)) return false;
-    if (!options.singleKeyShortcutsEnabled && isSingleKeyRule(parsed)) return false;
+    if (options.surface === 'web' && parsed.webHost
+        && parsed.webHost !== (options.webHost ?? (isDesktopHost() ? 'desktop' : 'browser'))) return false;
+    if (!options.singleKeyShortcutsEnabled && isSingleKeyRule(parsed) && rule.conflictScope !== 'findInput') return false;
     return true;
 }
 
@@ -120,6 +139,8 @@ function resolveNativeConsumableKey(
     const parsed = parseKeybindingRule(rule);
     if (parsed.code === 'Enter' || parsed.key === 'Enter') return 'Enter';
     if (parsed.code === 'Escape' || parsed.key === 'Escape') return 'Escape';
+    if (parsed.code === 'ArrowUp' || parsed.key === 'ArrowUp') return 'ArrowUp';
+    if (parsed.code === 'ArrowDown' || parsed.key === 'ArrowDown') return 'ArrowDown';
     if (parsed.code?.startsWith('Key') && parsed.code.length === 4) return parsed.code.slice(3).toLowerCase();
     if (parsed.code?.startsWith('Digit') && parsed.code.length === 6) return parsed.code.slice(5);
     if (parsed.code === 'Period') return '.';
@@ -130,7 +151,7 @@ function resolveNativeConsumableKey(
     return null;
 }
 
-function buildNativeConsumableSignature(
+export function buildNativeConsumableSignature(
     rule: KeybindingRule,
     platform: KeyboardPlatform,
     nativeConsumable: boolean,
@@ -158,6 +179,7 @@ export function commandHasAvailableKeyboardHandler(params: Readonly<{
     enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
     platform: KeyboardPlatform;
     surface: KeyboardSurface;
+    webHost?: KeyboardWebHost;
     singleKeyShortcutsEnabled: boolean;
     disabledCommandIds: readonly string[];
     overrides: Readonly<Record<string, readonly KeybindingRule[]>>;
@@ -173,6 +195,7 @@ export function commandHasAvailableKeyboardHandler(params: Readonly<{
     return getCommandBindings(params.commandId, params.overrides).some((rule) => isKeybindingRuleAvailable(rule, {
         platform: params.platform,
         surface: params.surface,
+        webHost: params.webHost,
         singleKeyShortcutsEnabled: params.singleKeyShortcutsEnabled,
     }));
 }
@@ -186,6 +209,7 @@ export function hasAnyAvailableKeyboardHandler(options: KeyboardShortcutDispatch
         enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
         platform: options.platform,
         surface,
+        webHost: options.webHost,
         singleKeyShortcutsEnabled: options.singleKeyShortcutsEnabled,
         disabledCommandIds: options.disabledCommandIds,
         overrides: options.overrides,
@@ -208,6 +232,7 @@ export function resolveNativeHardwareKeyboardConsumableEventSignatures(
             enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
             platform: options.platform,
             surface,
+            webHost: options.webHost,
             singleKeyShortcutsEnabled: options.singleKeyShortcutsEnabled,
             disabledCommandIds: options.disabledCommandIds,
             overrides: options.overrides,
@@ -218,9 +243,15 @@ export function resolveNativeHardwareKeyboardConsumableEventSignatures(
         }
 
         for (const rule of getCommandBindings(command.id, options.overrides)) {
+            // Unmodified Enter belongs to the native responder except in the Find input.
+            const parsed = parseKeybindingRule(rule);
+            if ((command.id === 'find.next' || command.id === 'find.previous')
+                && parsed.code === 'Enter' && !parsed.mod && !parsed.ctrl && !parsed.meta && !parsed.alt
+                && context.findInputFocused !== true) continue;
             if (!isKeybindingRuleAvailable(rule, {
                 platform: options.platform,
                 surface,
+                webHost: options.webHost,
                 singleKeyShortcutsEnabled: options.singleKeyShortcutsEnabled,
             })) {
                 continue;
@@ -251,6 +282,7 @@ export function createKeyboardShortcutDispatcher(options: KeyboardShortcutDispat
                 enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
                 platform: options.platform,
                 surface,
+                webHost: options.webHost,
                 singleKeyShortcutsEnabled: options.singleKeyShortcutsEnabled,
                 disabledCommandIds: options.disabledCommandIds,
                 overrides: options.overrides,
@@ -262,6 +294,7 @@ export function createKeyboardShortcutDispatcher(options: KeyboardShortcutDispat
                 if (!isKeybindingRuleAvailable(rule, {
                     platform: options.platform,
                     surface,
+                    webHost: options.webHost,
                     singleKeyShortcutsEnabled: options.singleKeyShortcutsEnabled,
                 })) continue;
                 if (!matchKeybindingRule(parseKeybindingRule(rule), event, {
@@ -269,8 +302,8 @@ export function createKeyboardShortcutDispatcher(options: KeyboardShortcutDispat
                     surface,
                     context,
                 })) continue;
-                options.handlers[command.id]?.();
-                return true;
+                if (isFindKeyboardCommand(command.id)) return options.handlers[command.id]?.(event) !== 'pass';
+                return options.handlers[command.id]?.() !== 'pass';
             }
         }
         return false;
@@ -344,6 +377,7 @@ export function buildKeyboardShortcutLabels(
                     .find((rule) => isKeybindingRuleAvailable(rule, {
                         platform,
                         surface,
+                        webHost: options.webHost,
                         singleKeyShortcutsEnabled,
                     }));
                 return binding ? [command.id, formatKeybindingLabel(binding, platform)] : null;

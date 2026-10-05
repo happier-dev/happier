@@ -52,7 +52,7 @@ describe('sync.assumeUsers', () => {
         storage.setState(initialStorageState, true);
         kvStore.clear();
 
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         (sync as any).credentials = { token: 'test-token', secret: 'test-secret' };
     });
 
@@ -87,4 +87,3 @@ describe('sync.assumeUsers', () => {
         expect(storage.getState().users.user_404).toBeNull();
     });
 });
-

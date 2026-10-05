@@ -183,7 +183,7 @@ function olderRequestBeforeSeqs(): number[] {
 }
 
 async function seedSessionWithHole(): Promise<{ sync: typeof import('./sync').sync }> {
-    const { sync } = await import('./sync');
+    const { sync } = await import('./syncEngine');
     const syncForTest = sync as unknown as SyncTailResetTestAccess;
     sync.disconnectServer();
 

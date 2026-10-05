@@ -5,6 +5,7 @@ import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes'
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { registerSessionRealtimeTranscriptConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { Encryption } from '@/sync/encryption/encryption';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { fetchAndApplyPendingMessagesV2 } from '@/sync/engine/pending/pendingQueueV2';
@@ -161,12 +162,19 @@ describe('socket pending -> committed ordering', () => {
     let unsubscribe: (() => void) | null = null;
 
     beforeEach(() => {
+        vi.useFakeTimers();
         storage.setState(initialStorageState, true);
         projectManager.clear();
         unregisterConsumer = registerSessionRealtimeTranscriptConsumer(SESSION_ID);
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        // Flush the clock-owned coalescer before resetting its store. Otherwise a valid queued
+        // Session from the previous fixture can become the next fixture's Session apply base.
+        if (vi.isFakeTimers()) {
+            await vi.runOnlyPendingTimersAsync();
+            vi.useRealTimers();
+        }
         unsubscribe?.();
         unsubscribe = null;
         unregisterConsumer?.();
@@ -259,7 +267,7 @@ describe('socket pending -> committed ordering', () => {
         });
         await retiring;
         await committing;
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        await vi.runOnlyPendingTimersAsync();
 
         const session = storage.getState().sessions[SESSION_ID];
         expect(session?.pendingCount).toBe(1);
@@ -304,6 +312,46 @@ describe('socket pending -> committed ordering', () => {
 
         expect(framesWithoutTheUtterance).toEqual([]);
         expect(carriesTheUtterance(storage.getState())).toBe(true);
+    });
+
+    it('publishes a queued settlement version before an older pending snapshot can finish', async () => {
+        armSession({ enabled: false, windowMs: 0 });
+        const params = buildBaseParams({ applySessions: (sessions) => storage.getState().applySessions(sessions) });
+        const serverId = getActiveServerSnapshot().serverId;
+        storage.getState().applySessions([{ ...storage.getState().sessions[SESSION_ID]!, serverId }]);
+        const encryption = await Encryption.create(new Uint8Array(32).fill(6));
+        vi.useFakeTimers();
+        try {
+            // The first session apply opens the window; the settlement behind it would be queued.
+            await handleUpdateContainer({ ...params, updateData: buildPendingChangedUpdate({ seq: 2, pendingCount: 1, pendingVersion: 3 }) });
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => { release = resolve; });
+            const oldRefresh = fetchAndApplyPendingMessagesV2({
+                sessionId: SESSION_ID, encryption,
+                outboxScope: { serverId, accountId: 'account' }, isOutboxScopeCurrent: () => true,
+                request: async () => {
+                    await gate;
+                    return Response.json({ pending: [{
+                        localId: LOCAL_ID, status: 'queued', deliveryState: 'delivering', position: 0,
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
+                        createdAt: 1_000, updatedAt: 1_000, discardedAt: null, discardedReason: null,
+                    }] });
+                },
+            });
+            await handleUpdateContainer({ ...params, updateData: buildEmptyQueueUpdate(3) });
+            const publishedVersion = storage.getState().sessions[SESSION_ID]?.pendingVersion;
+            const publishedHome = storage.getState().sessions[SESSION_ID]?.serverId;
+            const cachedVersion = storage.getState().sessionListRowsByServerId[serverId]?.[SESSION_ID]?.pendingVersion;
+            release();
+            await oldRefresh;
+            expect(publishedVersion).toBe(4);
+            expect({ publishedHome, cachedVersion }).toEqual({ publishedHome: serverId, cachedVersion: 4 });
+            expect(storage.getState().sessionPending[SESSION_ID]?.messages ?? []).toEqual([]);
+            expect(storage.getState().sessions[SESSION_ID]?.pendingVersion).toBe(4);
+        } finally {
+            await vi.runOnlyPendingTimersAsync();
+            vi.useRealTimers();
+        }
     });
 
     it('still retires the pending rows when no message materialization is in flight', async () => {

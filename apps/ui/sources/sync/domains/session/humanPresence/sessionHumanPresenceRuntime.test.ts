@@ -37,11 +37,14 @@ function transport() {
     return { socket, sent };
 }
 const cleanup: Array<() => void | Promise<void>> = [];
-let hostChanged: (() => void) | undefined;
+const hostListeners = new Set<() => void>();
+const hostChanged = () => { for (const listener of hostListeners) listener(); };
 beforeAll(() => {
     vi.spyOn(AppState, 'addEventListener').mockImplementation((...args: unknown[]) => {
-        if (args[0] === 'change') hostChanged = args[1] as () => void;
-        return { remove() {} };
+        // The OS broadcasts state changes to every registered observer.
+        const listener = args[1] as () => void;
+        if (args[0] === 'change') hostListeners.add(listener);
+        return { remove() { hostListeners.delete(listener); } };
     });
 });
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); Object.defineProperty(AppState, 'currentState', {value:'active', configurable:true}); hostChanged?.(); vi.useRealTimers(); });

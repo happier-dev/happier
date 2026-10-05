@@ -9,6 +9,7 @@ import {
     type AuthCredentials,
     isDataKeyAuthCredentials,
     isLegacyAuthCredentials,
+    isTokenOnlyAuthCredentials,
 } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 

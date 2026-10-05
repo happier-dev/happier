@@ -47,13 +47,31 @@ function readStringBundle(value: unknown): Readonly<Record<string, string>> | nu
  * executable surface can resolve keys synchronously (§3.2, UI-D13).
  *
  * This is the same projected bundle the host already reads; no second catalog,
- * loader or fallback owner is introduced.
+ * loader or fallback owner is introduced. A mounted target can also display its
+ * admitted contributors' declared strings. Their bundles are merged first so
+ * the target keeps authority over its own keys.
  */
 export function resolvePluginUiTranslationBundle(params: Readonly<{
     projection: PluginUiProjectionModel | null | undefined;
     pluginId: string;
     locale?: string | null;
+    /** Only contributors from this mount's admitted targeted snapshot. */
+    contributorPluginIds?: readonly string[];
 }>): Readonly<Record<string, string>> {
+    if (params.contributorPluginIds?.length) {
+        const bundles = [...new Set(params.contributorPluginIds)].map((pluginId) => (
+            resolvePluginUiTranslationBundle({
+                projection: params.projection,
+                pluginId,
+                locale: params.locale,
+            })
+        ));
+        return Object.freeze(Object.assign({}, ...bundles, resolvePluginUiTranslationBundle({
+            projection: params.projection,
+            pluginId: params.pluginId,
+            locale: params.locale,
+        })));
+    }
     const bundles = readRecord(params.projection?.translationsByPluginId[params.pluginId]?.bundles);
     if (!bundles) {
         return EMPTY_TRANSLATION_BUNDLE;

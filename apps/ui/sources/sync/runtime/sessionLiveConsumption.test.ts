@@ -4,6 +4,8 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { resetSessionSurfaceVisibilityForTests } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { storage } from '@/sync/domains/state/storage';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import { setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import {
     clearMountedSessionRealtimeScmConsumerScopes,
     registerSessionRealtimeScmConsumerScope,
@@ -55,6 +57,8 @@ describe('resolveSessionScmMutationSignal', () => {
         useVoiceTargetStore.getState().setLastFocusedSessionAddress(null);
         clearMountedSessionRealtimeScmConsumerScopes();
         resetSessionSurfaceVisibilityForTests();
+        voiceSessionBindingStore.setState(voiceSessionBindingStore.getInitialState(), true);
+        setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
     });
 
     afterEach(() => {
@@ -64,6 +68,8 @@ describe('resolveSessionScmMutationSignal', () => {
         useVoiceTargetStore.getState().setLastFocusedSessionAddress(null);
         clearMountedSessionRealtimeScmConsumerScopes();
         resetSessionSurfaceVisibilityForTests();
+        voiceSessionBindingStore.setState(voiceSessionBindingStore.getInitialState(), true);
+        setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
     });
 
     it('reports hidden same-project sessions without making them full content consumers', () => {
@@ -142,5 +148,37 @@ describe('resolveSessionScmMutationSignal', () => {
         expect(resolveSessionLiveConsumption('tracked-session', 'home-a').isFullContentConsumer).toBe(false);
         expect(resolveSessionLiveConsumption('focused-session', 'home-b').isFullContentConsumer).toBe(true);
         expect(resolveSessionLiveConsumption('focused-session', 'home-a').isFullContentConsumer).toBe(false);
+    });
+
+    it('consumes a global Voice conversation on its exact Home without inventing a target or control session', () => {
+        setVoiceSessionSnapshot({ adapterId: 'realtime', sessionId: 'global-control', status: 'connecting', mode: 'idle', canStop: true });
+        voiceSessionBindingStore.getState().bind({
+            adapterId: 'realtime', controlSessionId: 'global-control',
+            conversationSessionId: 'conversation',
+            conversationSessionAddress: { serverId: 'conversation-home', sessionId: 'conversation' },
+            targetSessionAddress: null, transcriptMode: 'synthetic', lifetime: 'runtime_attempt', updatedAt: 1,
+        });
+        expect(resolveSessionLiveConsumption('conversation', 'conversation-home').isFullContentConsumer).toBe(true);
+        expect(resolveSessionLiveConsumption('conversation', 'other-home').isFullContentConsumer).toBe(false);
+        expect(resolveSessionLiveConsumption('global-control', 'conversation-home').isFullContentConsumer).toBe(false);
+
+        voiceSessionBindingStore.getState().bind({
+            adapterId: 'realtime', controlSessionId: 'global-control',
+            conversationSessionId: 'conversation',
+            conversationSessionAddress: { serverId: 'conversation-home', sessionId: 'conversation' },
+            targetSessionAddress: { serverId: 'target-home', sessionId: 'target' },
+            transcriptMode: 'synthetic', lifetime: 'runtime_attempt', updatedAt: 2,
+        });
+        expect(resolveSessionLiveConsumption('conversation', 'conversation-home').isFullContentConsumer).toBe(true);
+        expect(resolveSessionLiveConsumption('conversation', 'target-home').isFullContentConsumer).toBe(false);
+        expect(resolveSessionLiveConsumption('target', 'target-home').isFullContentConsumer).toBe(true);
+        expect(resolveSessionLiveConsumption('target', 'conversation-home').isFullContentConsumer).toBe(false);
+        expect(resolveSessionLiveConsumption('global-control', 'target-home').isFullContentConsumer).toBe(false);
+
+        // Retained association is history, not a reason to keep hydrating either
+        // transcript after this device's actual bound attempt has ended.
+        setVoiceSessionSnapshot({ adapterId: 'realtime', sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+        expect(resolveSessionLiveConsumption('conversation', 'conversation-home').isFullContentConsumer).toBe(false);
+        expect(resolveSessionLiveConsumption('target', 'target-home').isFullContentConsumer).toBe(false);
     });
 });

@@ -3,7 +3,6 @@ import {
     serverAccountScopeKeySuffix,
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
-import { randomUUID } from '@/platform/randomUUID';
 
 import { createDefaultActionExecutor } from './defaultActionExecutor';
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
@@ -28,19 +27,9 @@ export function scopedHomeActionExecutor(
     const existing = executorsByScope.get(key);
     if (existing) return existing;
 
-    const executeFrontDoor = createFrontDoorActionExecute(createDefaultActionExecutor({
+    const execute = createFrontDoorActionExecute(createDefaultActionExecutor({
         homeDomainAction: createHomeDomainActionExecutorForScope(scope),
     }));
-    const execute: ReturnType<typeof createFrontDoorActionExecute> = async (actionId, input, context) => (
-        await executeFrontDoor(actionId, input, {
-            ...context,
-            // Deferred approvals need a durable identity for the admitted
-            // request. Domain clients deliberately do not own approval custody,
-            // so their shared front door supplies one attempt identity unless a
-            // caller already carries a stronger stable request key.
-            actionRequestId: context?.actionRequestId ?? randomUUID(),
-        })
-    );
     executorsByScope.set(key, execute);
     return execute;
 }

@@ -19,7 +19,7 @@ vi.mock('./PendingMessagesDragReorderList', () => ({
                     message: m,
                     index,
                     isDragging: false,
-                    renderDragHandle: ({ children: handleChildren }: any) => handleChildren,
+                    renderDragHandle: ({ testID, accessibilityLabel }: { testID?: string; accessibilityLabel?: string }) => React.createElement('View', { testID, accessibilityLabel }),
                 }),
             )
             : null;

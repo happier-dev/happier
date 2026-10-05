@@ -40,7 +40,7 @@ export function resolveSessionBoardExecutableCurrentness(
         || current.state.kind !== 'ready') {
         return 'unverified';
     }
-    if (item.state.item.source.kind === 'installedSurface') {
+    if (item.state.item.source.kind === 'widget' && item.state.item.source.instance.definition.kind === 'installed') {
         if (!pluginRuntime || pluginRuntime.phase === 'unavailable') return 'unverified';
         if (pluginRuntime.phase === 'retainedOffline') return 'offline';
         if (pluginRuntime.phase === 'establishing') return 'stale';

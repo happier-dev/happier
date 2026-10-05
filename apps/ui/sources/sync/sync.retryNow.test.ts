@@ -76,7 +76,7 @@ describe('sync manual retry', () => {
     });
 
     it('manual retry forces reachability invalidation before resuming sync', async () => {
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         const resumeSpy = vi.fn(async () => {});
         (sync as unknown as { resumeSync: (reason: string) => Promise<void> }).resumeSync = resumeSpy;
 

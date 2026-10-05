@@ -17,13 +17,28 @@ import {
  * availability. Callers retain ownership of those facts; this hook only keeps
  * their projection identical across Session placements.
  */
-export function usePluginUiSessionPolicyEvaluationContext(input: Readonly<{
+type SessionPluginPolicyInput = Readonly<{
     platform: PluginUiPolicyEvaluationContext['platform'];
     serverId: string | null;
     settings: FeatureLocalPolicySettings;
     serverFeaturesSnapshot: ServerFeaturesRuntimeSnapshot;
     facts: PluginUiSessionPolicyFacts;
-}>): PluginUiPolicyEvaluationContext {
+}>;
+
+/** Shared facts projection for mounted surfaces and Action discovery of that exact Session. */
+export function createSessionPluginPolicyEvaluationContext(input: SessionPluginPolicyInput): PluginUiPolicyEvaluationContext {
+    return createPluginUiSessionPolicyEvaluationContext({
+        platform: input.platform,
+        channel: 'internal',
+        isFeatureEnabled: (featureId) => {
+            if (!isFeatureId(featureId)) return false;
+            return resolveRuntimeFeatureDecisionFromSnapshot({ featureId, settings: input.settings,
+                snapshot: input.serverFeaturesSnapshot, scope: { scopeKind: 'spawn', ...(input.serverId ? { serverId: input.serverId } : {}) } })?.state === 'enabled';
+        },
+    }, input.facts);
+}
+
+export function usePluginUiSessionPolicyEvaluationContext(input: SessionPluginPolicyInput): PluginUiPolicyEvaluationContext {
     const {
         browserExists,
         machineId,
@@ -33,29 +48,7 @@ export function usePluginUiSessionPolicyEvaluationContext(input: Readonly<{
         sessionState,
     } = input.facts;
 
-    return React.useMemo(() => createPluginUiSessionPolicyEvaluationContext({
-        platform: input.platform,
-        channel: 'internal',
-        isFeatureEnabled: (featureId) => {
-            if (!isFeatureId(featureId)) return false;
-            return resolveRuntimeFeatureDecisionFromSnapshot({
-                featureId,
-                settings: input.settings,
-                snapshot: input.serverFeaturesSnapshot,
-                scope: {
-                    scopeKind: 'spawn',
-                    ...(input.serverId ? { serverId: input.serverId } : {}),
-                },
-            })?.state === 'enabled';
-        },
-    }, {
-        pluginEnabled,
-        sessionAgentId,
-        sessionState,
-        machineId,
-        projectId,
-        browserExists,
-    }), [
+    return React.useMemo(() => createSessionPluginPolicyEvaluationContext(input), [
         browserExists,
         input.platform,
         input.serverFeaturesSnapshot,

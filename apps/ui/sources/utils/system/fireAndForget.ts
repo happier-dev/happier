@@ -4,11 +4,10 @@ type FireAndForgetOptions = Readonly<{
     onError?: (error: unknown) => void;
 }>;
 
-export function fireAndForget<T>(promise: Promise<T> | null | undefined, options?: FireAndForgetOptions): void {
-    const candidate: any = promise as any;
-    if (!candidate || typeof candidate.catch !== 'function') return;
+export function fireAndForget(promise: Promise<unknown> | null | undefined, options?: FireAndForgetOptions): void {
+    if (!promise || typeof promise.catch !== 'function') return;
 
-    void candidate.catch((error: unknown) => {
+    void promise.catch((error: unknown) => {
         try {
             if (options?.tag) {
                 if (options.logError === false) {

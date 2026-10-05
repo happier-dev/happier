@@ -24,6 +24,7 @@ const groupRef = { service, groupId: 'primary' } as const;
 
 function mockServerConfig() {
     vi.doMock('@/sync/domains/server/serverRuntime', () => ({
+        getActiveServerHomeCarrier: () => null,
         getActiveServerSnapshot: () => ({
             serverId: 'test',
             serverUrl: 'https://api.example.test',
@@ -90,6 +91,57 @@ afterEach(() => {
 });
 
 describe('apiQualifiedConnectedAccountsV4', () => {
+    it('deletes a pool and removes its member without declaring an empty JSON body', async () => {
+        mockServerConfig();
+        // Fastify's JSON parser rejects a bodyless DELETE with JSON content-type
+        // before the qualified mutation handler can inspect its query parameters.
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = new URL(String(input));
+            if (isServerReadinessProbe(url.pathname)) {
+                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            }
+            const contentType = new Headers(init?.headers).get('content-type');
+            if (init?.body === undefined && contentType === 'application/json') {
+                return {
+                    ok: false,
+                    status: 400,
+                    json: async () => ({
+                        statusCode: 400,
+                        code: 'FST_ERR_CTP_EMPTY_JSON_BODY',
+                        error: 'Bad Request',
+                    }),
+                };
+            }
+            expect(init?.method).toBe('DELETE');
+            expect(new Headers(init?.headers).get('authorization')).toBe('Bearer token');
+            return {
+                ok: true,
+                status: 200,
+                json: async () => url.pathname.endsWith('/member')
+                    ? { group: makeGroup({ members: [], activeConnectedAccountId: null, generation: 4 }) }
+                    : { success: true },
+            };
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { deleteQualifiedConnectedAccountGroupV4, removeQualifiedConnectedAccountGroupMemberV4 } = await import('./apiQualifiedConnectedAccountsV4');
+        const revision = {
+            expectedGeneration: 3,
+            expectedIncarnation: 'qualified-group-row-primary',
+            expectedRuntimeStateRevision: 7,
+        };
+        await expect(removeQualifiedConnectedAccountGroupMemberV4(credentials, {
+            group: groupRef,
+            connectedAccountId: 'work',
+            ...revision,
+        })).resolves.toMatchObject({ group: { members: [], generation: 4 } });
+        await expect(deleteQualifiedConnectedAccountGroupV4(credentials, {
+            group: groupRef,
+            ...revision,
+            expectedGeneration: 4,
+        })).resolves.toBe(true);
+    });
+
     it('lists groups for a novel qualified service without flattening its identity', async () => {
         mockServerConfig();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

@@ -37,7 +37,7 @@ vi.mock('@/sync/runtime/getSyncSingleton', () => ({ getSyncSingleton: () => {
 vi.mock('@/sync/api/session/apiSocket', () => ({ apiSocket: {
     onMessage: vi.fn(), onError: vi.fn(), onReconnected: vi.fn(),
     onStatusChange: vi.fn(() => () => {}), onConnectionStateChange: vi.fn(() => () => {}),
-    connect: vi.fn(), disconnect: vi.fn(), initialize: vi.fn(), request: (path: string, init?: RequestInit) => network(`https://workflow.example${path}`, init),
+    connect: vi.fn(), disconnect: vi.fn(), initialize: vi.fn(), invalidateRequests: vi.fn(), request: (path: string, init?: RequestInit) => network(`https://workflow.example${path}`, init),
 } }));
 let localStorage: LocalStorageMockHandle;
 let serverId: string;
@@ -58,7 +58,7 @@ beforeEach(async () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
-    const { sync } = await import('@/sync/sync');
+    const { sync } = await import('@/sync/syncEngine');
     runtimeModule.sync = sync;
     (sync as unknown as { resetServerScopedRuntimeState(): void }).resetServerScopedRuntimeState();
     resetServerFeaturesClientForTests();

@@ -10,6 +10,7 @@ import {
 import { readMountedSessionRealtimeTranscriptConsumerSessionIds } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
 import { storage } from '@/sync/domains/state/storage';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import { getVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import {
@@ -45,14 +46,20 @@ function readMatchingSessionId(
     return areSessionAddressesEqual(address, source) ? source?.sessionId ?? null : null;
 }
 
-function getVoiceBoundTargetSessionIds(source: SessionAddress | null): string[] {
+function getVoiceBoundSessionIds(source: SessionAddress | null): string[] {
     if (!source) return [];
+    const snapshot = getVoiceSessionSnapshot();
+    if (!snapshot.canStop || !snapshot.sessionId) return [];
+    const binding = voiceSessionBindingStore.getState().getByControlSessionId(snapshot.sessionId);
+    if (!binding || binding.adapterId !== snapshot.adapterId) return [];
     const ids: string[] = [];
-    for (const binding of voiceSessionBindingStore.getState().list()) {
-        if (binding.targetSessionAddress?.serverId !== source.serverId) continue;
+    // A global conversation has no target. Each bound address supplies its
+    // own Home; the control id is not a transcript address.
+    if (binding.conversationSessionAddress.serverId === source.serverId) {
+        addTrimmedSessionId(ids, binding.conversationSessionAddress.sessionId);
+    }
+    if (binding.targetSessionAddress?.serverId === source.serverId) {
         addTrimmedSessionId(ids, binding.targetSessionAddress.sessionId);
-        addTrimmedSessionId(ids, binding.conversationSessionId);
-        addTrimmedSessionId(ids, binding.controlSessionId);
     }
     return ids;
 }
@@ -85,7 +92,7 @@ export function resolveSessionLiveConsumption(
         voiceReadbackSessionIds: readMatchingSessionId(targetState.lastFocusedSessionAddress, source)
             ? [source!.sessionId]
             : [],
-        voiceBoundTargetSessionIds: getVoiceBoundTargetSessionIds(source),
+        voiceBoundTargetSessionIds: getVoiceBoundSessionIds(source),
         scmMountedScopes: readMountedSessionRealtimeScmConsumerScopes(),
     });
     return { isVisible: visible, isFullContentConsumer };

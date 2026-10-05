@@ -190,6 +190,8 @@ function buildSessionActivitySignature(session: Session): string {
         session.id,
         readSessionViewerAttentionSignature(session),
         JSON.stringify(session.access?.audienceContext ?? null),
+        session.access?.capabilities.submitAgentInput === true ? 1 : 0,
+        session.access?.capabilities.approveRuntimePermissions === true ? 1 : 0,
         session.serverId ?? '',
         session.active === true ? 1 : 0,
         readNumber(session.activeAt) ?? '',
@@ -243,6 +245,8 @@ function buildRenderableActivitySignature(renderable: SessionListRenderableSessi
         renderable.id,
         readSessionViewerAttentionSignature(renderable),
         JSON.stringify(renderable.access?.audienceContext ?? null),
+        renderable.access?.capabilities.submitAgentInput === true ? 1 : 0,
+        renderable.access?.capabilities.approveRuntimePermissions === true ? 1 : 0,
         readNumber(renderable.seq) ?? '',
         renderable.hasUnreadMessages === true ? 1 : 0,
         renderable.metadataUnavailable === true ? 1 : 0,
@@ -423,6 +427,7 @@ function buildActivityRowsSignature(
 
 function buildSourceFromState(
     state: StorageState,
+    includeSessionMessages: boolean,
 ): StoreActivityAttentionSource {
     return {
         isDataReady: state.isDataReady,
@@ -432,7 +437,7 @@ function buildSourceFromState(
         sessionListIndexByServerId: state.sessionListIndexByServerId ?? EMPTY_INDEX_BY_SERVER_ID,
         concurrentSessionListCacheByServerId:
             state.concurrentSessionListCacheByServerId ?? EMPTY_CONCURRENT_CACHE_BY_SERVER_ID,
-        sessionMessagesById: state.sessionMessages,
+        ...(includeSessionMessages ? { sessionMessagesById: state.sessionMessages } : {}),
         workspaceRefsV1: state.settings.workspaceRefsV1,
         workspacePathDisplayModeV1: state.settings.workspacePathDisplayModeV1,
     };
@@ -440,22 +445,25 @@ function buildSourceFromState(
 
 export function createActivityAttentionStoreSourceSelector(
     personalMembershipByServerId: Readonly<Record<string, readonly string[]>> = {},
+    options: Readonly<{ includeSessionMessages?: boolean }> = {},
 ): (state: StorageState) => StoreActivityAttentionSource {
     const sessionSignatureCache = new Map<string, SignatureCacheEntry<Session>>();
     const renderableSignatureCache = new Map<string, SignatureCacheEntry<SessionListRenderableSession>>();
     const sessionMessagesSignatureCache = new Map<string, SignatureCacheEntry<StorageState['sessionMessages'][string]>>();
     let previousSignature: string | null = null;
     let previousSource: StoreActivityAttentionSource | null = null;
+    const includeSessionMessages = options.includeSessionMessages !== false;
 
     return (state) => {
-        const sessionIds = collectPotentialSessionIds(state);
         const signature = joinSignatureParts([
             state.isDataReady === true ? 1 : 0,
             buildCachedRecordSignature(state.sessions, sessionSignatureCache, buildSessionActivitySignature),
             buildActivityRowsSignature(state, renderableSignatureCache, personalMembershipByServerId),
             buildSessionListIndexSignature(state.sessionListIndexByServerId),
             buildConcurrentCacheSignature(state.concurrentSessionListCacheByServerId),
-            buildSessionMessagesRecordSignature(sessionIds, state.sessionMessages, sessionMessagesSignatureCache),
+            includeSessionMessages
+                ? buildSessionMessagesRecordSignature(collectPotentialSessionIds(state), state.sessionMessages, sessionMessagesSignatureCache)
+                : '',
             buildWorkspaceDisplaySettingsSignature(state),
         ]);
 
@@ -464,7 +472,7 @@ export function createActivityAttentionStoreSourceSelector(
         }
 
         previousSignature = signature;
-        previousSource = buildSourceFromState(state);
+        previousSource = buildSourceFromState(state, includeSessionMessages);
         return previousSource;
     };
 }

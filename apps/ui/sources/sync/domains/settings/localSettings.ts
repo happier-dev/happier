@@ -35,6 +35,7 @@ export const localSettingsDefaults: LocalSettings = localSettingsDefaultsRecord;
 Object.freeze(localSettingsDefaults);
 
 const deprecatedLocalSettingKeys = [
+    'widgetViewerInputSelectionsV1',
     'editorFocusModeEnabled',
     'commandPaletteEnabled',
     'keyboardShortcutsV2Enabled',

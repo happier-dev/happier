@@ -133,7 +133,7 @@ describe('sync resumeSync background interruption', () => {
 
         const { storage } = await import('./domains/state/storage');
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
 
         upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
 

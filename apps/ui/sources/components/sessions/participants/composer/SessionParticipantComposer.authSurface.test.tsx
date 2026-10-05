@@ -138,6 +138,7 @@ import {
 } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -205,7 +206,7 @@ describe('SessionParticipantComposer auth send surface', () => {
 
     it('surfaces not_authenticated from the real Session send path instead of silently enqueueing', async () => {
         const sessionId = 's_auth_surface';
-        const activeServer = upsertAndActivateServer({
+        const activeServer = await upsertAndActivateServer({
             serverUrl: 'https://server-auth-surface.example.test',
             scope: 'device',
         });

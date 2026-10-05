@@ -3,6 +3,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const sessionRpcMock = vi.hoisted(() => vi.fn());
+// The authenticated Account-scoped RPC transport is a network boundary.
+const sessionAccountRpcMock = vi.hoisted(() => vi.fn());
 const canUseSessionRpcMock = vi.hoisted(() => vi.fn(() => true));
 const readMachineControlTargetMock = vi.hoisted(() => vi.fn(() => ({ machineId: 'machine-1' })));
 const notifyExecutionRunActivityMock = vi.hoisted(() => vi.fn());
@@ -23,6 +25,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', a
     return createServerScopedSessionRpcModuleMock({
         importOriginal,
         overrides: {
+            sessionRpcWithServerAccountScope: sessionAccountRpcMock,
             sessionRpcWithServerScope: async (params: Readonly<{
                 sessionId: string;
                 serverId?: string | null;
@@ -80,6 +83,7 @@ describe('sessionExecutionRuns', () => {
 
     afterEach(() => {
         sessionRpcMock.mockReset();
+        sessionAccountRpcMock.mockReset();
         canUseSessionRpcMock.mockReset();
         canUseSessionRpcMock.mockReturnValue(true);
         readMachineControlTargetMock.mockReset();
@@ -87,6 +91,30 @@ describe('sessionExecutionRuns', () => {
         notifyExecutionRunActivityMock.mockReset();
         sessionState.sessions = {};
         sessionState.settings = {};
+    });
+
+    it('preserves the captured Account refusal instead of using ambient Session RPC', async () => {
+        sessionRpcMock.mockResolvedValue({ ok: true });
+        const refusal = { ok: false, error: 'Account scope retired', errorCode: 'scope_retired' };
+        sessionAccountRpcMock.mockImplementation(async (request) => request.scope.accountId === 'captured-account'
+            ? refusal : { ok: true });
+        const response = await sessionExecutionRuns.sessionExecutionRunAction('session-1', {
+            runId: 'run_1', actionId: 'review.follow_up', input: { messageMarkdown: 'Explain this finding' },
+        }, { serverId: 'server-a', scope: { serverId: 'server-a', accountId: 'captured-account' } });
+        expect(response).toEqual(refusal);
+        expect(notifyExecutionRunActivityMock).not.toHaveBeenCalled();
+    });
+
+    it.each([{ waitForInputId: 'input-1' }, { waitForOutput: { kind: 'review_walkthrough' as const, comparisonId: 'comparison-1' } }])
+    ('keeps exact get observation under caller lifecycle: %j', async (wait) => {
+        sessionAccountRpcMock.mockResolvedValue({ error: 'Observation cancelled' });
+        const controller = new AbortController();
+        await sessionExecutionRuns.sessionExecutionRunGet('session-1', { runId: 'run-1', ...wait }, {
+            scope: { serverId: 'server-a', accountId: 'captured-account' }, signal: controller.signal,
+        });
+        expect(sessionAccountRpcMock).toHaveBeenCalledWith(expect.objectContaining({
+            method: SESSION_RPC_METHODS.EXECUTION_RUN_GET, timeoutMs: null, signal: controller.signal,
+        }));
     });
 
     it('calls execution.run.action through session RPC', async () => {

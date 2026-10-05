@@ -1,7 +1,7 @@
 import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture } from '@/dev/testkit';
+import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { storage } from '@/sync/domains/state/storageStore';
 
@@ -55,7 +55,10 @@ describe('createActivityAttentionStoreSourceSelector', () => {
         });
 
         expect(source).not.toHaveProperty('sessionListHomeObservationByServerId');
-        expect(observationOnlyChange).toBe(source);
+        // The context line consumes Home currentness from the canonical cache,
+        // not a second Activity-wide freshness projection.
+        expect(observationOnlyChange).not.toBe(source);
+        expect(observationOnlyChange.concurrentSessionListCacheByServerId['server-b']?.listObservation?.phase).toBe('offline');
     });
 
     it('projects workspace display settings and invalidates when their result changes', () => {
@@ -126,10 +129,31 @@ describe('createActivityAttentionStoreSourceSelector', () => {
         expect(next.sessionsById[session.id].access?.audienceContext).toBeNull();
     });
 
+    it.each(['sessions', 'sessionListRowsByServerId'] as const)('refreshes answerability after grants change in %s without a sequence change', (sourceKind) => {
+        const selector = createActivityAttentionStoreSourceSelector();
+        const base = storage.getState();
+        const session = createSessionFixture({ id: 'waiting', serverId: 'home-a' });
+        const revoked = { ...session, access: { ...session.access!, capabilities: {
+            ...session.access!.capabilities, submitAgentInput: false, approveRuntimePermissions: false,
+        } } };
+        const stateFor = (value: typeof session): typeof base => sourceKind === 'sessions'
+            ? { ...base, sessions: { waiting: value } }
+            : { ...base, sessions: {}, sessionListRowsByServerId: { 'home-a': {
+                waiting: buildSessionListRenderableFromSession(value),
+            } }, ordinarySessionListMembershipByServerId: { 'home-a': ['waiting'] } };
+
+        const first = selector(stateFor(session));
+        const next = selector(stateFor(revoked));
+        expect(next).not.toBe(first);
+        const updated = sourceKind === 'sessions' ? next.sessionsById.waiting : next.sessionListRowsByServerId['home-a']?.waiting;
+        expect(updated?.access?.capabilities.submitAgentInput).toBe(false);
+        expect(updated?.access?.capabilities.approveRuntimePermissions).toBe(false);
+    });
+
     it('invalidates a viewer-only tracking change without a session sequence change', () => {
         const selector = createActivityAttentionStoreSourceSelector();
         const base = storage.getState();
-        const session = Object.assign(createSessionFixture(), { viewer: {
+        const session = Object.assign(createSessionFixture({ access: createSessionAccessFixture('edit') }), { viewer: {
             readState: { state: 'not_started' },
             relevance: { relevant: true, reasons: ['followed_by_me'] },
             follow: { follows: false, notificationLevel: null },

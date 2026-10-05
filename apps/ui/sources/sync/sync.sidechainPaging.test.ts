@@ -199,7 +199,7 @@ describe('sync sidechain paging', () => {
         appStateAddListener.mockClear();
         requestMock.mockReset();
 
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         sync.disconnectServer();
 
         storage.getState().applySessions([createSession({ sessionId: 's1' })]);

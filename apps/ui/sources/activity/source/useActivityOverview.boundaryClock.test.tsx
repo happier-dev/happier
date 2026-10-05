@@ -1,324 +1,177 @@
-import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSessionFixture, renderScreen } from '@/dev/testkit';
-import { installNavigationShellCommonModuleMocks } from '@/components/navigation/shell/navigationShellTestHelpers';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import { createSessionFixture, createSessionMessagesFixture, createToolCallMessageFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { useSessionsHaveAttention } from '@/hooks/session/useSessionsHaveAttention';
+import type { ActivityOverviewSnapshot } from '@/activity/attention/activityAttentionTypes';
+import { useActivityOverview } from './useActivityOverview';
+import { buildPendingNavigationFromSource } from './buildPendingNavigationFromSource';
+import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 
-/** The pre-viewer freshness budget that retires an idle pending request. */
+// React Native is the platform boundary; the store, selectors and attention owners stay real.
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+
 const STALE_SIGNAL_MS = 120_000;
 const NOW_MS = 1_700_000_000_000;
+const initialState = storage.getState();
+let transcriptReads = 0;
+type FixtureKind = 'idle_user_action' | 'message_user_action' | 'completed_message_user_action' | 'permission' | 'working_user_action';
 
-const fixture = vi.hoisted(() => ({
-    kind: 'idle_user_action' as
-        | 'idle_user_action'
-        | 'message_user_action'
-        | 'completed_message_user_action'
-        | 'permission'
-        | 'working_user_action',
-}));
-
-/**
- * A pre-viewer Home row: no `viewer` projection, so attention is derived locally
- * from runtime freshness and can retire with nothing but the clock.
- */
-function legacySession() {
-    const requestCreatedAt = NOW_MS - 1_000;
-    const userActionRequest = {
-        tool: 'AskUserQuestion',
-        kind: 'user_action',
-        arguments: {
-            questions: [{ question: 'Continue?', header: 'Confirm', options: [{ label: 'Yes', description: 'Proceed' }] }],
-        },
-        createdAt: requestCreatedAt,
-    };
-    const permissionRequest = {
-        tool: 'Bash',
-        kind: 'permission',
-        arguments: { command: 'pwd' },
-        createdAt: requestCreatedAt,
-    };
-    return createSessionFixture({
-        id: 'legacy-session',
-        serverId: 'server-a',
-        encryptionMode: 'plain',
-        active: true,
-        presence: 'online',
-        createdAt: requestCreatedAt,
-        updatedAt: requestCreatedAt,
-        activeAt: requestCreatedAt,
-        // Only a projected in-progress turn keeps `working` true across the
-        // budget; it is cleared by turn settlement, never by elapsed time.
-        latestTurnStatus: fixture.kind === 'working_user_action' ? 'in_progress' : undefined,
-        latestTurnStatusObservedAt: fixture.kind === 'working_user_action' ? requestCreatedAt : undefined,
-        metadata: {
-            name: 'Legacy Home session',
-            path: '/Users/leeroy/repo',
-            homeDir: '/Users/leeroy',
-            machineId: 'machine-1',
-        },
-        agentState: {
-            controlledByUser: null,
-            requests: fixture.kind === 'permission'
-                ? { perm_1: permissionRequest }
-                : fixture.kind === 'message_user_action'
-                    ? {}
-                    : { ask_1: userActionRequest },
-            completedRequests: {},
-        },
-    } as any);
-}
-
-function messageBackedUserAction() {
+function seedLegacySession(kind: FixtureKind = 'idle_user_action') {
     const createdAt = NOW_MS - 1_000;
-    const completed = fixture.kind === 'completed_message_user_action';
-    return {
-        id: 'message-ask-1',
-        localId: null,
-        kind: 'tool-call',
-        createdAt,
+    const request = {
+        tool: kind === 'permission' ? 'Bash' : 'AskUserQuestion',
+        kind: kind === 'permission' ? 'permission' as const : 'user_action' as const,
+        arguments: {}, createdAt,
+    };
+    const session = createSessionFixture({
+        id: 'legacy-session', serverId: 'server-a', viewer: undefined,
+        active: true, presence: 'online', createdAt, updatedAt: createdAt, activeAt: createdAt,
+        lastViewedSessionSeq: 1,
+        latestTurnStatus: kind === 'working_user_action' ? 'in_progress' : undefined,
+        latestTurnStatusObservedAt: kind === 'working_user_action' ? createdAt : undefined,
+        agentState: { requests: kind === 'message_user_action' ? {} : { ask_1: request }, completedRequests: {} },
+    });
+    const completed = kind === 'completed_message_user_action';
+    const messages = kind === 'message_user_action' || completed ? [createToolCallMessageFixture({
+        id: 'message-ask-1', createdAt,
         tool: {
-            id: 'ask_1',
-            name: 'AskUserQuestion',
-            state: completed ? 'completed' : 'running',
-            input: {
-                questions: [{ question: 'Continue?', header: 'Confirm', options: [{ label: 'Yes', description: 'Proceed' }] }],
-            },
-            createdAt,
-            startedAt: createdAt,
-            completedAt: completed ? createdAt + 1 : null,
-            description: null,
-            permission: {
-                id: 'ask_1',
-                kind: 'user_action',
-                status: completed ? 'approved' : 'pending',
-            },
+            id: 'ask_1', name: 'AskUserQuestion', state: completed ? 'completed' : 'running', input: {},
+            createdAt, startedAt: createdAt, completedAt: completed ? createdAt + 1 : null, description: null,
+            permission: { id: 'ask_1', kind: 'user_action', status: completed ? 'approved' : 'pending' },
         },
-        children: [],
-    } as any;
-}
-
-const storageState = {
-    profile: { id: 'me' },
-    get sessionMessages() {
-        return fixture.kind === 'message_user_action' || fixture.kind === 'completed_message_user_action'
-            ? { 'legacy-session': { messages: [messageBackedUserAction()] } }
-            : {};
-    },
-    get sessions() {
-        return { 'legacy-session': legacySession() };
-    },
-    get sessionListRowsByServerId() {
-        return { 'server-a': { 'legacy-session': legacySession() } };
-    },
-    ordinarySessionListMembershipByServerId: { 'server-a': ['legacy-session'] },
-    sessionListIndexByServerId: {},
-    concurrentSessionListCacheByServerId: {},
-    isDataReady: true,
-    machines: {},
-    getProjectForSession: () => null,
-};
-
-installNavigationShellCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: 'View',
-            Text: 'Text',
-            ScrollView: 'ScrollView',
-            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-            ActivityIndicator: 'ActivityIndicator',
-        });
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        const storage = Object.assign(
-            (selector: (value: typeof storageState) => unknown) => selector(storageState),
-            { getState: () => storageState },
-        );
-        return createStorageModuleStub({
-            useArtifacts: () => [],
-            useFriendRequests: () => [],
-            useRequestedFriends: () => [],
-            useFeedItems: () => [],
-            useFeedLoaded: () => true,
-            useFriendsLoaded: () => true,
-            useAllSessions: () => [],
-            useAllSessionsForAttention: () => [],
-            useAllSessionListRenderables: () => [],
-            useAllSessionListRenderablesForAttention: () => [],
-            useAllSessionListAttentionRows: () => [],
-            storage,
-            getStorage: () => storage,
-        });
-    },
-});
-
-vi.mock('@/sync/domains/state/storageStore', () => {
-    const storage = Object.assign(
-        (selector: (value: typeof storageState) => unknown) => selector(storageState),
-        { getState: () => storageState },
-    );
-    return { storage, getStorage: () => storage };
-});
-
-vi.mock('expo-image', () => ({ Image: 'Image' }));
-vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons', Octicons: 'Octicons' }));
-vi.mock('@/track', () => ({ trackFriendsProfileView: vi.fn() }));
-vi.mock('@/components/ui/text/Text', () => ({ Text: 'Text' }));
-vi.mock('@/components/ui/icons/Icon', () => ({ Icon: 'Icon' }));
-vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
-    ActivitySpinner: 'ActivitySpinner',
-    iconMatchedSpinnerSize: () => 'small',
-}));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children, title }: any) => React.createElement('ItemGroup', { title }, children),
-}));
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: ({ children, leftElement, rightElement, ...props }: any) => React.createElement(
-        'Item',
-        props,
-        leftElement,
-        rightElement,
-        children,
-    ),
-}));
-vi.mock('@/components/ui/cards/UserCard', () => ({ UserCard: 'UserCard' }));
-vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
-    RecoveryKeyReminderBanner: 'RecoveryKeyReminderBanner',
-}));
-vi.mock('@/components/navigation/Header', () => ({ Header: 'Header' }));
-vi.mock('@/components/inbox/cards/ApprovalInboxCard', () => ({ ApprovalInboxCard: 'ApprovalInboxCard' }));
-vi.mock('@/components/inbox/actionOperations/ActionOperationLedger', () => ({
-    ActionOperationLedger: 'ActionOperationLedger',
-}));
-vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
-    useFriendsIdentityReadiness: () => ({ isReady: true }),
-}));
-vi.mock('@/hooks/server/useFriendsEnabled', () => ({ useFriendsEnabled: () => false }));
-vi.mock('@/utils/platform/responsive', () => ({ useIsTablet: () => false }));
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 960 },
-    useLayoutMaxWidthStyle: () => ({ maxWidth: 960 }),
-    useLayoutMaxWidth: () => 960,
-}));
-
-const SLOW_RENDER_TIMEOUT_MS = 240_000;
-
-async function crossTheFreshnessBoundary(): Promise<void> {
-    await act(async () => {
-        await vi.advanceTimersByTimeAsync(STALE_SIGNAL_MS + 1_000);
+    })] : [];
+    const messagesById = Object.fromEntries(messages.map((message) => [message.id, message]));
+    const hydratedMessages = createSessionMessagesFixture({
+        messagesById, messageIdsOldestFirst: messages.map((message) => message.id), messagesVersion: 1, isLoaded: true,
+    });
+    const messageStates = { [session.id]: hydratedMessages };
+    // Instrument the real state's field access; do not replace any internal reader or decision.
+    transcriptReads = 0;
+    Object.defineProperty(messageStates, session.id, { enumerable: true, get: () => {
+        transcriptReads += 1;
+        return hydratedMessages;
+    } });
+    storage.setState({
+        isDataReady: true, sessions: { [session.id]: session },
+        sessionListRowsByServerId: { 'server-a': {
+            [session.id]: buildSessionListRenderableFromSession(session, undefined, messages),
+        } },
+        ordinarySessionListMembershipByServerId: { 'server-a': [session.id] },
+        sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {},
+        sessionMessages: messageStates,
     });
 }
 
-async function renderNavigationDot(
-    which: 'inbox' | 'sessions' = 'inbox',
-): Promise<{ read: () => boolean | null }> {
-    const inboxModule = which === 'inbox'
-        ? await import('@/hooks/inbox/useInboxModel')
-        : null;
-    const useDot = inboxModule
-        ? (await import('@/hooks/inbox/useInboxHasContent')).useInboxHasContent
-        : (await import('@/hooks/session/useSessionsHaveAttention')).useSessionsHaveAttention;
+async function crossTheFreshnessBoundary() {
+    await act(async () => { await vi.advanceTimersByTimeAsync(STALE_SIGNAL_MS + 1_000); });
+}
+
+async function renderNavigationDot() {
     let latest: boolean | null = null;
     function Probe() {
-        latest = useDot();
-        return React.createElement('View');
+        latest = useSessionsHaveAttention();
+        return null;
     }
-    await renderScreen(inboxModule
-        ? React.createElement(inboxModule.InboxModelProvider, null, React.createElement(Probe))
-        : React.createElement(Probe));
+    await renderScreen(<Probe />);
     return { read: () => latest };
 }
 
-function attentionRowCount(tree: renderer.ReactTestRenderer): number {
-    return tree.root.findAll((node) => (
-        typeof node.type === 'string'
-        && String((node.props as { testID?: string } | undefined)?.testID ?? '').startsWith('inbox.session_attention.')
-    )).length;
+async function renderOverview() {
+    let latest: ActivityOverviewSnapshot | null = null;
+    function Probe() {
+        latest = useActivityOverview().overview;
+        return null;
+    }
+    await renderScreen(<Probe />);
+    return { hasAttention: () => latest?.candidates.some((candidate) => candidate.hasAttention) ?? false };
 }
 
 describe('mounted Activity overview boundary clock', () => {
     beforeEach(() => {
-        fixture.kind = 'idle_user_action';
         vi.useFakeTimers();
         vi.setSystemTime(NOW_MS);
+        seedLegacySession();
     });
-
     afterEach(() => {
+        standardCleanup();
+        storage.setState(initialState, true);
         vi.useRealTimers();
     });
 
     it('retires an idle pre-viewer action request from the navigation dot when its budget elapses', async () => {
         const dot = await renderNavigationDot();
         expect(dot.read()).toBe(true);
-
         await crossTheFreshnessBoundary();
-
         expect(dot.read()).toBe(false);
-    }, SLOW_RENDER_TIMEOUT_MS);
+    });
 
-    it('retires the same request from the Inbox row without any store change', async () => {
-        const { InboxView } = await import('@/components/navigation/shell/InboxView');
-        const tree = (await renderScreen(<InboxView />)).tree;
-        expect(attentionRowCount(tree)).toBe(1);
-
+    it('retires the same request from the full Inbox attention projection without any store change', async () => {
+        const overview = await renderOverview();
+        expect(overview.hasAttention()).toBe(true);
         await crossTheFreshnessBoundary();
+        expect(overview.hasAttention()).toBe(false);
+    });
 
-        expect(attentionRowCount(tree)).toBe(0);
-    }, SLOW_RENDER_TIMEOUT_MS);
-
-    it('keeps an unresolved pre-viewer permission request, which is deliberately not time-gated', async () => {
-        fixture.kind = 'permission';
+    it('retires pre-viewer permission attention at the same canonical freshness boundary', async () => {
+        seedLegacySession('permission');
         const dot = await renderNavigationDot();
         expect(dot.read()).toBe(true);
-
         await crossTheFreshnessBoundary();
-
-        expect(dot.read()).toBe(true);
-    }, SLOW_RENDER_TIMEOUT_MS);
+        expect(dot.read()).toBe(false);
+    });
 
     it('keeps an action request while the turn is still projected in progress', async () => {
-        fixture.kind = 'working_user_action';
+        seedLegacySession('working_user_action');
         const dot = await renderNavigationDot();
         expect(dot.read()).toBe(true);
-
         await crossTheFreshnessBoundary();
-
         expect(dot.read()).toBe(true);
-    }, SLOW_RENDER_TIMEOUT_MS);
+    });
 
     it('uses the same message-backed pending request for the overview and its exact clock boundary', async () => {
-        fixture.kind = 'message_user_action';
+        seedLegacySession('message_user_action');
         const dot = await renderNavigationDot();
+        expect(transcriptReads).toBe(0);
+        const overview = await renderOverview();
+        expect(overview.hasAttention()).toBe(true);
         expect(dot.read()).toBe(true);
-
-        // The message was observed one second before NOW, so its canonical
-        // 120-second freshness window ends after exactly 119 seconds.
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(STALE_SIGNAL_MS - 1_000);
-        });
-
+        // The real row projector carries the transcript's request into the message-free summary.
+        await act(async () => { await vi.advanceTimersByTimeAsync(STALE_SIGNAL_MS - 1_000); });
+        expect(overview.hasAttention()).toBe(false);
         expect(dot.read()).toBe(false);
-        // Advancing at the exact boundary must settle, not keep scheduling
-        // zero-delay retries against the already-retired candidate.
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(0);
-        });
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(overview.hasAttention()).toBe(false);
         expect(dot.read()).toBe(false);
-    }, SLOW_RENDER_TIMEOUT_MS);
+    });
+
+    it('counts a matching hydrated message-backed row without scanning its transcript', () => {
+        seedLegacySession('message_user_action');
+        const state = storage.getState();
+        const source: ActivityAttentionSource = {
+            isDataReady: state.isDataReady, sessionsById: state.sessions,
+            sessionListRowsByServerId: state.sessionListRowsByServerId,
+            ordinarySessionListMembershipByServerId: state.ordinarySessionListMembershipByServerId,
+            sessionListIndexByServerId: state.sessionListIndexByServerId,
+            concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
+        };
+        expect(buildPendingNavigationFromSource({ source, nowMs: NOW_MS }).map((candidate) => candidate.address))
+            .toEqual([{ serverId: 'server-a', sessionId: 'legacy-session' }]);
+        expect(transcriptReads).toBe(0);
+    });
 
     it('lets a completed transcript request defeat a stale pending agent-state copy before scheduling', async () => {
-        fixture.kind = 'completed_message_user_action';
+        seedLegacySession('completed_message_user_action');
+        const overview = await renderOverview();
         const dot = await renderNavigationDot();
-
+        expect(overview.hasAttention()).toBe(false);
         expect(dot.read()).toBe(false);
         await crossTheFreshnessBoundary();
+        expect(overview.hasAttention()).toBe(false);
         expect(dot.read()).toBe(false);
-    }, SLOW_RENDER_TIMEOUT_MS);
+    });
 });

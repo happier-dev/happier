@@ -105,7 +105,7 @@ async function createResumableSync(
         profile: { ...(state.profile ?? {}), id: 'account-a' },
     }), true);
 
-    const { sync } = await import('./sync');
+    const { sync } = await import('./syncEngine');
 
     // Register the socket status listener that owns the offline-duration bookkeeping.
     (sync as unknown as { subscribeToUpdates: () => void }).subscribeToUpdates();

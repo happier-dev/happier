@@ -10,7 +10,7 @@ import {
     resolveSessionMachineReachabilityState,
     type SessionMachineReachability,
 } from '@/components/sessions/model/resolveSessionMachineReachability';
-import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
+import { useSessionMachineDisplayIdentity, useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 
 type SessionMachineReachabilityStorageState = Readonly<{
     machines?: Readonly<Record<string, Machine | undefined>>;
@@ -28,7 +28,8 @@ export function useSessionMachineReachability(sessionId: string, serverId?: stri
     machineReachability: SessionMachineReachability;
 }> {
     const machineTarget = useSessionReachableMachineTarget(sessionId, serverId);
-    const resolvedMachineId = machineTarget?.machineId ?? null;
+    const displayIdentity = useSessionMachineDisplayIdentity(sessionId, serverId);
+    const resolvedMachineId = machineTarget?.machineId ?? (displayIdentity.machineId || null);
 
     const scopedMachine = useServerScopedMachine(serverId, serverId ? resolvedMachineId ?? '' : '');
     const machineStatus = getStorage()(

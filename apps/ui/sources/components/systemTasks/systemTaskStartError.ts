@@ -1,11 +1,16 @@
+import { resolveSystemTaskFailureMessage } from './resolveSystemTaskFailureMessage';
+
 export function readSystemTaskStartErrorMessage(error: unknown): string | null {
     if (typeof error === 'string') {
         const trimmed = error.trim();
         return trimmed.length > 0 ? trimmed : null;
     }
     if (error instanceof Error) {
-        const trimmed = error.message.trim();
-        return trimmed.length > 0 ? trimmed : null;
+        const code: unknown = Reflect.get(error, 'code');
+        return resolveSystemTaskFailureMessage({
+            ...(typeof code === 'string' ? { code } : {}),
+            message: error.message,
+        }) ?? null;
     }
     return null;
 }

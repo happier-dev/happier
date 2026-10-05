@@ -70,7 +70,7 @@ describe('sync JS thread lag telemetry lifecycle', () => {
             jsThreadLagTelemetryMaxSamples: 8,
         }));
 
-        const { sync } = await import('./sync');
+        const { sync } = await import('./syncEngine');
         const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
 
         await vi.advanceTimersByTimeAsync(50);
@@ -96,7 +96,7 @@ describe('sync JS thread lag telemetry lifecycle', () => {
         const nativeLoggingHook = vi.fn();
         (globalThis as { nativeLoggingHook?: typeof nativeLoggingHook }).nativeLoggingHook = nativeLoggingHook;
 
-        await import('./sync');
+        await import('./syncEngine');
 
         await vi.advanceTimersByTimeAsync(1050);
 

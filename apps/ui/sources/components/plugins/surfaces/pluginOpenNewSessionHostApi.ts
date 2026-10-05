@@ -6,6 +6,7 @@ import {
     pluginUiSelectedActionInputMatchesOperation,
     type PluginUiHostApiErrorCodeV1,
     type PluginUiJsonValueV1,
+    type PluginUiExecuteActionRequestV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import type { SessionNewSessionSeedOutcome } from '@/components/sessions/new/newSessionSeedComposer';
@@ -102,26 +103,29 @@ function asHostApiFailure(value: PluginUiJsonValueV1): PluginUiJsonValueV1 | nul
 }
 
 /**
- * Mounted producer for the dedicated New Session navigation method.
+ * Shared binding for the dedicated New Session navigation producer.
  *
- * It borrows the caller's exact mount and Account lifetime but owns no draft or
+ * It borrows the caller's exact currentness and Account lifetime but owns no draft or
  * navigation state itself; the incumbent one-shot handoff and mounted New
  * Session repository remain the only settlement owners.
  */
-export function createPluginOpenNewSessionHostApiHandler(input: Readonly<{
+type PluginOpenNewSessionBinding = Readonly<{
     pluginId: string;
     accountLifetime: ActiveServerAccountScopeLifetime;
     lifetimeSignal?: AbortSignal;
     isCurrent: () => boolean;
     executionTarget?: PreparedWorkspaceExecutionTarget;
-    executeSelectedOperation: PluginSurfaceHostApiMethodHandler;
+    executeSelectedOperation: (
+        payload: PluginUiExecuteActionRequestV1,
+        options?: PluginSurfaceHostApiRequestOptions,
+    ) => Promise<PluginUiJsonValueV1>;
     openNewSession?: OpenNewSession;
-}>): PluginSurfaceHostApiMethodHandler {
-    return async (request, options?: PluginSurfaceHostApiRequestOptions) => {
-        if (request.method !== 'openNewSession') {
-            return errorPayload('unsupported_method', 'open_new_session_method_mismatch');
-        }
-        const parsed = PluginUiOpenNewSessionRequestV1Schema.safeParse(request.payload);
+}>;
+
+/** Shared New Session producer for mounted surfaces and client Actions; owns no draft state. */
+export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBinding) {
+    return async (payload: unknown, options?: PluginSurfaceHostApiRequestOptions): Promise<PluginUiJsonValueV1> => {
+        const parsed = PluginUiOpenNewSessionRequestV1Schema.safeParse(payload);
         if (!parsed.success) return errorPayload('invalid_payload', 'open_new_session_request_invalid');
         const mergedSignal = mergeAbortSignals([input.lifetimeSignal, options?.signal]);
         const signal = mergedSignal.signal;
@@ -152,12 +156,8 @@ export function createPluginOpenNewSessionHostApiHandler(input: Readonly<{
                     return errorPayload('invalid_payload', 'prepared_review_workspace_selection_invalid');
                 }
                 const result = await input.executeSelectedOperation({
-                    ...request,
-                    method: 'executeAction',
-                    payload: {
-                        action: selected.data.action,
-                        input: selected.data.input,
-                    },
+                    action: selected.data.action,
+                    input: selected.data.input,
                 }, {
                     ...(signal ? { signal } : {}),
                     targetedOperation: operation,
@@ -206,5 +206,21 @@ export function createPluginOpenNewSessionHostApiHandler(input: Readonly<{
         } finally {
             mergedSignal.dispose();
         }
+    };
+}
+
+export function createPluginOpenNewSessionHostApiHandler(input: Omit<PluginOpenNewSessionBinding, 'executeSelectedOperation'> & Readonly<{
+    executeSelectedOperation: PluginSurfaceHostApiMethodHandler;
+}>): PluginSurfaceHostApiMethodHandler {
+    return async (request, options) => {
+        if (request.method !== 'openNewSession') {
+            return errorPayload('unsupported_method', 'open_new_session_method_mismatch');
+        }
+        return await createPluginOpenNewSessionHandler({
+            ...input,
+            executeSelectedOperation: async (payload, operationOptions) => await input.executeSelectedOperation({
+                ...request, method: 'executeAction', payload,
+            }, operationOptions),
+        })(request.payload, options);
     };
 }

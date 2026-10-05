@@ -10,6 +10,12 @@ import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/stora
 const setTranscriptMessageTimestampDisplayMode = vi.fn();
 const setSessionThinkingDisplayMode = vi.fn();
 const setSessionThinkingInlinePresentation = vi.fn();
+const accountSettingsWrites = vi.hoisted(() => [] as unknown[]);
+
+// The Account settings sync engine is the persistence boundary; the view's write reaches it as one delta.
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+    getSyncSingleton: () => ({ applySettings: (delta: unknown) => { accountSettingsWrites.push(delta); } }),
+}));
 
 installSessionSettingsCommonModuleMocks({
     storage: async (importOriginal) => {
@@ -121,7 +127,7 @@ describe('TranscriptSettingsView', () => {
         expect(setTranscriptMessageTimestampDisplayMode).toHaveBeenCalledWith('always');
     });
 
-    it('shows thinking as picture choices and writes both settings behind the full inline choice', async () => {
+    it('shows thinking as picture choices and writes both settings behind the full inline choice in one write', async () => {
         const { TranscriptSettingsView } = await import('./TranscriptSettingsView');
         const screen = await renderSettingsView(React.createElement(TranscriptSettingsView));
 
@@ -131,7 +137,8 @@ describe('TranscriptSettingsView', () => {
         expect(tiles?.props.options.every((option: { preview?: unknown }) => option.preview != null)).toBe(true);
 
         tiles?.props.onChange('inline_full');
-        expect(setSessionThinkingDisplayMode).toHaveBeenCalledWith('inline');
-        expect(setSessionThinkingInlinePresentation).toHaveBeenCalledWith('full');
+        expect(accountSettingsWrites).toEqual([{ sessionThinkingDisplayMode: 'inline', sessionThinkingInlinePresentation: 'full' }]);
+        expect(setSessionThinkingDisplayMode).not.toHaveBeenCalled();
+        expect(setSessionThinkingInlinePresentation).not.toHaveBeenCalled();
     });
 });
