@@ -19,7 +19,6 @@ import type { ArtifactBodyV1 } from '../../artifacts/artifactBinaryV1.js';
 import { workflowDefinitionArtifactSharingAdapterV1 } from '../../artifacts/artifactSharingV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import type { WorkflowPluginSourceReaderV1, WorkflowPluginSourceV1 } from '../../workflows/workflowPluginSourceV1.js';
-import type { ArtifactBodyV1 } from '../../artifacts/artifactBinaryV1.js';
 
 export type WorkflowDefinitionArtifactHeaderRow = Readonly<{
   artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number; updatedAt: number;
