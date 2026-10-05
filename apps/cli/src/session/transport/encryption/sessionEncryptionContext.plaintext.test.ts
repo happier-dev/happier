@@ -388,6 +388,7 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
       rawSession: {
         encryptionMode: 'e2ee',
         metadataLayoutVersion: 1,
+        share: null,
         metadata: encryptStoredSessionPayload({
           mode: 'e2ee',
           ctx: {
@@ -447,6 +448,7 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
         rawSession: {
           encryptionMode: sessionMode,
           metadataLayoutVersion: 1,
+          share: null,
           metadata: sessionMode === 'plain'
             ? JSON.stringify(sharedMetadata)
             : encryptStoredSessionPayload({

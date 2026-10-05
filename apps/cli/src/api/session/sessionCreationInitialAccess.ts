@@ -1,5 +1,14 @@
 import {
   encodeBase64,
+  ENCRYPTED_DATA_KEY_V1_BYTES,
+  PatchSessionDataKeyEnvelopesResultV1Schema,
+  PatchSessionDataKeyEnvelopesV1Schema,
+  prepareSessionDataKeyEnvelopeItemV1,
+  runSessionDataKeyPreparationPass,
+  SessionDataKeyEnvelopePageV1Schema,
+  type PatchSessionDataKeyEnvelopesV1,
+  type SessionDataKeyEnvelopeItemV1,
+  type SessionDataKeyPreparationPassResult,
   OperationUpdateRequiredV1Schema,
   sealEncryptedDataKeyEnvelopeV1,
   SessionInitialAccessDraftV1Schema,
@@ -12,6 +21,7 @@ import {
   type SessionInitialAccessMaterializedV1,
 } from '@happier-dev/protocol';
 import axios from 'axios';
+import { setImmediate } from 'node:timers/promises';
 
 import { getRandomBytes } from '@/api/encryption';
 import { configuration } from '@/configuration';
@@ -37,6 +47,74 @@ export class SessionInitialAccessEnvelopeHostError extends Error {
     super(code);
     this.name = 'SessionInitialAccessEnvelopeHostError';
   }
+}
+
+/**
+ * Collective grants commit with the row. The physical creator then prepares
+ * their authorized audience using the returned row's opened standalone key,
+ * never a new proposed key on create-or-rejoin. Plain Sessions need no work.
+ */
+export async function prepareSessionInitialAccessDataKeyEnvelopes(params: Readonly<{
+  fields: Readonly<{ initialAccess?: SessionInitialAccessDraftV1; primaryTeamId?: string | null }>;
+  sessionId: string;
+  sessionEncryptionMode: 'plain' | 'e2ee';
+  resolveSessionDataKey: () => Uint8Array | null;
+  token: string;
+  serverHttpBaseUrl: string;
+  signal?: AbortSignal;
+  isScopeCurrent?: () => boolean;
+}>): Promise<SessionDataKeyPreparationPassResult | undefined> {
+  const collective = params.fields.initialAccess?.grants.some(grant => grant.subject.kind !== 'account')
+    || Boolean(params.fields.primaryTeamId);
+  if (!collective || params.sessionEncryptionMode === 'plain') return;
+  params.signal?.throwIfAborted();
+  const key = params.resolveSessionDataKey();
+  if (!key || key.byteLength !== ENCRYPTED_DATA_KEY_V1_BYTES) {
+    throw new SessionInitialAccessEnvelopeHostError('session_data_key_unavailable');
+  }
+  const url = `${params.serverHttpBaseUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/data-key/envelopes`;
+  const options = {
+    headers: { Authorization: `Bearer ${params.token}`, 'Content-Type': 'application/json' },
+    timeout: configuration.sessionControlHttpTimeoutMs,
+    ...(params.signal ? { signal: params.signal } : {}),
+    validateStatus: () => true,
+  };
+  const assertResponse = (status: number) => {
+    if (status === 401 || status === 403) throw new SessionInitialAccessEnvelopeHostError('not_authenticated', status);
+    if (status !== 200) throw new SessionInitialAccessEnvelopeHostError('session_access_request_failed', status);
+  };
+  const result = await runSessionDataKeyPreparationPass<SessionDataKeyEnvelopeItemV1, PatchSessionDataKeyEnvelopesV1['entries'][number]>({
+    fetchPage: async cursor => {
+      const response = await axios.get<unknown>(url, { ...options,
+        params: { state: 'action_required', ...(cursor ? { cursor } : {}) } });
+      assertResponse(response.status);
+      const page = SessionDataKeyEnvelopePageV1Schema.parse(response.data);
+      return page.status === 'not_required' ? { items: [], nextCursor: null } : page;
+    },
+    itemKey: item => item.recipientAccountId,
+    prepareEntries: async items => {
+      const entries: Array<PatchSessionDataKeyEnvelopesV1['entries'][number]> = [];
+      const failedItemKeys: string[] = [];
+      for (const item of items) {
+        params.signal?.throwIfAborted();
+        const prepared = prepareSessionDataKeyEnvelopeItemV1({ item, sessionDataKey: key, randomBytes: getRandomBytes });
+        if (prepared.kind === 'prepared') entries.push(prepared.entry);
+        else failedItemKeys.push(item.recipientAccountId);
+        // The daemon stays steerable during fan-out; paging is not a crypto slice.
+        await setImmediate();
+      }
+      return { entries, failedItemKeys };
+    },
+    commitEntries: async entries => {
+      const response = await axios.patch<unknown>(url, PatchSessionDataKeyEnvelopesV1Schema.parse({ entries }), options);
+      assertResponse(response.status);
+      return PatchSessionDataKeyEnvelopesResultV1Schema.parse(response.data).appliedCount;
+    },
+    isScopeCurrent: () => !params.signal?.aborted && (params.isScopeCurrent?.() ?? true),
+  });
+  params.signal?.throwIfAborted();
+  if (result.status === 'scope_changed') throw new SessionInitialAccessEnvelopeHostError('session_access_request_failed');
+  return result;
 }
 
 /**
