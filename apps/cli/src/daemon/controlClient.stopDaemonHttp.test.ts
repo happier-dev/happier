@@ -137,7 +137,7 @@ describe('daemon control client: stopDaemonHttp', () => {
     }
   });
 
-  it('allows a lifecycle-owned session stop to use its caller budget', async () => {
+  it.each([undefined, null])('leaves local session Stop under lifecycle ownership with timeout %s', async (timeoutMs) => {
     const server = http.createServer(async (req, res) => {
       if (req.method === 'POST' && req.url === '/stop-session') {
         await readReqBody(req);
@@ -164,7 +164,7 @@ describe('daemon control client: stopDaemonHttp', () => {
       });
       const timeout = vi.spyOn(AbortSignal, 'timeout');
 
-      await expect(stopDaemonSession('sess_1', { timeoutMs: null })).resolves.toEqual({ status: 'stopped' });
+      await expect(stopDaemonSession('sess_1', timeoutMs === undefined ? {} : { timeoutMs })).resolves.toEqual({ status: 'stopped' });
 
       expect(timeout).not.toHaveBeenCalled();
     } finally {

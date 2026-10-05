@@ -81,6 +81,7 @@ describe('fork child failure recovery', () => {
             },
             machineId: 'machine-child',
             method: 'stop-session',
+            timeoutMs: null,
             request: { sessionId: 'child' },
             authorization: {
                 kind: 'session.write',

@@ -23,113 +23,129 @@ export async function waitForSessionIdle(params: Readonly<{
   credentials: StoredCredentials;
   idOrPrefix: string;
   timeoutMs: number;
+  signal?: AbortSignal;
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }>): Promise<
   | Readonly<{ ok: true; sessionId: string; idle: true; observedAt: number }>
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported' | 'encryption_material_unavailable' | 'timeout'; candidates?: string[] }>
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported' | 'encryption_material_unavailable' | 'timeout' | 'cancelled'; candidates?: string[] }>
 > {
   const timeoutMs = Math.max(1, Math.trunc(params.timeoutMs));
   const deadlineMs = Date.now() + timeoutMs;
   const remainingTimeoutMs = () => Math.max(1, deadlineMs - Date.now());
-
-  const sessionTarget = await resolveSessionTransportContext({
-    credentials: params.credentials,
-    idOrPrefix: params.idOrPrefix,
-    ...(params.serverFeaturesSnapshot ? { serverFeaturesSnapshot: params.serverFeaturesSnapshot } : {}),
-  });
-  if (!sessionTarget.ok) {
-    return {
-      ok: false,
-      code: sessionTarget.code,
-      ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
-    };
-  }
-
-  const agentStateCiphertext =
-    typeof sessionTarget.rawSession.agentState === 'string' ? String(sessionTarget.rawSession.agentState).trim() : null;
-  const initialProjectedActivity = detectSessionTurnActivityFromProjection(sessionTarget.rawSession);
-  let initialTranscriptActivity: SessionTurnActivity | null = null;
-  let initialTranscriptActivityUnavailable = false;
-  if (!initialProjectedActivity) {
-    try {
-      initialTranscriptActivity = await detectSessionTurnActivity({
-        token: params.credentials.token,
-        sessionId: sessionTarget.sessionId,
-        encryptionMode: sessionTarget.mode,
-        encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
-        encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
-        transcriptFetchTimeoutMs: remainingTimeoutMs(),
-      });
-    } catch {
-      initialTranscriptActivityUnavailable = true;
-    }
-  }
-  const initialTurnActivity =
-    initialProjectedActivity?.turnInFlight
-      ? initialProjectedActivity
-      : initialTranscriptActivity?.turnInFlight
-        ? initialTranscriptActivity
-        : initialTranscriptActivityUnavailable
-          ? unknownTranscriptTurnActivity()
-          : initialProjectedActivity ?? initialTranscriptActivity ?? {
-            pendingUserTurns: 0,
-            activeTaskInFlight: false,
-            turnInFlight: false,
-          };
-  const initialTurnActivityRequiresTranscriptIdleEvidence =
-    initialTranscriptActivityUnavailable
-    || (
-      initialProjectedActivity !== null
-      && !initialProjectedActivity.turnInFlight
-      && initialTranscriptActivity?.turnInFlight === true
-    );
-  const initialProjectedPendingRequestCount = readSessionProjectedPendingRequestCount(sessionTarget.rawSession);
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new Error('timeout')), timeoutMs);
+  const signal = params.signal ? AbortSignal.any([params.signal, deadline.signal]) : deadline.signal;
 
   try {
-    const result = await waitForIdleViaSocket({
-      token: params.credentials.token,
-      sessionId: sessionTarget.sessionId,
-      ctx: sessionTarget.ctx,
-      sessionEncryptionMode: sessionTarget.mode,
-      timeoutMs: remainingTimeoutMs(),
-      initialTurnActivity,
-      initialTurnActivityRequiresTranscriptIdleEvidence,
-      recheckTurnActivity: async () =>
-        initialProjectedActivity
-          ? detectLatestSessionTurnActivity({
-            token: params.credentials.token,
-            sessionId: sessionTarget.sessionId,
-            encryptionMode: sessionTarget.mode,
-            encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
-            encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
-            transcriptFetchTimeoutMs: remainingTimeoutMs(),
-          })
-          : detectSessionTurnActivity({
-            token: params.credentials.token,
-            sessionId: sessionTarget.sessionId,
-            encryptionMode: sessionTarget.mode,
-            encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
-            encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
-            transcriptFetchTimeoutMs: remainingTimeoutMs(),
-          }),
-      ...(initialProjectedPendingRequestCount !== null
-        ? { initialAgentStateSummary: { pendingRequestsCount: initialProjectedPendingRequestCount } }
-        : {}),
-      preferProjectionUpdates: initialProjectedActivity !== null,
-      // The projection only carries the pending-request count, so the AgentState observation from the
-      // same snapshot must still reach the idle owner: it is the only source of `controlledByUser`.
-      initialAgentStateCiphertextBase64:
-        agentStateCiphertext && agentStateCiphertext.length > 0 ? agentStateCiphertext : null,
+    const sessionTarget = await resolveSessionTransportContext({
+      credentials: params.credentials,
+      idOrPrefix: params.idOrPrefix,
+      signal,
+      ...(params.serverFeaturesSnapshot ? { serverFeaturesSnapshot: params.serverFeaturesSnapshot } : {}),
     });
-    return {
-      ok: true,
-      sessionId: sessionTarget.sessionId,
-      ...result,
-    };
-  } catch {
-    return {
-      ok: false,
-      code: 'timeout',
-    };
+    if (!sessionTarget.ok) {
+      return {
+        ok: false,
+        code: sessionTarget.code,
+        ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
+      };
+    }
+
+    const agentStateCiphertext =
+      typeof sessionTarget.rawSession.agentState === 'string' ? String(sessionTarget.rawSession.agentState).trim() : null;
+    const initialProjectedActivity = detectSessionTurnActivityFromProjection(sessionTarget.rawSession);
+    let initialTranscriptActivity: SessionTurnActivity | null = null;
+    let initialTranscriptActivityUnavailable = false;
+    if (!initialProjectedActivity) {
+      try {
+        initialTranscriptActivity = await detectSessionTurnActivity({
+          token: params.credentials.token,
+          sessionId: sessionTarget.sessionId,
+          encryptionMode: sessionTarget.mode,
+          encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
+          encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
+          transcriptFetchTimeoutMs: remainingTimeoutMs(),
+          signal,
+        });
+      } catch {
+        initialTranscriptActivityUnavailable = true;
+      }
+    }
+    const initialTurnActivity =
+      initialProjectedActivity?.turnInFlight
+        ? initialProjectedActivity
+        : initialTranscriptActivity?.turnInFlight
+          ? initialTranscriptActivity
+          : initialTranscriptActivityUnavailable
+            ? unknownTranscriptTurnActivity()
+            : initialProjectedActivity ?? initialTranscriptActivity ?? {
+              pendingUserTurns: 0,
+              activeTaskInFlight: false,
+              turnInFlight: false,
+            };
+    const initialTurnActivityRequiresTranscriptIdleEvidence =
+      initialTranscriptActivityUnavailable
+      || (
+        initialProjectedActivity !== null
+        && !initialProjectedActivity.turnInFlight
+        && initialTranscriptActivity?.turnInFlight === true
+      );
+    const initialProjectedPendingRequestCount = readSessionProjectedPendingRequestCount(sessionTarget.rawSession);
+
+    try {
+      const result = await waitForIdleViaSocket({
+        token: params.credentials.token,
+        sessionId: sessionTarget.sessionId,
+        ctx: sessionTarget.ctx,
+        sessionEncryptionMode: sessionTarget.mode,
+        timeoutMs: remainingTimeoutMs(),
+        signal,
+        initialTurnActivity,
+        initialTurnActivityRequiresTranscriptIdleEvidence,
+        recheckTurnActivity: async () =>
+          initialProjectedActivity
+            ? detectLatestSessionTurnActivity({
+              token: params.credentials.token,
+              sessionId: sessionTarget.sessionId,
+              encryptionMode: sessionTarget.mode,
+              encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
+              encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
+              transcriptFetchTimeoutMs: remainingTimeoutMs(),
+              signal,
+            })
+            : detectSessionTurnActivity({
+              token: params.credentials.token,
+              sessionId: sessionTarget.sessionId,
+              encryptionMode: sessionTarget.mode,
+              encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
+              encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
+              transcriptFetchTimeoutMs: remainingTimeoutMs(),
+              signal,
+            }),
+        ...(initialProjectedPendingRequestCount !== null
+          ? { initialAgentStateSummary: { pendingRequestsCount: initialProjectedPendingRequestCount } }
+          : {}),
+        preferProjectionUpdates: initialProjectedActivity !== null,
+        // The projection only carries the pending-request count, so the AgentState observation from the
+        // same snapshot must still reach the idle owner: it is the only source of `controlledByUser`.
+        initialAgentStateCiphertextBase64:
+          agentStateCiphertext && agentStateCiphertext.length > 0 ? agentStateCiphertext : null,
+      });
+      return {
+        ok: true,
+        sessionId: sessionTarget.sessionId,
+        ...result,
+      };
+    } catch {
+      return {
+        ok: false,
+        code: params.signal?.aborted ? 'cancelled' : 'timeout',
+      };
+    }
+  } catch (error) {
+    if (signal.aborted) return { ok: false, code: params.signal?.aborted ? 'cancelled' : 'timeout' };
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
 }

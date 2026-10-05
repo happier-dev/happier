@@ -148,6 +148,7 @@ export async function detectSessionTurnActivity(params: Readonly<{
     sessionProjection?: unknown;
     readyCompletesPendingUserTurns?: boolean;
     transcriptFetchTimeoutMs?: number;
+    signal?: AbortSignal;
 }>): Promise<SessionTurnActivity> {
     const projectedActivity = detectSessionTurnActivityFromProjection(params.sessionProjection);
     if (projectedActivity) {
@@ -159,6 +160,7 @@ export async function detectSessionTurnActivity(params: Readonly<{
         const rows =
             typeof params.afterSeqExclusive === 'number' && Number.isFinite(params.afterSeqExclusive)
                 ? await fetchEncryptedTranscriptPageAfterSeq({
+                    ...(params.signal ? { signal: params.signal } : {}),
                     token: params.token,
                     sessionId: params.sessionId,
                     afterSeq: Math.max(0, Math.trunc(params.afterSeqExclusive)),
@@ -168,6 +170,7 @@ export async function detectSessionTurnActivity(params: Readonly<{
                         : {}),
                 })
                 : await fetchEncryptedTranscriptPageLatest({
+                    ...(params.signal ? { signal: params.signal } : {}),
                     token: params.token,
                     sessionId: params.sessionId,
                     limit: 20,
