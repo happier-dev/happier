@@ -37,7 +37,8 @@ import {
 } from '@/daemon/controlClient';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
-import { createSessionFollowActionDeps, createSessionTrackedTargetCompatibilityDep } from '@/api/sessionFollowActionDeps';
+import { createSessionFollowActionDeps } from '@/api/sessionFollowActionDeps';
+import { reconcileExternalActionTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { createSessionDiscussionActionDeps } from '@/session/discussions/sessionDiscussionActionDeps';
 import {
   resolveServerHttpBaseUrl,
@@ -166,19 +167,6 @@ export function createExternalMcpServer(params: Readonly<{
               ...(serverIdentityId ? { serverIdentityId } : {}),
               resolveServerFeaturesSnapshot,
             }),
-            sessionTargetPrimarySet: async ({ sessionId, serverId: targetServerId }) => {
-              const normalized = typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : null;
-              const normalizedServerId = normalizeId(targetServerId);
-              if (normalized && normalizedServerId !== serverId) {
-                return { ok: false, errorCode: 'session_not_found', error: 'session_not_found' };
-              }
-              defaultSessionAddress = normalized ? { serverId: normalizedServerId, sessionId: normalized } : null;
-              return { ok: true, sessionId: normalized, serverId: normalized ? normalizedServerId : null };
-            },
-            ...createSessionTrackedTargetCompatibilityDep({
-              serverId,
-              replaceSessionVoiceInclusions: followDeps.replaceSessionVoiceInclusions,
-            }),
           },
         );
         const pinnedBaseExecutor = {
@@ -225,17 +213,42 @@ export function createExternalMcpServer(params: Readonly<{
             if (!admittedActionId.success) return { ok: false as const, errorCode: 'unsupported_action', error: 'unsupported_action' };
             const sessionId = context?.defaultSessionId && context.defaultSessionId !== 'cli-global'
               ? context.defaultSessionId : null;
+            const reconciliation = reconcileExternalActionTarget({
+              actionId: admittedActionId.data,
+              rawInput: input,
+              target: context?.externalActionTarget
+                ?? (params.machineId ? { kind: 'machine', machineId: params.machineId } : undefined),
+              currentMachineId: params.machineId ?? '',
+            });
+            if (reconciliation.kind === 'rejected') return reconciliation.execution;
+            // The same ingress owner selects explicit parsed Session targets.
+            // A primary-target clear addresses the client, not the old cursor.
+            const target = reconciliation.target?.kind === 'session' || context?.externalActionTarget
+              || actionId === 'session.target.primary.set' || !sessionId
+              ? reconciliation.target : { kind: 'session' as const, sessionId };
             const result = await requestDaemonSignedRootActionExecution({
               actionId: admittedActionId.data,
               input,
               surface: 'mcp',
-              ...(sessionId ? { target: { kind: 'session' as const, sessionId } }
-                : params.machineId ? { target: { kind: 'machine' as const, machineId: params.machineId } } : {}),
+              ...(target ? { target } : {}),
               ...(context?.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
             }, {
               ...(daemonControlTarget ? { target: daemonControlTarget } : {}),
               ...(context?.signal ? { signal: context.signal } : {}),
             });
+            if (actionId === 'session.target.primary.set' && result.ok) {
+              const cursor = result.result;
+              // This cursor is caller context only. Observe the canonical UI
+              // target owner's accepted result; never execute its mutation here.
+              if (cursor && typeof cursor === 'object' && !Array.isArray(cursor)
+                && 'ok' in cursor && cursor.ok === true && 'status' in cursor && cursor.status === 'ok'
+                && 'sessionId' in cursor && 'serverId' in cursor) {
+                if (cursor.sessionId === null && cursor.serverId === null) defaultSessionAddress = null;
+                else if (cursor.serverId === serverId && typeof cursor.sessionId === 'string' && cursor.sessionId.trim()) {
+                  defaultSessionAddress = { serverId, sessionId: cursor.sessionId.trim() };
+                }
+              }
+            }
             return !result.ok && result.errorCode === 'daemon_unavailable'
               ? clientActionUnavailable(actionId) : result;
           },
