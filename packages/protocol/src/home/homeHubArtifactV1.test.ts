@@ -9,7 +9,10 @@ const copy = (id: string, session: string) => ({ v: 1 as const, id, definition: 
 const accountId = 'account-one';
 function boundary() {
     const b = createWorkBoardArtifactBoundary();
-    const transport: HomeHubArtifactTransportV1 = { ...b.transport, read: async (id, options) => {
+    const transport: HomeHubArtifactTransportV1 = { ...b.transport, create: async input => {
+        await b.transport.create(input);
+        return { ...b.rows.get(input.artifactId)!, ownerAccountId: accountId };
+    }, read: async (id, options) => {
         const row = await b.transport.read(id, options);
         return row ? { ...row, ownerAccountId: accountId } : null;
     } };
@@ -301,6 +304,42 @@ describe('Home Account Artifact semantic edits', () => {
         await expect(retired.apply({ kind: 'reset' })).rejects.toMatchObject({ code: 'home_hub_scope_retired' });
         expect(b.rows.get(id)).toBe(row);
         expect(b.updates).toEqual([]);
+    });
+
+    it('returns the acknowledged first create after Account retirement without a late read or publication', async () => {
+        const b = boundary();
+        let current = true;
+        const published: unknown[] = [];
+        const port = createHomeHubArtifactPortV1({ ...b.transport, create: async input => {
+            const result = await b.transport.create(input);
+            current = false;
+            return result;
+        } }, { accountId, shouldContinue: () => current, onLayout: layout => { published.push(layout); } });
+        const acknowledged = (await port.apply({ kind: 'setup_visibility', stepId: 'addPhone', hidden: true })).layout;
+        expect(acknowledged.hidden).toContain('setup:addPhone');
+        expect(published).toEqual([]);
+        expect(b.reads).toEqual([buildHomeHubArtifactIdV1(accountId)]);
+        expect(await createHomeHubArtifactPortV1(b.transport, { accountId }).read()).toEqual(acknowledged);
+        await expect(port.apply({ kind: 'reset' })).rejects.toMatchObject({ code: 'home_hub_scope_retired' });
+    });
+
+    it('replays against the actual same-id create acknowledgement rather than the attempted content', async () => {
+        const b = boundary();
+        const id = buildHomeHubArtifactIdV1(accountId);
+        let incumbent = true;
+        const port = createHomeHubArtifactPortV1({ ...b.transport, create: async input => {
+            if (incumbent) {
+                incumbent = false;
+                b.rows.set(id, { artifactId: id, header: input.header,
+                    body: JSON.stringify({ ...HOME_HUB_DEFAULT_LAYOUT, hidden: ['setup:addMachine'] }),
+                    revision: { headerVersion: 3, bodyVersion: 4 } });
+            }
+            return b.transport.create(input);
+        } }, { accountId });
+        const acknowledged = (await port.apply({ kind: 'setup_visibility', stepId: 'addPhone', hidden: true })).layout;
+        expect(acknowledged.hidden).toEqual(expect.arrayContaining(['setup:addMachine', 'setup:addPhone']));
+        expect(b.rows.get(id)?.revision).toEqual({ headerVersion: 4, bodyVersion: 5 });
+        expect(b.updates).toEqual([id]);
     });
 
     it('returns the acknowledged update after Account retirement without publishing its late layout', async () => {
