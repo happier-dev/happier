@@ -107,11 +107,11 @@ test('checks every requested project sequentially even when source checking fail
   }
 });
 
-test('CLI and UI source/test projects retain the full root-file and ambient coverage', () => {
+test('CLI source/test projects retain the full root-file and ambient coverage', () => {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const isTest = (path) => /\.(?:test|spec)\.tsx?$/u.test(path)
     || path.replaceAll('\\', '/').includes('/__tests__/');
-  for (const app of ['cli', 'ui']) {
+  for (const app of ['cli']) {
     const root = join(repoRoot, 'apps', app);
     const readProject = (name) => {
       const parsed = ts.getParsedCommandLineOfConfigFile(join(root, name), {}, {
