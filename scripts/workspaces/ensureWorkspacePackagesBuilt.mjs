@@ -258,31 +258,6 @@ export function readWorkspaceBuildFileDigest(path) {
   return digest;
 }
 
-function collectExtendedTsconfigs(packageDir, inputPaths) {
-  const extended = new Set();
-  const visit = (path) => {
-    if (extended.has(path)) return;
-    extended.add(path);
-    const content = readFileSync(path, 'utf8');
-    const match = content.match(/"extends"\s*:\s*("[^"]+"|\[[^\]]+\])/);
-    if (!match) return;
-    const specs = match[1].startsWith('[')
-      ? [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1])
-      : [match[1].slice(1, -1)];
-    for (const spec of specs) {
-      if (!spec.startsWith('.')) continue;
-      const base = resolve(dirname(path), spec);
-      const target = existsSync(base) ? base : `${base}.json`;
-      if (!existsSync(target)) throw new Error(`[workspace-build] missing extended tsconfig: ${target}`);
-      visit(target);
-    }
-  };
-  for (const path of inputPaths) {
-    if (/^tsconfig(?:\.[^.]+)*\.json$/.test(basename(path))) visit(path);
-  }
-  return [...extended].filter((path) => !path.startsWith(`${packageDir}${sep}`));
-}
-
 function digestDirectory(path, hash, { declarationsOnly = false, root = path } = {}) {
   if (!existsSync(path)) return;
   for (const name of readdirSync(path).sort()) {
@@ -328,6 +303,8 @@ export function readWorkspacePackageInputFingerprint({
   includeShippedFiles = false,
   excludeGeneratedPluginManifest = false,
   excludeGeneratedPluginArtifacts = false,
+  identitySourceRepoDir = process.env.HAPPIER_STACK_REPO_DIR,
+  identityRepoDir = process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR,
   resolveTypeScriptCliInvocationImpl = resolveTypeScriptCliInvocation,
 }) {
   const hash = createHash('sha256');
@@ -350,16 +327,19 @@ export function readWorkspacePackageInputFingerprint({
   const paths = [...new Set([
     ...inputPaths,
     ...referencedBuildInputs,
-    ...collectExtendedTsconfigs(packageDir, inputPaths),
     compilerPath,
     compilerPackageJson,
     buildOwnerPath,
   ])].sort();
   for (const path of paths) {
-    hash.update(`${path}\0${readWorkspaceBuildFileDigest(path)}\0`);
+    const identityPath = identityRepoDir && identitySourceRepoDir
+      ? remapPathToDirectory(path, { sourceDir: identitySourceRepoDir, destinationDir: identityRepoDir }) : path;
+    hash.update(`${identityPath}\0${readWorkspaceBuildFileDigest(path)}\0`);
   }
   for (const dependencyDir of [...dependencyDirs].sort()) {
-    hash.update(`dependency:${dependencyDir}\0`);
+    const identityDependencyDir = identityRepoDir && identitySourceRepoDir
+      ? remapPathToDirectory(dependencyDir, { sourceDir: identitySourceRepoDir, destinationDir: identityRepoDir }) : dependencyDir;
+    hash.update(`dependency:${identityDependencyDir}\0`);
     const metadata = JSON.parse(readFileSync(join(dependencyDir, 'package.json'), 'utf8'));
     hash.update(JSON.stringify(Object.fromEntries(
       ['name', 'type', 'main', 'module', 'types', 'typings', 'typesVersions', 'exports', 'imports']

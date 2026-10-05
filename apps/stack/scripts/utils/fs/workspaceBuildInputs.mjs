@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
 function isWorkspaceBuildConfigFile(name) {
   if (name === 'package.json') return true;
@@ -75,6 +75,28 @@ export function readWorkspaceBuildInputs(packageDir, {
       visit(join(packageDir, entry), { ignoreTests: false });
     }
   }
+  // A config excluded as a test-only root can still be a consumed build input
+  // when another admitted config extends it. One path owner serves source
+  // identity, package admission, and dedicated-workspace source capture.
+  const configs = new Set();
+  const visitConfig = (path) => {
+    if (configs.has(path)) return;
+    configs.add(path);
+    const match = readFileSync(path, 'utf8').match(/"extends"\s*:\s*("[^"]+"|\[[^\]]+\])/);
+    if (!match) return;
+    const specs = match[1].startsWith('[')
+      ? [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1])
+      : [match[1].slice(1, -1)];
+    for (const spec of specs) {
+      if (!spec.startsWith('.')) continue;
+      const base = resolve(dirname(path), spec);
+      const target = existsSync(base) ? base : `${base}.json`;
+      if (!existsSync(target)) throw new Error(`[workspace-build] missing extended tsconfig: ${target}`);
+      inputs.add(relative(packageDir, target).split(sep).join('/'));
+      visitConfig(target);
+    }
+  };
+  for (const path of [...inputs]) if (/^tsconfig(?:\.[^.]+)*\.json$/.test(basename(path))) visitConfig(join(packageDir, path));
   return [...inputs].sort();
 }
 
