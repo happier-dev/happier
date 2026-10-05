@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   applyPermissionIntentFromMetadataIfNewer,
-  applyStartupPermissionModeSeedIfNewer,
+  applyStartupPermissionModeSeed,
   readPermissionModeUpdatedAtFromMetadataSnapshot,
   type PermissionModeSeedSession,
 } from './modeStateSync';
@@ -18,7 +18,7 @@ describe('readPermissionModeUpdatedAtFromMetadataSnapshot', () => {
   });
 });
 
-describe('applyStartupPermissionModeSeedIfNewer', () => {
+describe('applyStartupPermissionModeSeed', () => {
   const createSession = (seed: { intent: any; updatedAt: number } | null): PermissionModeSeedSession => ({
     getMetadataSnapshot: () => null,
     fetchLatestUserPermissionIntentFromTranscript: async () => seed,
@@ -27,7 +27,7 @@ describe('applyStartupPermissionModeSeedIfNewer', () => {
   it('skips transcript seeding when explicit permission mode is provided', async () => {
     let applied = false;
 
-    const nextUpdatedAt = await applyStartupPermissionModeSeedIfNewer({
+    const nextUpdatedAt = await applyStartupPermissionModeSeed({
       explicitPermissionMode: 'plan',
       session: createSession({ intent: 'safe-yolo', updatedAt: 50 }),
       currentPermissionModeUpdatedAt: 10,
@@ -40,11 +40,11 @@ describe('applyStartupPermissionModeSeedIfNewer', () => {
     expect(applied).toBe(false);
   });
 
-  it('applies transcript seed only when newer than the current timestamp', async () => {
+  it('applies a newer transcript seed at startup', async () => {
     let mode: string | null = null;
     let updatedAt = 10;
 
-    const nextUpdatedAt = await applyStartupPermissionModeSeedIfNewer({
+    const nextUpdatedAt = await applyStartupPermissionModeSeed({
       explicitPermissionMode: undefined,
       session: createSession({ intent: 'safe-yolo', updatedAt: 25 }),
       currentPermissionModeUpdatedAt: updatedAt,
@@ -66,7 +66,7 @@ describe('applyStartupPermissionModeSeedIfNewer', () => {
     let staleApplied = false;
     let emptyApplied = false;
 
-    const staleResult = await applyStartupPermissionModeSeedIfNewer({
+    const staleResult = await applyStartupPermissionModeSeed({
       explicitPermissionMode: undefined,
       session: staleSession,
       currentPermissionModeUpdatedAt: 10,
@@ -75,7 +75,7 @@ describe('applyStartupPermissionModeSeedIfNewer', () => {
       },
     });
 
-    const emptyResult = await applyStartupPermissionModeSeedIfNewer({
+    const emptyResult = await applyStartupPermissionModeSeed({
       explicitPermissionMode: undefined,
       session: emptySession,
       currentPermissionModeUpdatedAt: 10,
