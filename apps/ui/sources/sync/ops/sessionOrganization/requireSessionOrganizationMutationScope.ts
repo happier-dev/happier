@@ -13,9 +13,8 @@ import {
  */
 export async function requireSessionOrganizationMutationScope(
     requestedServerId: string | null | undefined,
-    options?: Readonly<{ expectedAccountId: string }>,
 ): Promise<SessionOrganizationMutationScope> {
-    const result = await resolveSessionOrganizationMutationScope(requestedServerId, options);
+    const result = await resolveSessionOrganizationMutationScope(requestedServerId);
     if (result.ok) return result.scope;
 
     const requestedHome = result.requestedServerId || String(requestedServerId ?? '').trim() || t('common.unavailable');

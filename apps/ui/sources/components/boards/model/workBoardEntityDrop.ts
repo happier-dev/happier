@@ -128,7 +128,8 @@ export function createWorkBoardUiActionPort(
             const outcome = await queue.dispatch(currentIntent);
             if (outcome.status === 'applied') return outcome.boards;
             if (outcome.status === 'refused') throw new WorkBoardUiAdmissionError(outcome.code);
-            throw Object.assign(new Error(outcome.code), { code: outcome.code });
+            // Queue recovery owns the uncertain write; carry its disposition across the Action boundary.
+            throw Object.assign(new Error(outcome.code), { code: 'outcome_unknown' });
         },
     };
 }

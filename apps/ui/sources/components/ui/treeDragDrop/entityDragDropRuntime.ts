@@ -8,9 +8,9 @@ import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { isFiniteRect } from './geometry/treeDropCoordinateSpace';
 import type {
     EntityDragDropRuntime, EntityDragDropSnapshot, EntityDragSource, EntityDropTarget,
-    EntityDragInput, EntityDragCarry, EntityDropDestination,
+    EntityDragInput, EntityDragCarry, EntityDropDestination, EntityDragSourceDescription,
 } from './entityDragDropTypes';
-import type { WindowPointer } from './treeDragDropTypes';
+import type { WindowBounds, WindowPointer } from './treeDragDropTypes';
 
 const IDLE: EntityDragDropSnapshot = Object.freeze({ phase: 'idle', item: null, sourceId: null, targetId: null, admission: null, outcome: null });
 
@@ -35,6 +35,19 @@ export function createEntityDragDropRuntime(options: Readonly<{
         releasePromise?: Promise<EntityDropOutcomeV1 | null>;
     };
     let carry: Carry | null = null;
+    // The source registration can retire on acknowledgement. Its return feedback lasts only until
+    // the existing cancel/new-begin boundary; it grants no dispatch or registration authority.
+    let sourceFeedback: Readonly<{ sourceId: string; description: EntityDragSourceDescription | null; bounds: WindowBounds | null }> | null = null;
+    const captureSourceFeedback = (source: EntityDragSource) => {
+        const bounds = source.getBounds?.() ?? null;
+        sourceFeedback = {
+            sourceId: source.id,
+            description: source.describe?.() ?? null,
+            bounds: bounds && isFiniteRect(bounds) && bounds.width > 0 && bounds.height > 0
+                ? { ...bounds } : sourceFeedback?.sourceId === source.id ? sourceFeedback.bounds : null,
+        };
+    };
+    const isRefusedPointerFeedback = () => snapshot.phase === 'settled' && snapshot.outcome?.status === 'refused' && pointer !== null;
 
     const reason = (code: string) => ({ code, message: options.describeReason?.(code) ?? code });
     const refused = (code: string): EntityDropAdmissionV1 => ({ status: 'refused', reason: reason(code) });
@@ -56,10 +69,12 @@ export function createEntityDragDropRuntime(options: Readonly<{
     const cancel = (_reason?: string) => {
         if (carry?.dispatched || snapshot.phase === 'pending') return;
         carry = null;
+        sourceFeedback = null;
         setPointer(null);
         publish(IDLE);
     };
     const retireFeedback = () => {
+        sourceFeedback = null;
         setPointer(null);
         if (snapshot.phase === 'pending') {
             // Scope retirement hides feedback, not the already-dispatched owner's outcome.
@@ -144,10 +159,21 @@ export function createEntityDragDropRuntime(options: Readonly<{
         publish({ phase: 'carrying', item: active.item, sourceId: active.source.id,
             targetId: target?.id ?? null, admission, outcome: null });
     };
+    const matchingMeasurementTargets = (active: Carry) => active.input === 'pointer' ? [...targets.values()].filter(target =>
+        targetCurrent(target) && accepts(target, active.item)
+        && entityDragScopesEqualV1(active.item.scope, target.scope) && target.measureBounds) : [];
+    const refreshMeasurements = async () => {
+        const active = carry;
+        if (!active || active.input !== 'pointer' || active.dispatched || active.releasePromise) return;
+        try { await Promise.all(matchingMeasurementTargets(active).map(target => target.measureBounds!())); }
+        catch { if (carry === active) cancel('target-geometry-unavailable'); return; }
+        if (carry === active) refresh();
+    };
     const move = (next: WindowPointer | null) => {
         if (!carry || carry.dispatched || carry.releasePromise) return;
         carry.input = 'pointer';
         carry.destination = null;
+        captureSourceFeedback(carry.source);
         setPointer(next && Number.isFinite(next.x) && Number.isFinite(next.y) ? next : null);
         refresh();
     };
@@ -160,9 +186,8 @@ export function createEntityDragDropRuntime(options: Readonly<{
         refresh();
     };
     const finishRelease = async (active: Carry): Promise<EntityDropOutcomeV1 | null> => {
-        const measuredTargets = active.input === 'pointer' ? [...targets.values()].filter(target =>
-            targetCurrent(target) && accepts(target, active.item)
-            && entityDragScopesEqualV1(active.item.scope, target.scope) && target.measureBounds) : [];
+        captureSourceFeedback(active.source);
+        const measuredTargets = matchingMeasurementTargets(active);
         if (measuredTargets.length > 0) {
             try { await Promise.all(measuredTargets.map(target => target.measureBounds!())); }
             catch {
@@ -174,6 +199,7 @@ export function createEntityDragDropRuntime(options: Readonly<{
             }
         }
         if (carry !== active) return null;
+        captureSourceFeedback(active.source);
         refresh();
         if (carry !== active) return null;
         const target = active.selected;
@@ -198,6 +224,7 @@ export function createEntityDragDropRuntime(options: Readonly<{
         } catch {
             outcome = { status: 'unknown', reason: reason('effect-outcome-unknown') };
         }
+        if (snapshot.item) captureSourceFeedback(active.source);
         carry = null;
         // The release promise keeps the real outcome, but a retired realm must not
         // display the previous scope's potentially domain-specific reason text.
@@ -218,6 +245,7 @@ export function createEntityDragDropRuntime(options: Readonly<{
         if (!source || !item) return null;
         const active: Carry = { source, item, input, selected: null, destination: null, dispatched: false };
         carry = active;
+        captureSourceFeedback(source);
         publish({ phase: 'carrying', item, sourceId, targetId: null, admission: null, outcome: null });
         // A transient object reference fences delayed native callbacks; no durable gesture identity.
         return {
@@ -235,14 +263,16 @@ export function createEntityDragDropRuntime(options: Readonly<{
             return () => {
                 if (sources.get(source.id) !== source) return;
                 sources.delete(source.id);
-                if (snapshot.sourceId === source.id) retireFeedback();
+                if (snapshot.sourceId === source.id && !isRefusedPointerFeedback()) retireFeedback();
                 notify();
             };
         },
         describeSource: sourceId => {
             const source = sources.get(sourceId);
-            return source && readItem(source) ? source.describe?.() ?? null : null;
+            if (source) return readItem(source) ? source.describe?.() ?? null : null;
+            return isRefusedPointerFeedback() && sourceFeedback?.sourceId === sourceId ? sourceFeedback.description : null;
         },
+        getSourceBounds: sourceId => sourceFeedback?.sourceId === sourceId ? sourceFeedback.bounds : null,
         registerTarget: target => {
             if (snapshot.targetId === target.id) retireFeedback();
             targets.set(target.id, target);
@@ -256,7 +286,7 @@ export function createEntityDragDropRuntime(options: Readonly<{
             };
         },
         begin: (sourceId, input = 'pointer') => start(sourceId, input),
-        move, choose, release, cancel, refresh,
+        move, choose, release, cancel, refresh, refreshMeasurements,
         autoscroll: () => {
             refresh();
             if (carry && !carry.dispatched && pointer && snapshot.admission?.status === 'allowed') carry.selected?.autoscroll?.(pointer);

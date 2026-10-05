@@ -268,7 +268,11 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
 
     const unregisterTreeRowBounds = React.useCallback<UnregisterSessionListTreeRowBounds>((rowId) => {
         measuredRowRefsRef.current.delete(rowId);
-        if (activeDragSnapshotRef.current?.source.sourceRowId === rowId) entityDragRuntime.cancel('source-row-retired');
+        const current = entityDragRuntime.getSnapshot();
+        const scope = current.item?.scope;
+        if (scope && current.sourceId === `session-list-source:${scope.serverId}:${scope.accountId}:${rowId}`) {
+            entityDragRuntime.cancel('source-row-retired');
+        }
         dropGeometryRegistry.unregisterRow(rowId);
     }, [dropGeometryRegistry, entityDragRuntime]);
 
@@ -389,6 +393,14 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         resolvePointerGeometry,
         getCommitContext: buildBaseCommitContext,
         getListBounds: () => viewportBoundsRef.current,
+        getSourceBounds: rowId => {
+            const row = dropGeometryRegistry.getContentGeometry().rows.find(candidate => candidate.id === rowId);
+            if (!row) return null;
+            const viewport = readViewportMetrics();
+            return { x: row.bounds.x + viewport.viewportWindowX,
+                y: row.bounds.y + viewport.viewportWindowY - viewport.scrollOffsetY,
+                width: row.bounds.width, height: row.bounds.height };
+        },
     });
 
     const stagedMove = useSessionListStagedMove({

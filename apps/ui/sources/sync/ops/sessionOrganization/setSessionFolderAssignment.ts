@@ -31,8 +31,11 @@ export async function setSessionFolderAssignment(params: Readonly<{
     } catch (error) {
         try {
             params.assertCurrent?.();
-            getStorage().getState().rollbackSessionOrganizationOptimistic(recordId);
-        } catch { /* The retired Account owns its optimistic record. */ }
+        } catch {
+            // The retired Account owns its optimistic record.
+            throw error;
+        }
+        getStorage().getState().rollbackSessionOrganizationOptimistic(recordId);
         throw error;
     }
 }

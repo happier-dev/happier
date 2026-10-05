@@ -43,6 +43,9 @@ export function useWorkBoardEntityBinding(context: Omit<WorkBoardEntityContext, 
                 const result = await executor.execute('boards.apply', effect.input, { serverId: scope.serverId,
                     expectedAccountId: scope.accountId, surface: 'ui', bypassApprovals: true });
                 if (result.ok) return { status: 'applied' };
+                if (result.errorCode === 'outcome_unknown') return { status: 'unknown', reason: {
+                    code: 'board_write_unknown', message: t('entityDragDrop.preview.unknownDetail'),
+                } };
                 return { status: 'refused', reason: { code: result.errorCode ?? 'board-action-refused', message: t('entityDragDrop.reasons.generic') } };
             } catch (error) {
                 if (error instanceof WorkBoardUiAdmissionError) return { status: 'refused', reason: { code: error.code, message: t('entityDragDrop.reasons.gone') } };

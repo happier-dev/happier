@@ -23,6 +23,63 @@ function fixture() {
 }
 
 describe('mounted entity drag owner', () => {
+    it('refreshes only current matching pointer targets at scroll boundaries and ignores a retired measurement completion', async () => {
+        const f = fixture();
+        let finishMeasurement = () => {};
+        f.runtime.registerTarget({ ...f.target, measureBounds: () => new Promise<void>(resolve => {
+            finishMeasurement = () => { f.setBounds({ x: 200, y: 0, width: 100, height: 100 }); resolve(); };
+        }) });
+        const unexpectedMeasurement = async () => { throw new Error('Unrelated mounted surface must not be measured'); };
+        f.runtime.registerTarget({ ...f.target, id: 'foreign', scope: { ...scope, accountId: 'other' }, getBounds: () => null, measureBounds: unexpectedMeasurement });
+        f.runtime.registerTarget({ ...f.target, id: 'different-kind', acceptedKinds: ['destination'], measureBounds: unexpectedMeasurement });
+        f.runtime.registerTarget({ ...f.target, id: 'retired', isCurrent: () => false, measureBounds: unexpectedMeasurement });
+        const carry = f.runtime.begin('source')!;
+        carry.move({ x: 50, y: 50 });
+        const refresh = f.runtime.refreshMeasurements();
+        finishMeasurement();
+        await refresh;
+        expect(f.runtime.getSnapshot().phase).toBe('carrying');
+        expect(f.runtime.getSnapshot().targetId).toBeNull();
+        expect(f.effects).toEqual([]);
+        const oldRefresh = f.runtime.refreshMeasurements();
+        carry.cancel();
+        const keyboard = f.runtime.begin('source', 'keyboard')!;
+        keyboard.choose('target');
+        const snapshot = f.runtime.getSnapshot();
+        finishMeasurement();
+        await oldRefresh;
+        await f.runtime.refreshMeasurements();
+        expect(f.runtime.getSnapshot()).toBe(snapshot);
+        expect(f.effects).toEqual([]);
+    });
+    it('retains refused settlement feedback after its ephemeral source retires, then clears it on cancel', async () => {
+        const f = fixture();
+        let finish = (_outcome: EntityDropOutcomeV1) => {};
+        let sourceBounds: { x: number; y: number; width: number; height: number } | null = null;
+        const retire = f.runtime.registerSource({ id: 'source', scope, getItem: () => session, isCurrent: () => true,
+            describe: () => ({ title: 'Child', subtitle: 'Project' }), getBounds: () => sourceBounds });
+        f.runtime.registerTarget({ ...f.target, execute: async () => new Promise<EntityDropOutcomeV1>(resolve => { finish = resolve; }) });
+        const carry = f.runtime.begin('source')!;
+        carry.move({ x: 50, y: 50 });
+        const release = carry.release();
+        expect(f.runtime.getSnapshot().phase).toBe('pending');
+        sourceBounds = { x: 10, y: 20, width: 300, height: 40 };
+        const outcome: EntityDropOutcomeV1 = { status: 'refused', reason: { code: 'reports_to_forbidden', message: 'Cannot take reports' } };
+        finish(outcome);
+        expect(await release).toEqual(outcome);
+        retire();
+        expect(f.runtime.getSnapshot()).toMatchObject({ phase: 'settled', sourceId: 'source', outcome });
+        expect(f.runtime.describeSource('source')).toEqual({ title: 'Child', subtitle: 'Project' });
+        expect(f.runtime.getSourceBounds('source')).toEqual(sourceBounds);
+        expect(f.runtime.getPointer()).toEqual({ x: 50, y: 50 });
+        expect(await carry.release()).toBeNull();
+        f.runtime.cancel('feedback-finished');
+        expect(f.runtime.getSnapshot().phase).toBe('idle');
+        expect(f.runtime.describeSource('source')).toBeNull();
+        expect(f.runtime.getSourceBounds('source')).toBeNull();
+        expect(f.runtime.getPointer()).toBeNull();
+    });
+
     it('refreshes idle semantic destinations when mounted sources or targets change without replacing the carry snapshot', () => {
         const f = fixture();
         const snapshot = f.runtime.getSnapshot();

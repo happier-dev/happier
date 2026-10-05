@@ -12,6 +12,7 @@ import {
     type UseSessionInlineDragResolveDropResultEvent,
 } from './useSessionInlineDrag';
 import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
+import { isSecondaryEntityRowControl } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
 import { useSessionListStagedMoveKeyHandler } from './keyboardMove/SessionListStagedMoveDock';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
@@ -153,17 +154,9 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
     const itemSessionRef = React.useRef(itemProps.session);
     itemSessionRef.current = itemProps.session;
     const itemServerId = itemProps.serverId ?? null;
-    const handleStagedMoveKeyDownCapture = React.useCallback((event: Readonly<{
-        key?: string;
-        repeat?: boolean;
-        altKey?: boolean;
-        metaKey?: boolean;
-        ctrlKey?: boolean;
-        shiftKey?: boolean;
-        preventDefault?: () => void;
-        stopPropagation?: () => void;
-    }>) => {
+    const handleStagedMoveKeyDownCapture = React.useCallback((event: React.KeyboardEvent<HTMLElement>) => {
         if (!stagedMoveKeyHandler || !sessionKey || !reorderEnabled || !event.key) return;
+        if (event.defaultPrevented || isSecondaryEntityRowControl(event.nativeEvent, event.currentTarget)) return;
         if (event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
         const label = getSessionName(itemSessionRef.current, itemServerId);
         if (!stagedMoveKeyHandler({ sessionKey, label, key: event.key, repeat: event.repeat })) return;

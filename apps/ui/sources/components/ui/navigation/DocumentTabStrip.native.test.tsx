@@ -12,7 +12,7 @@ installPanelCommonModuleMocks({ reactNative: async () => {
 } });
 
 describe('native DocumentTabStrip geometry', () => {
-    it('refreshes an anchor after scrolling and remeasures it again at release without child layout', async () => {
+    it.each(['strip', 'bar', 'rail'] as const)('refreshes the %s anchor from its container and at release without child layout', async (variant) => {
         const runtime = createEntityDragDropRuntime();
         const scope = { serverId: 'home', accountId: 'account' };
         runtime.registerSource({ id: 'row', scope, isCurrent: () => true,
@@ -20,6 +20,7 @@ describe('native DocumentTabStrip geometry', () => {
         let x = 0;
         const writes: unknown[] = [];
         const screen = await renderScreen(<DocumentTabStrip
+            variant={variant}
             tabs={[{ key: 'anchor', title: 'Anchor', isPinned: false, isPreview: false }]}
             activeTabKey="anchor" accessibilityLabel="Documents"
             onActivate={() => {}} onPin={() => {}} onUnpin={() => {}} onClose={() => {}}
@@ -34,12 +35,15 @@ describe('native DocumentTabStrip geometry', () => {
         await act(async () => {
             for (const node of screen.root.findAll(node => node.type === 'View' && typeof node.props.onLayout === 'function')) node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 100, height: 40 } } });
         });
-        const carry = runtime.begin('row')!;
+        let carry!: NonNullable<ReturnType<typeof runtime.begin>>;
+        await act(async () => { carry = runtime.begin('row')!; });
         await act(async () => { carry.move({ x: 50, y: 20 }); });
         expect(runtime.getSnapshot().targetId).not.toBeNull();
         x = 200;
         await act(async () => {
-            screen.root.findByType('ScrollView').props.onScroll?.({ nativeEvent: { contentOffset: { x: 200, y: 0 } } });
+            if (variant === 'bar') screen.root.find(node => node.type === 'View' && node.props.accessibilityRole === 'tablist')
+                .props.onLayout({ nativeEvent: { layout: { x: 200, y: 0, width: 100, height: 40 } } });
+            else screen.root.findByType('ScrollView').props.onScroll({ nativeEvent: { contentOffset: { x: 200, y: 0 } } });
         });
         expect(runtime.getSnapshot().targetId).toBeNull();
         await act(async () => { carry.move({ x: 250, y: 20 }); });
@@ -47,7 +51,8 @@ describe('native DocumentTabStrip geometry', () => {
         x = 400;
         await act(async () => { expect(await carry.release()).toBeNull(); });
         expect(writes).toEqual([]);
-        const current = runtime.begin('row')!;
+        let current!: NonNullable<ReturnType<typeof runtime.begin>>;
+        await act(async () => { current = runtime.begin('row')!; });
         await act(async () => { current.move({ x: 450, y: 20 }); expect(await current.release()).toEqual({ status: 'applied' }); });
         expect(writes).toEqual([{ href: '/inbox', beforeTabId: 'anchor' }]);
     });

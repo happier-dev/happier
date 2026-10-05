@@ -1,5 +1,4 @@
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
-import { parseToken } from '@/utils/auth/parseToken';
 import {
     areSessionFolderDefinitionsEqual,
     type SessionFolderV1,
@@ -70,12 +69,6 @@ export type SessionOrganizationMutationScopeUnavailable = Readonly<
         requestedServerId: string;
         serverId: string;
     }
-    | {
-        ok: false;
-        reason: 'accountMismatch';
-        requestedServerId: string;
-        serverId: string;
-    }
 >;
 
 export type SessionOrganizationMutationScopeResult =
@@ -100,7 +93,6 @@ function uniqueAliases(canonicalServerId: string, candidates: readonly unknown[]
 
 export async function resolveSessionOrganizationMutationScope(
     requestedServerIdRaw: string | null | undefined,
-    options?: Readonly<{ expectedAccountId: string }>,
 ): Promise<SessionOrganizationMutationScopeResult> {
     const requestedServerId = normalizeId(requestedServerIdRaw);
     if (!requestedServerId) {
@@ -129,18 +121,6 @@ export async function resolveSessionOrganizationMutationScope(
             requestedServerId,
             serverId,
         };
-    }
-
-    if (options) {
-        let accountId: string | null = null;
-        try {
-            accountId = parseToken(credentials.token);
-        } catch {
-            // A malformed token cannot establish the Account captured by the operation.
-        }
-        if (accountId !== options.expectedAccountId) {
-            return { ok: false, reason: 'accountMismatch', requestedServerId, serverId };
-        }
     }
 
     return {

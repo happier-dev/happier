@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useEntityDragDropRuntime, useEntityDropTarget, useEntityDropTargetState,
     measureWindowBounds, readWindowBounds, TreeDropOutline, useEntityDropDomBinding,
-    type TreeDropMeasurableRef, type WindowBounds } from '@/components/ui/treeDragDrop';
+    type WindowBounds } from '@/components/ui/treeDragDrop';
 import type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
 
 export type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
@@ -14,10 +14,12 @@ function WorkflowStepSessionTarget(props: Readonly<{
     stepId: string;
     label: string;
     bounds: () => WindowBounds | null;
+    measure: () => Promise<void>;
 }>): React.ReactElement | null {
     const runtime = useEntityDragDropRuntime();
     useEntityDropTarget(runtime, {
         id: props.targetId, scope: props.sessionDrop.scope, acceptedKinds: ['session'], captureKinds: ['session'], getBounds: props.bounds,
+        measureBounds: props.measure,
         resolve: ({ item }) => props.sessionDrop.resolve(props.stepId, item),
         execute: props.sessionDrop.execute,
         listDestinations: () => [{ destination: null, label: props.label }],
@@ -43,28 +45,22 @@ export function WorkflowStepSessionDropZone(props: Readonly<{
     const nativeBounds = React.useRef<WindowBounds | null>(null);
     const dropRef = useEntityDropDomBinding(runtime, props.sessionDrop
         ? { captureKinds: ['session'] } : undefined);
-    const measurable = React.useCallback((): TreeDropMeasurableRef | null => {
-        const node = host.current;
-        if (!node) return null;
-        const element = node as unknown as { getBoundingClientRect?: () => DOMRect };
-        return element.getBoundingClientRect ? { getBoundingClientRectFn: () => element.getBoundingClientRect!() } : node;
-    }, []);
     const attach = React.useCallback((node: View | null) => {
         host.current = node;
         dropRef(node);
     }, [dropRef]);
-    const bounds = React.useCallback(() => readWindowBounds(measurable()) ?? nativeBounds.current, [measurable]);
-    const onLayout = React.useCallback(() => {
+    const bounds = React.useCallback(() => readWindowBounds(host.current) ?? nativeBounds.current, []);
+    const measure = React.useCallback(async () => {
         const node = host.current;
-        void measureWindowBounds(measurable()).then(next => {
-            if (host.current !== node) return;
-            nativeBounds.current = next;
-            runtime.refresh();
-        });
-    }, [measurable, runtime]);
+        const next = await measureWindowBounds(node);
+        if (host.current === node) nativeBounds.current = next;
+    }, []);
+    const onLayout = React.useCallback(() => {
+        void measure().then(() => runtime.refresh());
+    }, [measure, runtime]);
     return <View ref={attach} collapsable={false} testID={props.testID} onLayout={onLayout}>
         {props.children}
         {props.sessionDrop === undefined ? null : <WorkflowStepSessionTarget
-            sessionDrop={props.sessionDrop} targetId={targetId} stepId={props.stepId} label={props.label} bounds={bounds} />}
+            sessionDrop={props.sessionDrop} targetId={targetId} stepId={props.stepId} label={props.label} bounds={bounds} measure={measure} />}
     </View>;
 }

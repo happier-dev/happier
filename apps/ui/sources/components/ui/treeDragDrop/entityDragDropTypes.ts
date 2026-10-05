@@ -19,6 +19,8 @@ export type EntityDragSource = Readonly<{
     isCurrent: () => boolean;
     /** Localized identity read by the realm overlay, never serialized with the item. */
     describe?: () => EntityDragSourceDescription | null;
+    /** Existing source geometry in window coordinates, for refused pointer-release feedback. */
+    getBounds?: () => WindowBounds | null;
 }>;
 export type EntityDropSemanticDestination = Readonly<{
     destination: PluginUiJsonValueV1;
@@ -69,6 +71,7 @@ export type EntityDragCarry = Readonly<{
 export type EntityDragDropRuntime = Readonly<{
     registerSource: (source: EntityDragSource) => () => void;
     describeSource: (sourceId: string) => EntityDragSourceDescription | null;
+    getSourceBounds: (sourceId: string) => WindowBounds | null;
     registerTarget: (target: EntityDropTarget) => () => void;
     begin: (sourceId: string, input?: 'pointer' | 'keyboard') => EntityDragCarry | null;
     move: (pointer: WindowPointer | null) => void;
@@ -76,6 +79,8 @@ export type EntityDragDropRuntime = Readonly<{
     release: () => Promise<EntityDropOutcomeV1 | null>;
     cancel: (reason?: string) => void;
     refresh: () => void;
+    /** Scroll/layout owners refresh native target coordinates for the current pointer carry. */
+    refreshMeasurements: () => Promise<void>;
     autoscroll: () => void;
     getDestinations: (sourceId: string) => readonly EntityDropDestination[];
     perform: (sourceId: string, targetId: string, destination?: PluginUiJsonValueV1, input?: 'chooser' | 'action') => Promise<EntityDropOutcomeV1 | null>;

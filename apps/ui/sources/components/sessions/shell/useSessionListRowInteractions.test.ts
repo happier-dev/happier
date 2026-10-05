@@ -23,17 +23,6 @@ installDisconnectedServerSocketBoundary();
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const setSessionFolderAssignmentSpy = vi.hoisted(() => vi.fn(async () => {}));
-const resolveSessionOrganizationMutationScopeSpy = vi.hoisted(() => vi.fn(async (serverId: string) => ({
-    ok: true as const,
-    scope: {
-        credentials: { token: 'folder-token', secret: 'folder-secret' },
-        serverId,
-        serverIdAliases: ['profile-a', 'legacy-a'],
-        serverUrl: 'https://server-a.example.test',
-    },
-})));
-
 vi.mock('react-native-reanimated', () => ({
     Easing: {
         bezier: () => () => 0,
@@ -43,43 +32,25 @@ vi.mock('react-native-reanimated', () => ({
     useAnimatedReaction: vi.fn(),
 }));
 
-vi.mock('@/hooks/ui/useHappyAction', () => ({
-    useHappyAction: (action: () => Promise<void>) => {
-        let running = false;
-        let pending = false;
-        const run = () => {
-            if (running) {
-                pending = true;
-                return;
-            }
-            running = true;
-            void action().catch(() => {}).finally(() => {
-                running = false;
-                if (pending) {
-                    pending = false;
-                    run();
-                }
-            });
-        };
-        return [null, run];
-    },
-}));
-
-vi.mock('@/sync/ops/sessionOrganization', () => ({
-    resolveSessionOrganizationMutationScope: resolveSessionOrganizationMutationScopeSpy,
-    requireSessionOrganizationMutationScope: async (serverId: string) => {
-        const result = await resolveSessionOrganizationMutationScopeSpy(serverId);
-        return result.scope;
-    },
-    writeSessionOrganizationFolderAssignment: setSessionFolderAssignmentSpy,
-}));
-
 const ACTIVE_SCOPE = { serverId: 'server-a', accountId: 'account-a' } as const;
+const MUTATION_SCOPE = {
+    credentials: { token: createAccountTokenForTests(ACTIVE_SCOPE.accountId) },
+    serverId: ACTIVE_SCOPE.serverId,
+    serverIdAliases: ['profile-a', 'legacy-a'],
+    serverUrl: 'https://server-a.example.test',
+};
+const boundary = vi.hoisted(() => ({ folderAssignment: vi.fn<typeof import('@/sync/api/session/sessionOrganizationApi').setSessionFolderAssignment>() }));
+vi.mock('@/sync/api/session/sessionOrganizationApi', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/api/session/sessionOrganizationApi')>();
+    return { ...actual, setSessionFolderAssignment: boundary.folderAssignment };
+});
 
 describe('useSessionListRowInteractions', () => {
     beforeEach(() => {
         // The list answers drags and organization Actions for its mounted Home and Account only.
         getStorage().setState({ profileScope: ACTIVE_SCOPE } as never);
+        boundary.folderAssignment.mockReset();
+        boundary.folderAssignment.mockImplementation(async ({ sessionId, request }) => ({ sessionId, folderId: request.folderId }));
     });
 
     const workspace = {
@@ -137,9 +108,9 @@ describe('useSessionListRowInteractions', () => {
             sessionListOrderingModeV1: 'custom',
             sessionListSectionModeV1: 'activity',
             manualSessionOrderingEnabled: true,
-            setSessionListGroupOrderV1: vi.fn(),
-            setSessionWorkspaceOrderV1: vi.fn(),
-            setSessionFoldersV1: vi.fn(),
+            setSessionListGroupOrderV1: vi.fn(async () => {}),
+            setSessionWorkspaceOrderV1: vi.fn(async () => {}),
+            setSessionFoldersV1: vi.fn(async () => {}),
             pinnedKeySet: new Set(),
             setSessionPinForKey: vi.fn(),
             sessionTags: {},
@@ -169,7 +140,7 @@ describe('useSessionListRowInteractions', () => {
         getStorage().setState({ profileScope: scope } as never);
         const nativeItems = twoSessionListItems.map(item => ({ ...item, serverId: scope.serverId,
             workspace: { ...workspace, serverId: scope.serverId } }));
-        const setOrder = vi.fn();
+        const setOrder = vi.fn(async () => {});
         const initialInput = buildInteractionsInput({ listItems: nativeItems, setSessionListGroupOrderV1: setOrder });
         const hook = await renderHook(
             (input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input),
@@ -340,208 +311,8 @@ describe('useSessionListRowInteractions', () => {
         }
     });
 
-    it('serializes every accepted organization move with its original qualified target', async () => {
-        let resolveFirstWrite: (() => void) | null = null;
-        const firstWrite = new Promise<void>((resolve) => {
-            resolveFirstWrite = resolve;
-        });
-        setSessionFolderAssignmentSpy.mockReset();
-        setSessionFolderAssignmentSpy
-            .mockImplementationOnce(async () => firstWrite)
-            .mockImplementation(async () => {});
-        resolveSessionOrganizationMutationScopeSpy.mockClear();
-        const hook = await renderInteractions();
-
-        act(() => {
-            hook.getCurrent().scheduleSessionFolderAssignment({
-                type: 'session',
-                serverId: 'server-a',
-                session: { id: 's1' },
-            }, 'folder-a');
-        });
-        await vi.waitFor(() => expect(setSessionFolderAssignmentSpy).toHaveBeenCalledTimes(1));
-
-        act(() => {
-            hook.getCurrent().scheduleSessionFolderAssignment({
-                type: 'session',
-                serverId: 'server-b',
-                session: { id: 's2' },
-            }, 'folder-b');
-        });
-        expect(setSessionFolderAssignmentSpy).toHaveBeenCalledTimes(1);
-
-        await act(async () => {
-            resolveFirstWrite?.();
-            await firstWrite;
-        });
-
-        await vi.waitFor(() => expect(setSessionFolderAssignmentSpy).toHaveBeenCalledTimes(2));
-        expect(setSessionFolderAssignmentSpy.mock.calls).toEqual([
-            [{
-                scope: expect.objectContaining({ serverId: 'server-a' }),
-                sessionId: 's1',
-                folderId: 'folder-a',
-            }],
-            [{
-                scope: expect.objectContaining({ serverId: 'server-b' }),
-                sessionId: 's2',
-                folderId: 'folder-b',
-            }],
-        ]);
-
-        await hook.unmount();
-    });
-
-    it('reports a rejected commit as failed and continues with the next accepted intent', async () => {
-        setSessionFolderAssignmentSpy.mockReset();
-        setSessionFolderAssignmentSpy
-            .mockRejectedValueOnce(new Error('write rejected'))
-            .mockResolvedValue(undefined);
-        const hook = await renderInteractions();
-
-        let failedCommit: Promise<boolean> | undefined;
-        let succeedingCommit: Promise<boolean> | undefined;
-        act(() => {
-            failedCommit = hook.getCurrent().scheduleSessionFolderAssignment({
-                type: 'session',
-                serverId: 'server-a',
-                session: { id: 's1' },
-            }, 'folder-a');
-            succeedingCommit = hook.getCurrent().scheduleSessionFolderAssignment({
-                type: 'session',
-                serverId: 'server-b',
-                session: { id: 's2' },
-            }, 'folder-b');
-        });
-
-        await expect(failedCommit).resolves.toBe(false);
-        await expect(succeedingCommit).resolves.toBe(true);
-        expect(setSessionFolderAssignmentSpy).toHaveBeenCalledTimes(2);
-
-        await hook.unmount();
-    });
-
-    it('reports a normally resolved unsuccessful organization operation as failed without poisoning the queue', async () => {
-        setSessionFolderAssignmentSpy.mockReset();
-        setSessionFolderAssignmentSpy.mockResolvedValue(undefined);
-        const hook = await renderInteractions({ listItems: twoSessionListItems });
-
-        let committed: Promise<boolean> | undefined;
-        let succeedingCommit: Promise<boolean> | undefined;
-        act(() => {
-            committed = hook.getCurrent().applyKeyboardMove(
-                treeRowId.session('server-a', 's1'),
-                'up',
-            )?.committed;
-            succeedingCommit = hook.getCurrent().scheduleSessionFolderAssignment({
-                type: 'session',
-                serverId: 'server-a',
-                session: { id: 's2' },
-            }, 'folder-a');
-        });
-
-        await expect(committed).resolves.toBe(false);
-        await expect(succeedingCommit).resolves.toBe(true);
-        expect(setSessionFolderAssignmentSpy).toHaveBeenCalledTimes(1);
-        await hook.unmount();
-    });
-
-    it('rebases a queued keyboard move onto the latest committed list membership', async () => {
-        let resolveFirstWrite: (() => void) | null = null;
-        const firstWrite = new Promise<void>((resolve) => {
-            resolveFirstWrite = resolve;
-        });
-        setSessionFolderAssignmentSpy.mockReset();
-        setSessionFolderAssignmentSpy
-            .mockImplementationOnce(async () => firstWrite)
-            .mockResolvedValue(undefined);
-        const setSessionListGroupOrderV1 = vi.fn();
-        const rootGroupKey = buildSessionFolderGroupKey({
-            serverId: 'server-a',
-            workspace,
-            folderId: null,
-        });
-        const initialItems: SessionListIndexItem[] = [
-            ...twoSessionListItems,
-            {
-                type: 'session',
-                sessionId: 's3',
-                serverId: 'server-a',
-                storageKind: 'persisted',
-                groupKey: 'project-a',
-                groupKind: 'project',
-                folderId: null,
-                folderDepth: 0,
-                workspace,
-            },
-        ];
-        const latestItems: SessionListIndexItem[] = [
-            initialItems[0]!,
-            initialItems[1]!,
-            initialItems[2]!,
-            {
-                ...initialItems[3] as Extract<SessionListIndexItem, { type: 'session' }>,
-                sessionId: 's4',
-            },
-        ];
-        const hook = await renderHook(
-            (input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input),
-            {
-                initialProps: buildInteractionsInput({
-                    listItems: initialItems,
-                    setSessionListGroupOrderV1,
-                }),
-            },
-        );
-
-        let firstCommit: Promise<boolean> | undefined;
-        let queuedCommit: Promise<boolean> | undefined;
-        act(() => {
-            firstCommit = hook.getCurrent().scheduleSessionFolderAssignment({
-                type: 'session',
-                serverId: 'server-a',
-                session: { id: 's3' },
-            }, 'folder-a');
-            queuedCommit = hook.getCurrent().applyKeyboardMove(
-                treeRowId.session('server-a', 's1'),
-                'down',
-            )?.committed;
-        });
-        await vi.waitFor(() => expect(setSessionFolderAssignmentSpy).toHaveBeenCalledTimes(1));
-
-        await hook.rerender(buildInteractionsInput({
-            listItems: latestItems,
-            currentGroupOrderMap: {
-                [rootGroupKey]: [
-                    sessionAddressKey({ serverId: 'server-a', sessionId: 's1' }),
-                    sessionAddressKey({ serverId: 'server-a', sessionId: 's2' }),
-                    sessionAddressKey({ serverId: 'server-a', sessionId: 's4' }),
-                ],
-            },
-            setSessionListGroupOrderV1,
-        }));
-
-        await act(async () => {
-            resolveFirstWrite?.();
-            await firstWrite;
-        });
-
-        await expect(firstCommit).resolves.toBe(true);
-        await expect(queuedCommit).resolves.toBe(true);
-        expect(setSessionListGroupOrderV1).toHaveBeenLastCalledWith({
-            [rootGroupKey]: [
-                sessionAddressKey({ serverId: 'server-a', sessionId: 's2' }),
-                sessionAddressKey({ serverId: 'server-a', sessionId: 's1' }),
-                sessionAddressKey({ serverId: 'server-a', sessionId: 's4' }),
-            ],
-        });
-
-        await hook.unmount();
-    });
-
     it('answers session.organization.move from the mounted list and persists under the projection server id', async () => {
-        setSessionFolderAssignmentSpy.mockClear();
-        resolveSessionOrganizationMutationScopeSpy.mockClear();
+        boundary.folderAssignment.mockClear();
         const folderItems: SessionListIndexItem[] = [
             listItems[0]!,
             {
@@ -573,7 +344,7 @@ describe('useSessionListRowInteractions', () => {
 
         let output: unknown;
         await act(async () => {
-            output = await invokeSessionListOrganizationAction({ input: {
+            output = await invokeSessionListOrganizationAction({ mutationScope: MUTATION_SCOPE, input: {
                 scope: ACTIVE_SCOPE,
                 sourceRowId: treeRowId.session('server-a', 's1'),
                 sourceKind: 'leaf',
@@ -587,26 +358,18 @@ describe('useSessionListRowInteractions', () => {
         });
         expect(output).toEqual({ status: 'applied' });
 
-        await vi.waitFor(() => {
-            expect(setSessionFolderAssignmentSpy).toHaveBeenCalledWith({
-                scope: {
-                    credentials: { token: 'folder-token', secret: 'folder-secret' },
-                    serverId: 'server-a',
-                    serverIdAliases: ['profile-a', 'legacy-a'],
-                    serverUrl: 'https://server-a.example.test',
-                },
-                sessionId: 's1',
-                folderId: 'folder-a',
-            });
-        });
-        expect(resolveSessionOrganizationMutationScopeSpy).toHaveBeenCalledWith('server-a');
+        expect(boundary.folderAssignment).toHaveBeenCalledWith(expect.objectContaining({
+            credentials: MUTATION_SCOPE.credentials, serverUrl: MUTATION_SCOPE.serverUrl,
+            sessionId: 's1', request: { folderId: 'folder-a' },
+        }));
+        expect(getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[sessionAddressKey({ serverId: ACTIVE_SCOPE.serverId, sessionId: 's1' })])
+            .toEqual({ sessionId: 's1', folderId: 'folder-a' });
 
         await hook.unmount();
     });
 
     it('does not start a folder mutation for a row whose exact Home disables folders', async () => {
-        setSessionFolderAssignmentSpy.mockClear();
-        resolveSessionOrganizationMutationScopeSpy.mockClear();
+        boundary.folderAssignment.mockClear();
         const folderItems: SessionListIndexItem[] = [
             listItems[0]!,
             {
@@ -632,7 +395,7 @@ describe('useSessionListRowInteractions', () => {
 
         let output: unknown;
         await act(async () => {
-            output = await invokeSessionListOrganizationAction({ input: {
+            output = await invokeSessionListOrganizationAction({ mutationScope: MUTATION_SCOPE, input: {
                 scope: ACTIVE_SCOPE,
                 sourceRowId: treeRowId.session('server-a', 's1'),
                 sourceKind: 'leaf',
@@ -646,8 +409,7 @@ describe('useSessionListRowInteractions', () => {
         });
         expect(output).toEqual({ status: 'refused', reason: 'feature-disabled' });
 
-        expect(resolveSessionOrganizationMutationScopeSpy).not.toHaveBeenCalled();
-        expect(setSessionFolderAssignmentSpy).not.toHaveBeenCalled();
+        expect(boundary.folderAssignment).not.toHaveBeenCalled();
         await hook.unmount();
     });
 
@@ -697,7 +459,7 @@ describe('useSessionListRowInteractions', () => {
     });
 
     it('does not persist same-container session reorder from row interactions in date ordering mode', async () => {
-        const setSessionListGroupOrderV1 = vi.fn();
+        const setSessionListGroupOrderV1 = vi.fn(async () => {});
         const dateModeInput = {
             listItems: twoSessionListItems,
             sessionListOrderingModeV1: 'updated' as const,
@@ -708,7 +470,7 @@ describe('useSessionListRowInteractions', () => {
 
         let output: unknown;
         await act(async () => {
-            output = await invokeSessionListOrganizationAction({ input: {
+            output = await invokeSessionListOrganizationAction({ mutationScope: MUTATION_SCOPE, input: {
                 scope: ACTIVE_SCOPE,
                 sourceRowId: treeRowId.session('server-a', 's2'),
                 sourceKind: 'leaf',
@@ -747,7 +509,7 @@ describe('useSessionListRowInteractions', () => {
     });
 
     it('suppresses exactly one folder-focus press after a release, which writes nothing when no place admitted the row', async () => {
-        setSessionFolderAssignmentSpy.mockClear();
+        boundary.folderAssignment.mockClear();
         const folderItems: SessionListIndexItem[] = [
             listItems[0]!,
             {
@@ -801,7 +563,7 @@ describe('useSessionListRowInteractions', () => {
         expect(hook.getCurrent().consumeFolderFocusPressAfterDrag()).toBe(true);
         expect(hook.getCurrent().consumeFolderFocusPressAfterDrag()).toBe(false);
         // The pointer never reached an admitted place, so the release had nothing to commit.
-        expect(setSessionFolderAssignmentSpy).not.toHaveBeenCalled();
+        expect(boundary.folderAssignment).not.toHaveBeenCalled();
 
         await hook.unmount();
     });

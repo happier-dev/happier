@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ReorderSessionOrganizationRequestSchema } from '@happier-dev/protocol';
+import { ReorderSessionOrganizationRequestSchema, SetSessionFolderAssignmentRequestSchema } from '@happier-dev/protocol';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
@@ -11,35 +11,58 @@ beforeEach(async () => { await home.reset(); });
 afterEach(() => standardCleanup());
 
 describe('Session organization Action scope', () => {
-    it('does not apply an acknowledged order response into a replacement Account', async () => {
+    it('returns the published unavailable result when the captured Account retires before dispatch', async () => {
+        const serverId = await home.addHome({ name: 'Retired Home', serverUrl: 'https://retired-home.example', accountId: 'account-a' });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        const { createSessionOrganizationMutationScopeForAccount } = await import('./sessionOrganizationMutationOwner');
+        const mutationScope = createSessionOrganizationMutationScopeForAccount(account);
+        await home.switchAccount(serverId, 'account-b');
+        const { createSessionListOrganizationActionAdapter } = await import('@/components/sessions/shell/drag/sessionListOrganizationAction');
+        const execute = createSessionListOrganizationActionAdapter(() => null);
+        expect(await execute({ mutationScope, input: {
+            scope: { serverId, accountId: 'account-a' }, sourceRowId: 'session-a', sourceKind: 'leaf',
+            instructionKind: 'move-to-root', targetRowId: null, containerId: null, parentRowId: null, depth: null, edge: null,
+        } })).toEqual({ status: 'unavailable' });
+        account.dispose();
+    });
+
+    it.each(['order', 'folder assignment'] as const)('does not apply an acknowledged %s response into a replacement Account', async (kind) => {
         const serverId = await home.addHome({ name: 'Order Home', serverUrl: 'https://order-home.example', accountId: 'account-a' });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const account = await captureLazyActionAccountContext(serverId);
         const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
         const started = createDeferred<void>();
         const response = createDeferred<void>();
-        home.answer(serverId, 'PUT /v2/session-organization/order', {
+        home.answer(serverId, kind === 'order' ? 'PUT /v2/session-organization/order' : 'PUT /v2/session-organization/folder-assignments/session-a', {
             select: input => {
                 started.resolve();
-                const request = ReorderSessionOrganizationRequestSchema.parse(input);
-                return { body: { orderEntries: request.entries.map(entry => ({ ...entry, scopeKind: request.scopeKind, scopeKey: request.scopeKey })) }, respondAfter: response.promise };
+                if (kind === 'order') {
+                    const request = ReorderSessionOrganizationRequestSchema.parse(input);
+                    return { body: { orderEntries: request.entries.map(entry => ({ ...entry, scopeKind: request.scopeKind, scopeKey: request.scopeKey })) }, respondAfter: response.promise };
+                }
+                return { body: { sessionId: 'session-a', folderId: SetSessionFolderAssignmentRequestSchema.parse(input).folderId }, respondAfter: response.promise };
             },
         });
-        const { writeSessionOrganizationGroupOrder } = await import('./sessionOrganizationMutationOwner');
+        const { createSessionOrganizationMutationScopeForAccount, writeSessionOrganizationGroupOrder, writeSessionOrganizationFolderAssignment } = await import('./sessionOrganizationMutationOwner');
         const itemKey = `${serverId}:session-a`;
-        const writing = writeSessionOrganizationGroupOrder({
-            scope: { credentials: account.credentials, serverId, serverUrl: 'https://order-home.example', serverIdAliases: [], requestAtEndpoint: account.request, assertCurrent: account.assertCurrent },
+        const scope = createSessionOrganizationMutationScopeForAccount(account);
+        const writing = kind === 'order' ? writeSessionOrganizationGroupOrder({
+            scope,
             next: { project: [itemKey] },
             orderItemAddressByItemKey: { [itemKey]: { itemKind: 'session', serverId, sessionId: 'session-a' } },
-        });
+        }) : writeSessionOrganizationFolderAssignment({ scope, sessionId: 'session-a', folderId: 'folder-a' });
         const result = writing.then(() => 'completed', () => 'retired');
         await started.promise;
         await home.switchAccount(serverId, 'account-b');
         const { getStorage } = await import('@/sync/domains/state/storageStore');
-        const replacementOrder = getStorage().getState().sessionOrganizationOrderEntriesByScopeKey;
+        const readProjection = () => kind === 'order'
+            ? getStorage().getState().sessionOrganizationOrderEntriesByScopeKey
+            : getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey;
+        const replacementProjection = readProjection();
         response.resolve();
         expect(await result).toBe('retired');
-        expect(getStorage().getState().sessionOrganizationOrderEntriesByScopeKey).toBe(replacementOrder);
+        expect(readProjection()).toBe(replacementProjection);
         account.dispose();
     });
 

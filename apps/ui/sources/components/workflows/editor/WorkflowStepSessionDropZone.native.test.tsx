@@ -15,7 +15,7 @@ installPanelCommonModuleMocks({ reactNative: async () => {
 } });
 
 describe('native Workflow Session target geometry', () => {
-    it('does not bind the previously under-pointer step after window coordinates change without child layout', async () => {
+    it('refreshes hover and does not bind the former step after window coordinates change without child layout', async () => {
         const runtime = useEntityDragDropRuntime();
         const scope = { serverId: 'home', accountId: 'account' };
         const original = createWorkflowEditorDraft({ draftId: 'draft', name: 'Review', blocks: [{ kind: 'step', id: 'review',
@@ -48,15 +48,22 @@ describe('native Workflow Session target geometry', () => {
             ? { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(0, y, 100, 100) }
             : null });
         await act(async () => { screen.findByTestId('step-drop')?.props.onLayout(); });
-        const carry = runtime.begin('workflow-geometry-source')!;
+        let carry!: NonNullable<ReturnType<typeof runtime.begin>>;
+        await act(async () => { carry = runtime.begin('workflow-geometry-source')!; });
         await act(async () => { carry.move({ x: 50, y: 50 }); });
         expect(runtime.getSnapshot().admission?.status).toBe('allowed');
         y = 200;
+        await act(async () => { await runtime.refreshMeasurements(); });
+        expect(runtime.getSnapshot().targetId).toBeNull();
+        await act(async () => { carry.move({ x: 50, y: 250 }); });
+        expect(runtime.getSnapshot().admission?.status).toBe('allowed');
+        y = 400;
         await act(async () => { expect(await carry.release()).toBeNull(); });
         expect(draft).toBe(original);
-        const current = runtime.begin('workflow-geometry-source')!;
-        await act(async () => { current.move({ x: 50, y: 250 }); expect(await current.release()).toEqual({ status: 'applied' }); });
+        let current!: NonNullable<ReturnType<typeof runtime.begin>>;
+        await act(async () => { current = runtime.begin('workflow-geometry-source')!; });
+        await act(async () => { current.move({ x: 50, y: 450 }); expect(await current.release()).toEqual({ status: 'applied' }); });
         expect(draft.blocks[0]).toMatchObject({ execution: { conversation: { kind: 'existing_session', sessionId: 'existing', machineId: 'machine' } } });
-        retire();
+        await act(async () => { retire(); });
     });
 });

@@ -73,7 +73,7 @@ export function resolveSessionRowInteractionPolicy(
     } = params;
 
     const isWeb = platformOs === 'web';
-    const isIos = platformOs === 'ios';
+    const isNativePhone = platformOs === 'ios' || platformOs === 'android';
     const phoneOrganizing = touchPrimaryPointer && organizeMode;
     const suppressNextPressOnNativeContextMenuOpen = contextMenuItemCount > 0 && contextMenuOpen && !contextMenuWasOpen;
 
@@ -81,9 +81,7 @@ export function resolveSessionRowInteractionPolicy(
         swipeEnabled: !isWeb && !phoneOrganizing && canArchiveSession,
         wholeRowDrag: !touchPrimaryPointer && dragEnabled,
         showDragGrip: phoneOrganizing && dragEnabled,
-        // Android rows keep presses clickable rather than holding for a menu; Organize reaches them
-        // through the list's own controls.
-        enableLongPressContextMenu: isIos && !phoneOrganizing && contextMenuItemCount > 0,
+        enableLongPressContextMenu: isNativePhone && !phoneOrganizing && contextMenuItemCount > 0,
         suppressNextPressOnNativeContextMenuOpen,
     };
 

@@ -119,7 +119,8 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
     // Only the matching row wakes on semantic carry retirement. Pointer frames never subscribe here.
     const isDragging = useSyncExternalStore(runtime.subscribe, () => {
         const snapshot = runtime.getSnapshot();
-        if (snapshot.phase !== 'carrying' && snapshot.phase !== 'pending') return false;
+        const returning = snapshot.phase === 'settled' && snapshot.outcome?.status === 'refused' && runtime.getPointer() !== null;
+        if (snapshot.phase !== 'carrying' && snapshot.phase !== 'pending' && !returning) return false;
         const item = snapshot.item;
         if (!item) return false;
         const key = item.kind === 'session' ? sessionAddressKey(item.address)

@@ -63,12 +63,12 @@ describe('SessionListRow keyboard carry', () => {
         const secondary = {};
         const currentTarget = { querySelector: () => primary };
         for (const key of [' ', 'Enter']) {
-            const event = { key, target: { closest: () => secondary }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+            const event = { key, nativeEvent: { target: { closest: () => secondary } }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };
             row.props.onKeyDownCapture(event);
             expect(handleRowKey).not.toHaveBeenCalled();
             expect(event.preventDefault).not.toHaveBeenCalled();
         }
-        const event = { key: ' ', target: { closest: () => primary }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+        const event = { key: ' ', nativeEvent: { target: { closest: () => primary } }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };
         row.props.onKeyDownCapture(event);
         expect(handleRowKey).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'sess_keyboard', key: ' ' }));
         expect(event.preventDefault).toHaveBeenCalled();

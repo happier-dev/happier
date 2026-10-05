@@ -10,6 +10,7 @@ import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { getStorage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { setSessionReportsTo } from '@/sync/ops/relations/setSessionReportsTo';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
@@ -18,6 +19,8 @@ import { loadSessionReportsToEligibility, type SessionReportsToEligibilitySnapsh
 
 import { describeReportsToRefusal } from './putSessionUnderLead';
 import { buildPutUnderChooserSections, PUT_UNDER_TOP_LEVEL_OPTION_ID } from './putUnderChooser';
+import { resolvePutUnderEligibility } from './putUnderCandidates';
+import { describeSessionListDropReason } from '@/components/sessions/shell/dropPreview/sessionListDropPresentation';
 
 /**
  * "Put under…" (ORC §3.8, R-03; DnD lab K1c): the keyboard, phone and screen-reader equivalent of
@@ -50,18 +53,31 @@ type PutUnderSessionModalProps = CustomModalInjectedProps & Readonly<{
 export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
     const styles = stylesheet;
     const { onClose } = props;
+    const onCloseRef = React.useRef(onClose);
+    onCloseRef.current = onClose;
+    const close = React.useCallback(() => onCloseRef.current(), []);
     const [error, setError] = React.useState<string | null>(null);
     const [busy, setBusy] = React.useState(false);
     // A snapshot taken when the sheet opens: the choice is made against what the person saw.
-    const snapshot = React.useMemo(() => {
+    const [snapshot] = React.useState(() => {
         const sessions = getStorage().getState().sessions as Readonly<Record<string, Session>>;
         const self = sessions[props.sessionId] ?? null;
-        return { sessions, currentLeadId: self?.reportsTo?.sessionId ?? null };
-    }, [props.sessionId]);
+        return { sessions, currentLeadId: self?.reportsTo?.sessionId ?? null,
+            sessionId: props.sessionId, serverId: props.serverId,
+            lifetime: captureActiveServerAccountScopeLifetime() };
+    });
+    React.useEffect(() => {
+        if (!snapshot.lifetime || snapshot.lifetime.scope.serverId !== snapshot.serverId || !snapshot.lifetime.isCurrent()) {
+            close();
+            return;
+        }
+        const retirement = snapshot.lifetime.onRetire(close);
+        return () => retirement.dispose();
+    }, [close, snapshot]);
     // One relation-facts batch per open; `undefined` while the Home is being asked.
     const [facts, setFacts] = React.useState<SessionReportsToEligibilitySnapshot | null | undefined>(undefined);
     React.useEffect(() => {
-        if (!props.serverId) {
+        if (!props.serverId || !snapshot.lifetime?.isCurrent() || snapshot.lifetime.scope.serverId !== props.serverId) {
             setFacts(null);
             return;
         }
@@ -80,6 +96,12 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
                 next?.dispose();
                 return;
             }
+            if (!snapshot.lifetime?.isCurrent() || (next && (!next.isCurrent()
+                || next.serverId !== snapshot.serverId || next.accountId !== snapshot.lifetime.scope.accountId))) {
+                next?.dispose();
+                close();
+                return;
+            }
             loaded = next;
             setFacts(next);
         });
@@ -87,7 +109,7 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
             abort.abort();
             loaded?.dispose();
         };
-    }, [props.serverId, props.sessionId, snapshot.sessions]);
+    }, [close, props.serverId, props.sessionId, snapshot]);
 
     const step = React.useMemo<SelectionListStep>(() => {
         const sections = facts === undefined ? [] : buildPutUnderChooserSections({
@@ -115,7 +137,33 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
 
     const onSelect = React.useCallback((optionId: string) => {
         if (busy) return;
+        const sessions = getStorage().getState().sessions as Readonly<Record<string, Session>>;
+        const self = sessions[props.sessionId];
+        if (!snapshot.lifetime?.isCurrent() || props.serverId !== snapshot.serverId || props.sessionId !== snapshot.sessionId
+            || !self || (self.serverId ?? null) !== snapshot.serverId) {
+            onClose();
+            return;
+        }
+        if (!facts?.isCurrent() || facts.serverId !== snapshot.serverId || facts.accountId !== snapshot.lifetime.scope.accountId
+            || facts.sessionId !== snapshot.sessionId || facts.currentLeadSessionId !== snapshot.currentLeadId
+            || (self.reportsTo?.sessionId ?? null) !== snapshot.currentLeadId) {
+            setError(describeSessionListDropReason('unavailable').message);
+            return;
+        }
         const leadSessionId = optionId === PUT_UNDER_TOP_LEVEL_OPTION_ID ? null : optionId;
+        if (leadSessionId !== null) {
+            const eligibility = resolvePutUnderEligibility(sessions, props.sessionId, leadSessionId, facts, {
+                serverId: snapshot.serverId, accountId: snapshot.lifetime.scope.accountId, allowCurrentLead: true,
+            });
+            if (!eligibility.allowed) {
+                setError(describeSessionListDropReason(eligibility.reason).message);
+                return;
+            }
+        } else if (self.archivedAt != null || self.access?.capabilities.readTranscript !== true
+            || self.access.capabilities.submitAgentInput !== true) {
+            setError(describeSessionListDropReason('unavailable').message);
+            return;
+        }
         if (leadSessionId === snapshot.currentLeadId) {
             onClose();
             return;
@@ -127,6 +175,7 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
             leadSessionId,
             expectedLeadSessionId: snapshot.currentLeadId,
             serverId: props.serverId,
+            expectedAccountId: snapshot.lifetime.scope.accountId,
         }).then((result) => {
             if (result.ok) {
                 onClose();
@@ -138,7 +187,7 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
             setBusy(false);
             setError(describeReportsToRefusal(undefined));
         });
-    }, [busy, onClose, props.serverId, props.sessionId, snapshot.currentLeadId]);
+    }, [busy, facts, onClose, props.serverId, props.sessionId, snapshot]);
 
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,

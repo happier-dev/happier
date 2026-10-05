@@ -25,8 +25,10 @@ function flattenStyle(style: any): React.CSSProperties | undefined {
 }
 
 installRepositoryTreeCommonModuleMocks({
+    storage: importOriginal => importOriginal(),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('../../../../dev/testkit/mocks/reactNative');
+        const nativeMock = await createReactNativeWebMock();
         return createReactNativeWebMock({
             Platform: {
                 OS: 'web',
@@ -51,12 +53,15 @@ installRepositoryTreeCommonModuleMocks({
                 );
             }),
             StyleSheet: {
+                ...nativeMock.StyleSheet,
                 flatten: flattenStyle,
             },
         });
     },
 });
 
+// Collect the real presentation/store graph before the interaction timeout starts.
+const { RepositoryTreeDropOverlay } = await import('./RepositoryTreeDropOverlay');
 const webDropTargetViewModule = import('./WebDropTargetView');
 
 function createFileDragEvent(type: string, point = { x: 0, y: 0 }): Event {
@@ -71,7 +76,6 @@ function createFileDragEvent(type: string, point = { x: 0, y: 0 }): Event {
 describe('WebDropTargetView.web', () => {
     it('keeps Upload here beside the OS pointer without rerendering the repository target on dragover', async () => {
         const { WebDropTargetView } = await webDropTargetViewModule;
-        const { RepositoryTreeDropOverlay } = await import('./RepositoryTreeDropOverlay');
         let targetRenders = 0;
         function Target() {
             targetRenders += 1;

@@ -16,7 +16,7 @@ import { resolveHappierTabKeySelection } from '@happier-dev/plugin-ui/presentati
 import { DETAILS_TAB_STRIP_METRICS as M } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
 import { shadowLevelStyle } from '@/shadowElevation';
 import type { EntityDragItemV1, EntityDragKindV1, EntityDragScopeV1, EntityDropAdmissionV1, EntityDropEffectV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
-import { useEntityDragSource, useEntityDropTarget, useEntityDropTargetState, type EntityDragDropRuntime, type EntityDragInput } from '@/components/ui/treeDragDrop';
+import { measureWindowBounds, readWindowBounds, useEntityDragSource, useEntityDropTarget, useEntityDropTargetState, type EntityDragDropRuntime, type EntityDragInput, type WindowBounds } from '@/components/ui/treeDragDrop';
 import { useEntityDragDomBinding, useEntityDropDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
 import { TreeDropIndicatorLine } from '@/components/ui/treeDragDrop/ui/TreeDropIndicatorLine';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
@@ -393,6 +393,9 @@ export function DocumentTabStrip<T extends DocumentTabItem>(props: DocumentTabSt
         minHeight: touchFloorPx,
     }), [touchFloorPx]);
     const actionSize = Math.max(M.tabActionTargetPx, touchFloorPx ?? 0);
+    const refreshDropMeasurements = React.useCallback(() => {
+        void props.entityDragDrop?.runtime.refreshMeasurements();
+    }, [props.entityDragDrop?.runtime]);
     const tabFocusTargetsRef = React.useRef(new Map<string, { focus?: () => void }>());
     const handleKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLElement>, currentIndex: number) => {
         const key = event.key;
@@ -420,6 +423,7 @@ export function DocumentTabStrip<T extends DocumentTabItem>(props: DocumentTabSt
                 style={styles.bar}
                 accessibilityRole="tablist"
                 accessibilityLabel={props.accessibilityLabel}
+                onLayout={refreshDropMeasurements}
             >
                 {props.tabs.map((tab, tabIndex) => (
                     <React.Fragment key={tab.key}>
@@ -457,6 +461,8 @@ export function DocumentTabStrip<T extends DocumentTabItem>(props: DocumentTabSt
             showsHorizontalScrollIndicator={false}
             accessibilityRole="tablist"
             accessibilityLabel={props.accessibilityLabel}
+            onLayout={refreshDropMeasurements}
+            onScroll={refreshDropMeasurements}
         >
             {props.tabs.map((tab, tabIndex) => {
                 const isActive = props.activeTabKey ? tab.key === props.activeTabKey : false;
@@ -641,8 +647,12 @@ function DocumentRail<T extends DocumentTabItem>(props: Readonly<{
             onLayout={(event) => {
                 viewport.current = { ...viewport.current, width: event.nativeEvent.layout.width };
                 reveal(strip.activeTabKey, false);
+                void strip.entityDragDrop?.runtime.refreshMeasurements();
             }}
-            onScroll={(event) => { viewport.current = { ...viewport.current, x: event.nativeEvent.contentOffset.x }; }}
+            onScroll={(event) => {
+                viewport.current = { ...viewport.current, x: event.nativeEvent.contentOffset.x };
+                void strip.entityDragDrop?.runtime.refreshMeasurements();
+            }}
             scrollEventThrottle={32}
             accessibilityRole="tablist"
             accessibilityLabel={strip.accessibilityLabel}
@@ -865,8 +875,13 @@ function DocumentEntityTab(props: Readonly<{
     const { tab, binding } = props;
     const sourceId = JSON.stringify(['document-tab', binding.id, tab.key, 'source']);
     const targetId = JSON.stringify(['document-tab', binding.id, tab.key, 'target']);
-    const host = React.useRef<HTMLElement | null>(null);
-    const nativeBounds = React.useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+    const host = React.useRef<unknown>(null);
+    const nativeBounds = React.useRef<WindowBounds | null>(null);
+    const measure = React.useCallback(async () => {
+        const node = host.current;
+        const next = await measureWindowBounds(node);
+        if (host.current === node) nativeBounds.current = next;
+    }, []);
     useEntityDragSource(binding.runtime, {
         id: sourceId, scope: binding.scope,
         getItem: () => binding.getItem(tab.key),
@@ -876,10 +891,8 @@ function DocumentEntityTab(props: Readonly<{
     useEntityDropTarget(binding.runtime, {
         id: targetId, scope: binding.scope, acceptedKinds: binding.acceptedKinds,
         isCurrent: () => binding.isCurrent?.() !== false,
-        getBounds: () => {
-            const rect = host.current?.getBoundingClientRect?.();
-            return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : nativeBounds.current;
-        },
+        getBounds: () => readWindowBounds(host.current) ?? nativeBounds.current,
+        measureBounds: measure,
         listDestinations: () => [{ destination: { beforeTabId: tab.key }, label: tab.title }],
         resolve: ({ item, input }) => binding.resolve({ item, beforeTabId: tab.key, input }),
         execute: binding.execute,
@@ -894,17 +907,15 @@ function DocumentEntityTab(props: Readonly<{
     });
     const dropRef = useEntityDropDomBinding(binding.runtime);
     const attach = React.useCallback((node: unknown) => {
-        host.current = node as HTMLElement | null;
+        host.current = node;
         sourceRef(node);
         dropRef(node);
         binding.runtime.refresh();
     }, [binding.runtime, sourceRef, dropRef]);
     const state = useEntityDropTargetState(binding.runtime, targetId);
     const allowed = state?.phase === 'carrying' && state.admission?.status === 'allowed';
-    return <View ref={attach} onLayout={() => {
-        const node = host.current as unknown as { measureInWindow?: (callback: (x: number, y: number, width: number, height: number) => void) => void } | null;
-        node?.measureInWindow?.((x, y, width, height) => { nativeBounds.current = { x, y, width, height }; binding.runtime.refresh(); });
-        binding.runtime.refresh();
+    return <View ref={attach} collapsable={false} onLayout={() => {
+        void measure().then(() => binding.runtime.refresh());
     }} style={stylesheet.entityTab}>
         {props.children}
         {allowed ? <View pointerEvents="none" testID={`document-tab-drop-before-${toTestIdSafeValue(tab.key)}`}

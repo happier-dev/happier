@@ -21,6 +21,8 @@ import {
 } from '@/sync/domains/session/listing/sessionListProjectGroupingKeys';
 import { buildSessionWorkspaceOrderItemKey } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
 
+const mutationScope = { credentials: { token: 'domain-boundary-token', secret: 'secret' }, serverId: 'server-a', serverUrl: 'https://home.test', serverIdAliases: [] };
+
 const workspaceA: SessionFolderWorkspaceRefV1 = {
     t: 'workspaceScope',
     serverId: 'server-a',
@@ -253,7 +255,7 @@ describe('commitSessionListDragIntent', () => {
         const input = { scope: context.scope!, sourceRowId: treeRowId.session('server-a', 'root-b'),
             sourceKind: 'leaf', instructionKind: 'reorder-before', targetRowId: treeRowId.session('server-a', 'root-a'),
             containerId: treeRowId.workspaceRoot(projectGroupKey), parentRowId: null, depth: 0, edge: 'top' };
-        expect(await execute({ input })).toEqual({ status: 'unknown', reason: 'organization_write_outcome_unknown' });
+        expect(await execute({ mutationScope, input })).toEqual({ status: 'unknown', reason: 'organization_write_outcome_unknown' });
     });
 
     it('uses the same qualified admission and latest membership for the Action and pointer effect', async () => {
@@ -281,7 +283,7 @@ describe('commitSessionListDragIntent', () => {
         live.latestItems = [...items(), sessionItem('new-root', projectGroupKey, null, 0)];
         // This client Action exercises the real mounted adapter and domain owner; no other execution port is reached.
         const retire = registerMountedSessionListOrganizationAction(execute);
-        const actionExecutor = createActionExecutor({ sessionOrganizationMove: invokeSessionListOrganizationAction } as unknown as ActionExecutorDeps);
+        const actionExecutor = createActionExecutor({ sessionOrganizationMove: (request: Parameters<typeof invokeSessionListOrganizationAction>[0]) => invokeSessionListOrganizationAction({ ...request, mutationScope }) } as unknown as ActionExecutorDeps);
         try {
             expect(await actionExecutor.execute('session.organization.move', admission.effect.input,
                 { surface: 'agent', authority: 'account_automation', serverId: scope.serverId }))
@@ -296,11 +298,11 @@ describe('commitSessionListDragIntent', () => {
             .toContain(tree.rowMetadataById.get(treeRowId.session('server-a', 'new-root'))!.orderKey);
         const beforeWrites = spies.setSessionListGroupOrderV1.mock.calls.length;
         const cancel = new AbortController(); cancel.abort();
-        expect(await execute({ input: admission.effect.input, signal: cancel.signal })).toEqual({ status: 'refused', reason: 'cancelled' });
+        expect(await execute({ mutationScope, input: admission.effect.input, signal: cancel.signal })).toEqual({ status: 'refused', reason: 'cancelled' });
         expect(spies.setSessionListGroupOrderV1.mock.calls.length).toBe(beforeWrites);
         live.scope = { ...scope, accountId: 'replacement' };
-        expect(await execute({ input: admission.effect.input })).toEqual({ status: 'refused', reason: 'scope-mismatch' });
-        await expect(createSessionListOrganizationActionAdapter(() => null)({ input: admission.effect.input }))
+        expect(await execute({ mutationScope, input: admission.effect.input })).toEqual({ status: 'refused', reason: 'scope-mismatch' });
+        await expect(createSessionListOrganizationActionAdapter(() => null)({ mutationScope, input: admission.effect.input }))
             .resolves.toEqual({ status: 'unavailable' });
         expect(resolveSessionListDragIntent({ intent: { ...intent, scope }, context: live })).toEqual({ ok: false, reason: 'scope-mismatch' });
     });

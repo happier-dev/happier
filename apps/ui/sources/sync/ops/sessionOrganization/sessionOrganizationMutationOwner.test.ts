@@ -113,20 +113,6 @@ describe('sessionOrganizationMutationOwner', () => {
         );
     }, 120_000);
 
-    it('rejects replacement Account credentials returned after an asynchronous scoped lookup', async () => {
-        const { createDeferred } = await import('@/dev/testkit');
-        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
-        const profiles = await import('@/sync/domains/server/serverProfiles');
-        const created = await profiles.upsertServerProfile({ serverUrl: 'https://account-switch.example.test', name: 'Account switch' });
-        const pendingCredentials = createDeferred<typeof credentials>();
-        mocks.getCredentialsForServerUrl.mockReturnValue(pendingCredentials.promise);
-        const { requireSessionOrganizationMutationScope } = await import('./requireSessionOrganizationMutationScope');
-        const pending = requireSessionOrganizationMutationScope(created.id, { expectedAccountId: 'account-original' });
-        const result = expect(pending).rejects.toMatchObject({ code: 'session_organization_accountMismatch' });
-        pendingCredentials.resolve({ token: createAccountTokenForTests('account-replacement'), secret: 'replacement-secret' });
-        await result;
-    });
-
     it('reports stable unavailable reasons without throwing so UI adapters can choose their error policy', async () => {
         const profiles = await import('@/sync/domains/server/serverProfiles');
         const { resolveSessionOrganizationMutationScope } = await import('./sessionOrganizationMutationOwner');

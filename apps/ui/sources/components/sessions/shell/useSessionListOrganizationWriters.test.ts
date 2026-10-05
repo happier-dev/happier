@@ -8,6 +8,7 @@ import type { SessionOrganizationMutationScope } from '@/sync/ops/sessionOrganiz
 import type { SessionFolderV1 } from '@/sync/domains/session/folders/types';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { treeRowId } from './drop-resolution/treeRowId';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
 const boundary = vi.hoisted(() => ({ reorder: vi.fn(), upsertFolder: vi.fn(), credentials: vi.fn(), alert: vi.fn() }));
 
@@ -48,7 +49,7 @@ describe('mounted Session list organization writer bridge', () => {
         const requestReached = createDeferred<void>();
         const response = createDeferred<Awaited<ReturnType<typeof import('@/sync/api/session/sessionOrganizationApi').reorderSessionOrganization>>>();
         boundary.reorder.mockImplementation(() => { requestReached.resolve(); return response.promise; });
-        const itemKey = `${scope.serverId}:session-a`;
+        const itemKey = sessionAddressKey({ serverId: scope.serverId, sessionId: 'session-a' });
         const hook = await renderHook(() => useSessionListOrganizationWriters({
             availableSessionFoldersV1: { v: 1, folders: [] },
             orderItemAddressByItemKey: { [itemKey]: { itemKind: 'session', serverId: scope.serverId, sessionId: 'session-a' } },
@@ -112,7 +113,7 @@ describe('mounted Session list organization writer bridge', () => {
             { type: 'header', headerKind: 'project', title: 'Project', groupKey: 'project-a', workspaceKey: 'project-a', workspace, serverId: scope.serverId },
             ...['session-a', 'session-b'].map((sessionId) => ({ type: 'session' as const, sessionId, serverId: scope.serverId, groupKey: 'project-a', groupKind: 'project' as const, workspace, storageKind: 'persisted' as const, folderId: null, folderDepth: 0 })),
         ];
-        const addresses = Object.fromEntries(['session-a', 'session-b'].map((sessionId) => [`${scope.serverId}:${sessionId}`, { itemKind: 'session' as const, serverId: scope.serverId, sessionId }]));
+        const addresses = Object.fromEntries(['session-a', 'session-b'].map((sessionId) => [sessionAddressKey({ serverId: scope.serverId, sessionId }), { itemKind: 'session' as const, serverId: scope.serverId, sessionId }]));
         await renderHook(() => {
             const writers = useSessionListOrganizationWriters({ availableSessionFoldersV1: { v: 1, folders: [] }, orderItemAddressByItemKey: addresses });
             React.useEffect(() => registerMountedSessionListOrganizationAction(createSessionListOrganizationActionAdapter(() => ({
@@ -127,11 +128,11 @@ describe('mounted Session list organization writer bridge', () => {
         });
         const pending = invokeSessionListOrganizationAction({ mutationScope: scope, input: {
             scope: entityScope, sourceRowId: treeRowId.session(scope.serverId, 'session-b'), sourceKind: 'leaf', instructionKind: 'reorder-before',
-            targetRowId: treeRowId.session(scope.serverId, 'session-a'), containerId: null, parentRowId: null, depth: 0, edge: 'top',
+            targetRowId: treeRowId.session(scope.serverId, 'session-a'), containerId: treeRowId.workspaceRoot('project-a'), parentRowId: null, depth: 0, edge: 'top',
         } });
         let settled = false;
         void pending.then(() => { settled = true; });
-        await requestReached.promise;
+        expect(await Promise.race([requestReached.promise.then(() => null), pending])).toBeNull();
         expect(settled).toBe(false);
         response.reject(new Error('Acknowledgement lost'));
         expect(await pending).toEqual({ status: 'unknown', reason: 'organization_write_outcome_unknown' });
