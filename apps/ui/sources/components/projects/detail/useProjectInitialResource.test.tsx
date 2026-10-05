@@ -5,6 +5,7 @@ import { installAppPaneScopeHostCommonModuleMocks } from '@/components/appShell/
 import { DestinationInstanceHost, useDestinationPaneScopeId, useDestinationParams } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { buildProjectPaneScopeId } from './projectPaneScope';
 import { useProjectInitialResource } from './useProjectInitialResource';
+import { buildProjectRouteHref, readProjectFileRouteTarget } from './projectRouteState';
 import { useFullscreenDetailsRouteController } from '@/components/workspaceCockpit/useFullscreenDetailsRouteController';
 
 installAppPaneScopeHostCommonModuleMocks();
@@ -36,6 +37,19 @@ function ReopenHarness() {
 }
 
 describe('project initial resource admission', () => {
+    it('admits the typed anchor into the real destination pane', async () => {
+        const initialResource = { kind: 'file' as const, path: 'src/index.ts', anchorSource: 'diff' as const,
+            anchor: { kind: 'range' as const, filePath: 'src/index.ts', startLine: 12, endLine: 14 } };
+        const href = buildProjectRouteHref({ workspaceRefId: 'project-a', segment: 'details', activeRootPath: '/repo', defaultRootPath: '/repo', initialResource });
+        const params = Object.fromEntries(new URL(href, 'https://happier.test').searchParams);
+        expect(readProjectFileRouteTarget(params)).toEqual(initialResource);
+        const screen = await renderScreen(<AppPaneProvider><DestinationInstanceHost tabId="anchored"
+            ref={{ kind: 'project', params: { workspaceRefId: 'project-a', ...params } }}
+            pathname="/projects/project-a/details" focused visible navigation={{ push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} }}>
+            <Body />
+        </DestinationInstanceHost></AppPaneProvider>);
+        expect(screen.root.findByType('ProjectResourceProbe').props.tabs[0].resource).toMatchObject(initialResource);
+    });
     it('keeps the classic details route alive while its initial resource is being admitted', async () => {
         let dismissals = 0;
         await renderScreen(<AppPaneProvider><DestinationInstanceHost tabId="a"

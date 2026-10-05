@@ -32,9 +32,10 @@ const styles = StyleSheet.create((theme) => ({
 
 export default function UniversalSearchRoute(): React.ReactElement {
     const router = useRouter();
-    const params = useGlobalSearchParams<{ q?: string | string[]; sessionId?: string | string[]; accountId?: string | string[]; serverId?: string | string[]; machineId?: string | string[]; rootPath?: string | string[]; [TERMINAL_JUMP_ROUTE_PARAM]?: string | string[] }>();
+    const params = useGlobalSearchParams<{ q?: string | string[]; source?: string | string[]; sessionId?: string | string[]; accountId?: string | string[]; serverId?: string | string[]; machineId?: string | string[]; rootPath?: string | string[]; [TERMINAL_JUMP_ROUTE_PARAM]?: string | string[] }>();
     const runtime = useUniversalSearchRuntime();
     const initialQuery = typeof params.q === 'string' ? params.q : '';
+    const initialSource = params.source === 'fileContent' ? 'fileContent' : undefined;
     const activeSessionId = typeof params.sessionId === 'string' ? params.sessionId : null;
     const initialScope = React.useMemo(() => resolveUniversalSearchRouteInitialScope(params), [params]);
     const terminalScopeId = params[TERMINAL_JUMP_ROUTE_PARAM];
@@ -54,6 +55,7 @@ export default function UniversalSearchRoute(): React.ReactElement {
         <UniversalSearchController
             commands={commands}
             initialQuery={initialQuery}
+            initialSource={initialSource}
             activeSessionId={activeSessionId}
             initialScope={initialScope}
             terminalJump={terminalJump}

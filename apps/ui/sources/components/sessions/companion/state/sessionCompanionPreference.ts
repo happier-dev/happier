@@ -1,13 +1,16 @@
 import { SessionCompanionPresentationItemRefV1Schema, SESSION_COMPANION_BUILTIN_ITEM_IDS, type SessionCompanionPresentationItemRefV1 } from '@happier-dev/protocol/sessions';
 import { z } from 'zod';
+import type { WidgetExpectedPresentationV1, WidgetInputBindingsV1, WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { sameStrictJsonValue } from '@happier-dev/protocol';
 
 /**
  * Session Companion is a viewer/device-local presentation preference: which
  * Session items this person keeps beside Chat, in what order, on which logical
  * edge, at which density.
  *
- * It stores references and presentation choices only. Never item bytes, inputs,
- * grants, plugin generation, Session facts or render state — canonical Session,
+ * Board references retain shared content authority. Direct instances store their
+ * own non-secret inputs locally, never grants, credentials, plugin generation,
+ * Session facts or render state — canonical Session,
  * pane and plugin owners remain the content authorities, and removing a
  * Companion reference never removes shared content.
  */
@@ -21,6 +24,11 @@ export type SessionCompanionBuiltinItemId = (typeof SESSION_COMPANION_BUILTIN_IT
 
 export type SessionCompanionItemRefV1 = Readonly<SessionCompanionPresentationItemRefV1>;
 export type SessionCompanionFrameStyle = NonNullable<SessionCompanionItemRefV1['frameStyle']>;
+
+export type SessionCompanionRemovalGuard = Readonly<{
+    expectedInstance: WidgetInstanceV1;
+    expectedPresentation?: WidgetExpectedPresentationV1;
+}>;
 
 export type SessionCompanionEdge = 'leading' | 'trailing';
 export type SessionCompanionDensity = 'compact' | 'comfortable';
@@ -95,7 +103,7 @@ export function sessionCompanionItemKey(item: SessionCompanionItemRefV1): string
         case 'builtin': return `builtin:${item.id}`;
         case 'widget': return `widget:${item.widgetId}`;
         case 'pane': return `pane:${item.paneId}`;
-        case 'plugin': return `plugin:${item.surface.pluginId}/${item.surface.localId}`;
+        case 'instance': return `instance:${item.instance.id}`;
     }
 }
 
@@ -106,10 +114,28 @@ export function areSessionCompanionItemsEqual(
     return sessionCompanionItemKey(first) === sessionCompanionItemKey(second);
 }
 
-function freezeItems(items: readonly SessionCompanionItemRefV1[]): readonly SessionCompanionItemRefV1[] {
-    return Object.freeze(items.map((item) => Object.freeze(item.kind === 'plugin'
-        ? { ...item, surface: Object.freeze({ ...item.surface }) }
+function freezeItems(items: readonly SessionCompanionItemRefV1[], previousItems: readonly SessionCompanionItemRefV1[] = []): readonly SessionCompanionItemRefV1[] {
+    return Object.freeze(items.map((item) => previousItems.includes(item) && Object.isFrozen(item) ? item : Object.freeze(item.kind === 'instance'
+        ? { ...item, instance: freezeInstance(item.instance) }
         : { ...item })));
+}
+
+function freezeInstance(instance: WidgetInstanceV1): WidgetInstanceV1 {
+    // Parse creates an independent canonical JSON graph before freezing it.
+    const parsed = SessionCompanionPresentationItemRefV1Schema.parse({ kind: 'instance', instance });
+    if (parsed.kind !== 'instance') throw new Error('Expected a Companion widget instance');
+    const freeze = (value: unknown): void => {
+        if (!value || typeof value !== 'object') return;
+        for (const child of Object.values(value)) freeze(child);
+        Object.freeze(value);
+    };
+    freeze(parsed.instance);
+    return parsed.instance;
+}
+
+export function areSessionCompanionItemContentsEqual(first: SessionCompanionItemRefV1, second: SessionCompanionItemRefV1): boolean {
+    return areSessionCompanionItemsEqual(first, second) && first.frameStyle === second.frameStyle
+        && (first.kind !== 'instance' || (second.kind === 'instance' && sameStrictJsonValue(first.instance, second.instance)));
 }
 
 /**
@@ -153,7 +179,7 @@ function withItems(
     preference: SessionCompanionPreferenceV1,
     items: readonly SessionCompanionItemRefV1[],
 ): SessionCompanionPreferenceV1 {
-    return Object.freeze({ ...preference, items: freezeItems(items) });
+    return Object.freeze({ ...preference, items: freezeItems(items, preference.items) });
 }
 
 /**
@@ -223,7 +249,18 @@ export function addSessionCompanionItem(
 export function removeSessionCompanionItem(
     preference: SessionCompanionPreferenceV1,
     item: SessionCompanionItemRefV1,
+    guard?: SessionCompanionRemovalGuard,
 ): SessionCompanionPreferenceV1 {
+    if (guard) {
+        const nativeIndex = preference.items.findIndex(candidate => areSessionCompanionItemsEqual(candidate, item));
+        const current = preference.items[nativeIndex];
+        const presentation = guard.expectedPresentation;
+        if (item.kind !== 'instance' || current?.kind !== 'instance'
+            || !sameStrictJsonValue(current.instance, guard.expectedInstance)
+            || (presentation && (presentation.width !== undefined || presentation.tabId !== undefined || presentation.hidden !== undefined
+                || presentation.nativeIndex !== nativeIndex
+                || presentation.frameStyle !== (current.frameStyle ?? null)))) return preference;
+    }
     const next = preference.items.filter((candidate) => !areSessionCompanionItemsEqual(candidate, item));
     if (next.length === preference.items.length) return preference;
     const withRemoved = withItems(preference, next);
@@ -259,8 +296,30 @@ export function areSessionCompanionPreferencesEqual(
     }
     return first.items.every((item, index) => {
         const other = second.items[index];
-        return other !== undefined && areSessionCompanionItemsEqual(item, other) && item.frameStyle === other.frameStyle;
+        return other !== undefined && areSessionCompanionItemContentsEqual(item, other);
     });
+}
+
+export function setSessionCompanionInstanceInputs(preference: SessionCompanionPreferenceV1, instanceId: string, bindings: WidgetInputBindingsV1): SessionCompanionPreferenceV1 {
+    return updateSessionCompanionInstance(preference, instanceId, (instance) => ({ ...instance, bindings }));
+}
+
+export function renameSessionCompanionInstance(preference: SessionCompanionPreferenceV1, instanceId: string, displayName: string | null): SessionCompanionPreferenceV1 {
+    return updateSessionCompanionInstance(preference, instanceId, (instance) => {
+        const { displayName: _previous, ...rest } = instance;
+        return displayName === null ? rest : { ...rest, displayName };
+    });
+}
+
+function updateSessionCompanionInstance(preference: SessionCompanionPreferenceV1, instanceId: string, update: (instance: WidgetInstanceV1) => WidgetInstanceV1): SessionCompanionPreferenceV1 {
+    const index = preference.items.findIndex((item) => item.kind === 'instance' && item.instance.id === instanceId);
+    const item = preference.items[index];
+    if (!item || item.kind !== 'instance') return preference;
+    const instance = freezeInstance(update(item.instance));
+    if (sameStrictJsonValue(item.instance, instance)) return preference;
+    const next = [...preference.items];
+    next[index] = { ...item, instance };
+    return withItems(preference, next);
 }
 
 export function setSessionCompanionItemFrameStyle(

@@ -30,9 +30,11 @@ import {
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { DetailsTab, DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { FILE_TARGET_ANCHOR_PARAM_KEYS, parseSessionFileDeepLinkAnchor, readFileTargetAnchorResource, serializeFileTargetAnchor, type FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
+import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 
 export type SessionPaneUrlDetailsTarget =
-    | Readonly<{ kind: 'file'; path: string }>
+    | Readonly<{ kind: 'file'; path: string; anchor?: FileTargetAnchor; anchorSource?: ReviewCommentSource }>
     | Readonly<{ kind: 'commit'; sha: string }>
     | (Readonly<{ kind: 'scmReview' }> & SessionScmReviewTarget)
     | Readonly<{ kind: 'scmStash' }>
@@ -47,7 +49,8 @@ export type SessionPaneUrlDetailsTarget =
  */
 export const SESSION_PANE_URL_PARAM_KEYS = [
     'right', 'bottom', 'details', 'path', 'sha', 'terminalInstanceId', 'discussionId',
-    'comparison', 'comparisonId', 'turnId', 'checkpointReceiptId', 'evidence', 'head', 'base', 'commit', 'parent', 'view', 'pullRequest',
+    'comparison', 'comparisonId', 'turnId', 'checkpointReceiptId', 'evidence', 'head', 'base', 'commit', 'parent', 'view', 'explain', 'pullRequest',
+    ...FILE_TARGET_ANCHOR_PARAM_KEYS,
 ] as const;
 export type SessionPaneUrlParamKey = (typeof SESSION_PANE_URL_PARAM_KEYS)[number];
 
@@ -119,9 +122,12 @@ function parseScmReviewTarget(params: Readonly<Record<string, unknown>>): Sessio
     const viewRaw = read('view');
     const comparisonId = read('comparisonId');
     const view = SESSION_SCM_REVIEW_VIEWS.find((candidate) => candidate === viewRaw) ?? null;
+    const explainRaw = read('explain');
+    const explain = explainRaw === 'true' ? true : explainRaw === 'false' ? false : undefined;
     return {
         ...(comparison ? { comparison: comparisonId ? { ...comparison, comparisonId } : comparison } : null),
         ...(view ? { view } : null),
+        ...(typeof explain === 'boolean' ? { explain } : null),
     };
 }
 
@@ -147,17 +153,19 @@ function serializeScmReviewTarget(target: SessionScmReviewTarget): Record<string
         if (comparison.kind === 'pullRequest') out.pullRequest = JSON.stringify(comparison.locator);
     }
     if (target.view) out.view = target.view;
+    if (typeof target.explain === 'boolean') out.explain = String(target.explain);
     return out;
 }
 
 /** A stored tab's comparison and view, validated by the same reader a link goes through. */
 export function readSessionScmReviewTarget(resource: unknown): SessionScmReviewTarget {
-    const record = resource && typeof resource === 'object' ? resource as { comparison?: unknown; view?: unknown } : {};
+    const record = resource && typeof resource === 'object' ? resource as { comparison?: unknown; view?: unknown; explain?: unknown } : {};
     const comparison = record.comparison && typeof record.comparison === 'object' ? record.comparison as SessionScmReviewComparison : undefined;
     const view = typeof record.view === 'string' ? record.view as SessionScmReviewView : undefined;
     return parseScmReviewTarget(serializeScmReviewTarget({
         ...(comparison ? { comparison } : null),
         ...(view ? { view } : null),
+        ...(typeof record.explain === 'boolean' ? { explain: record.explain } : null),
     }));
 }
 
@@ -176,7 +184,9 @@ export function parseSessionPaneUrlState(params: Readonly<Record<string, unknown
 
     let details: SessionPaneUrlDetailsTarget | null = null;
     if (detailsRaw === 'file' && pathRaw && isSafeWorkspaceRelativePath(pathRaw)) {
-        details = { kind: 'file', path: pathRaw.trim() };
+        const parsed = parseSessionFileDeepLinkAnchor(params);
+        details = { kind: 'file', path: pathRaw.trim(), ...(parsed ? { anchor: parsed.anchor } : {}),
+            ...(parsed?.source === 'diff' ? { anchorSource: parsed.source } : {}) };
     }
     if (detailsRaw === 'commit' && shaRaw) {
         details = { kind: 'commit', sha: shaRaw };
@@ -223,6 +233,7 @@ export function serializeSessionPaneUrlState(state: SessionPaneUrlState): Record
     if (state.details?.kind === 'file') {
         out.details = 'file';
         out.path = state.details.path;
+        if (state.details.anchor) Object.assign(out, serializeFileTargetAnchor(state.details.anchor, state.details.anchorSource));
     }
     if (state.details?.kind === 'commit') {
         out.details = 'commit';
@@ -267,7 +278,8 @@ export function buildActiveDetailsRouteParams(
     if (activeTab.kind === 'file') {
         const path = typeof activeTab.resource?.path === 'string' ? activeTab.resource.path.trim() : '';
         if (!path || !isSafeWorkspaceRelativePath(path)) return {};
-        return serializeSessionPaneUrlState({ details: { kind: 'file', path } });
+        const parsed = readFileTargetAnchorResource(activeTab.resource);
+        return serializeSessionPaneUrlState({ details: { kind: 'file', path, ...(parsed ? { anchor: parsed.anchor, anchorSource: parsed.source } : {}) } });
     }
 
     if (activeTab.kind === 'commit') {
@@ -349,7 +361,7 @@ export function deriveSessionPaneUrlStateFromScopeState(scopeState: PaneScopeSta
             if (typeof path === 'string' && path.trim()) {
                 const trimmedPath = path.trim();
                 if (isSafeWorkspaceRelativePath(trimmedPath)) {
-                    details = { kind: 'file', path: trimmedPath };
+                    details = parseSessionPaneUrlState(buildActiveDetailsRouteParams([tab], tab.key))?.details ?? null;
                 }
             }
         } else if (tab?.kind === 'commit') {
@@ -410,7 +422,7 @@ export function createSessionPaneDetailsTab(
     switch (target.kind) {
         case 'file': {
             const path = target.path.trim();
-            if (isSafeWorkspaceRelativePath(path)) tab = createSessionFileDetailsTab(path);
+            if (isSafeWorkspaceRelativePath(path)) tab = createSessionFileDetailsTab(path, target.anchor, target.anchorSource);
             break;
         }
         case 'commit':
@@ -420,6 +432,7 @@ export function createSessionPaneDetailsTab(
             tab = createSessionScmReviewDetailsTab({
                 ...(target.comparison ? { comparison: target.comparison } : null),
                 ...(target.view ? { view: target.view } : null),
+                ...(typeof target.explain === 'boolean' ? { explain: target.explain } : null),
             });
             break;
         case 'scmStash':

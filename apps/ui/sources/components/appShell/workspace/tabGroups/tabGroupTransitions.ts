@@ -31,11 +31,17 @@ export function activateGroupTab(group: TabGroupState, tabId: string): TabGroupS
     return { ...group, activeTabId: tabId, mru };
 }
 
-export function insertGroupTab(group: TabGroupState, tabId: string): TabGroupState {
-    return activateGroupTab({
-        ...group,
-        tabIds: group.tabIds.includes(tabId) ? group.tabIds : [...group.tabIds, tabId],
-    }, tabId);
+export function reorderGroupTab(group: TabGroupState, tabId: string, beforeTabId: string | null): TabGroupState {
+    if (!group.tabIds.includes(tabId) || tabId === beforeTabId) return group;
+    const tabIds = group.tabIds.filter((id) => id !== tabId);
+    const anchorIndex = beforeTabId === null ? -1 : tabIds.indexOf(beforeTabId);
+    tabIds.splice(anchorIndex < 0 ? tabIds.length : anchorIndex, 0, tabId);
+    return tabIds.every((id, index) => id === group.tabIds[index]) ? group : { ...group, tabIds };
+}
+
+export function insertGroupTab(group: TabGroupState, tabId: string, beforeTabId?: string | null): TabGroupState {
+    const inserted = group.tabIds.includes(tabId) ? group : { ...group, tabIds: [...group.tabIds, tabId] };
+    return activateGroupTab(beforeTabId === undefined ? inserted : reorderGroupTab(inserted, tabId, beforeTabId), tabId);
 }
 
 export function closeGroupTab(group: TabGroupState, tabId: string): TabGroupState {
@@ -85,19 +91,22 @@ export function moveGroupTab<TTab extends GroupTabState>(
     target: TabGroupState,
     tab: TTab,
     tabsById: Readonly<Record<string, TTab>>,
+    beforeTabId?: string | null,
 ): Readonly<{ source: TabGroupState; target: TabGroupState; replacedPreviewTabIds: readonly string[] }> {
     if (!source.tabIds.includes(tab.id)) {
         return { source, target, replacedPreviewTabIds: [] };
     }
     if (source.id === target.id) {
-        return { source, target: activateGroupTab(target, tab.id), replacedPreviewTabIds: [] };
+        const reordered = beforeTabId === undefined ? target : reorderGroupTab(target, tab.id, beforeTabId);
+        const activated = activateGroupTab(reordered, tab.id);
+        return { source: activated, target: activated, replacedPreviewTabIds: [] };
     }
     const previewResult = tab.preview
         ? removeGroupPreviewTabs(target, tabsById)
         : { group: target, removedTabIds: [] };
     return {
         source: closeGroupTab(source, tab.id),
-        target: insertGroupTab(previewResult.group, tab.id),
+        target: insertGroupTab(previewResult.group, tab.id, beforeTabId),
         replacedPreviewTabIds: previewResult.removedTabIds,
     };
 }

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,11 +8,13 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { primeRepositoryUploadBrowserFixture, createRepositoryPickerInputHost, nativeDocumentPickerBoundary } from '@/components/workspaces/files/repositoryTree/repositoryUploadBrowserTestFixture';
+import { invokeRepositoryUploadPick } from '@/components/workspaces/files/repositoryTree/repositoryUploadActionRuntime';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const startUploadsSpy = vi.fn(async (..._args: any[]) => ({ ok: true } as const));
-const readWebDroppedEntriesSpy = vi.fn(async (..._args: any[]) => [{ file: { name: 'a.txt', size: 1 }, relativePath: 'a.txt' }]);
+const machineRpcSpy = vi.hoisted(() => vi.fn(async (_params: unknown) => ({ success: true, exists: false })));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -36,30 +39,6 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        storage: { getState: () => ({ setWorkspaceRepositoryTreeExpandedPaths: vi.fn() }) } as any,
-        useWorkspaceRepositoryTreeExpandedPaths: () => [],
-        useMachine: () => ({ id: 'm1', active: true, activeAt: Date.now() }) as any,
-    });
-});
-
-vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
-    useServerFeaturesSnapshotForServerId: () => ({
-        status: 'ready',
-        features: {
-            features: {
-                machines: {
-                    enabled: true,
-                    transfer: { enabled: true },
-                },
-            },
-            capabilities: {},
-        },
-    }),
-}));
-
 vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
     useWorkspaceScmSnapshotController: () => ({
         snapshot: null,
@@ -69,37 +48,16 @@ vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
     }),
 }));
 
-vi.mock('@/hooks/ui/useWebFileDropZone', () => ({
-    useWebFileDropZone: (params: any) => ({
-        onDragEnter: (event: any) => {
-            params.onFileDragActiveChange?.(true);
-            if (Array.isArray(event?.dataTransfer?.types) && event.dataTransfer.types.includes('Files')) {
-                // noop
-            }
-        },
-        onDragLeave: () => params.onFileDragActiveChange?.(false),
-        onDragOver: () => {},
-        onDrop: (event: any) => {
-            params.onFileDragActiveChange?.(false);
-            void params.onFilesDropped(event);
-        },
-    }),
-}));
+// Node does not apply Metro's platform suffix resolution; execute the real web owner.
+vi.mock('@/hooks/ui/useWebFileDropZone', () => import('@/hooks/ui/useWebFileDropZone.web'));
 
-vi.mock('@/utils/files/webDroppedEntries', () => ({
-    readWebDroppedEntries: (...args: any[]) => readWebDroppedEntriesSpy(...args),
-}));
+vi.mock('@/utils/files/webDroppedEntries', () => import('@/utils/files/webDroppedEntries.web'));
 
-vi.mock('@/hooks/workspaces/transfers/useWorkspaceFileTransfers', () => ({
-    useWorkspaceFileTransfers: () => ({
-        uploadState: { status: 'idle' },
-        downloadState: { status: 'idle' },
-        startUploads: (...args: any[]) => startUploadsSpy(...args),
-        cancelUploads: vi.fn(),
-        startDownload: vi.fn(async () => ({ ok: true })),
-        cancelDownload: vi.fn(),
-    }),
-}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    // Generic RPC responses are schema-owned by the real caller beneath this network boundary.
+    return createServerScopedMachineRpcBoundaryMock(machineRpcSpy as typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc').machineRpcWithServerScope);
+});
 
 vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
     WorkspaceRepositoryTreeList: (props: any) => React.createElement('View', { ...props, testID: 'workspace-repository-tree-list' }),
@@ -118,35 +76,46 @@ vi.mock('@/components/workspaces/files/repositoryTree/SearchResultsList', () => 
 }));
 
 describe('WorkspaceRepositoryTreeBrowserView (drag overlay)', () => {
-    beforeEach(() => {
-        startUploadsSpy.mockClear();
-        readWebDroppedEntriesSpy.mockClear();
+    beforeEach(async () => {
+        // Browser feature detection is an external platform boundary.
+        vi.stubGlobal('SharedWorker', class SharedWorker {});
+        await primeRepositoryUploadBrowserFixture();
+        machineRpcSpy.mockClear();
     });
 
     afterEach(() => {
         standardCleanup();
+        vi.unstubAllGlobals();
     });
 
-    async function renderBrowser() {
+    async function renderBrowser(inputs?: HTMLInputElement[]) {
         const { WorkspaceRepositoryTreeBrowserView } = await import('./WorkspaceRepositoryTreeBrowserView');
-        return renderScreen(
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        screen = await renderScreen(
             <WorkspaceRepositoryTreeBrowserView
                 scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
                 onOpenFile={vi.fn()}
             />,
+            inputs ? { createNodeMock: element => {
+                if (!React.isValidElement<Record<string, unknown>>(element)) return null;
+                const index = inputs.length;
+                return createRepositoryPickerInputHost(element, inputs, () => screen?.findAllByType('input')[index]?.props.onChange);
+            } } : {},
         );
+        return screen;
     }
 
     it('surfaces the hovered upload destination in the drop overlay', async () => {
         const screen = await renderBrowser();
 
-        const repositoryTree = screen.findByTestId('workspace-repository-tree-list');
-        expect(repositoryTree).toBeTruthy();
+        const dropZone = screen.findByTestId('repository-tree-drop-zone');
+        const row = document.createElement('div');
+        row.setAttribute('data-repository-drop-destination', 'src/components');
+        row.setAttribute('data-repository-drop-hover', 'src/components');
         await act(async () => {
-            repositoryTree?.props.onWebDropTargetChange?.({
-                destinationDir: 'src/components',
-                hoverPath: 'src/components',
-                autoExpandDirectoryPath: null,
+            dropZone?.props.onDragEnter?.({
+                dataTransfer: { types: ['Files'] },
+                target: row,
             });
         });
 
@@ -154,7 +123,7 @@ describe('WorkspaceRepositoryTreeBrowserView (drag overlay)', () => {
         expect(overlay?.props.destinationLabel).toBe('src/components');
     });
 
-    it('shows drop overlay and starts workspace uploads when files are dropped', async () => {
+    it('shows drop feedback and dispatches files to the row at release rather than an earlier hover', async () => {
         const screen = await renderBrowser();
 
         const dropZone = screen.findByTestId('repository-tree-drop-zone');
@@ -167,15 +136,93 @@ describe('WorkspaceRepositoryTreeBrowserView (drag overlay)', () => {
         const overlay = screen.findByTestId('repository-tree-drop-overlay');
         expect(overlay?.props.visible).toBe(true);
 
-        await act(async () => {
-            dropZone?.props.onDrop({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
-        });
+        const file = new File(['hello'], 'a.txt');
+        const releaseRow = document.createElement('div');
+        releaseRow.setAttribute('data-repository-drop-destination', 'src/release');
+        await act(async () => dropZone?.props.onDrop({
+            preventDefault: () => {}, target: releaseRow, dataTransfer: { types: ['Files'], files: [file] },
+        }));
         await flushHookEffects();
 
-        expect(readWebDroppedEntriesSpy).toHaveBeenCalledTimes(1);
-        expect(startUploadsSpy).toHaveBeenCalledWith({
-            entries: [{ kind: 'web', file: { name: 'a.txt', size: 1 }, relativePath: 'a.txt' }],
-            destinationDir: '',
-        });
+        expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server', machineId: 'm1', method: RPC_METHODS.STAT_FILE, payload: { path: '/repo/src/release/a.txt' },
+        }));
+    });
+
+    it.each(['files', 'folder'] as const)('acquires an Action %s picker and preserves its exact requested destination', async kind => {
+        const inputs: HTMLInputElement[] = [];
+        await renderBrowser(inputs);
+        const input = inputs.find(candidate => candidate.hasAttribute('webkitdirectory') === (kind === 'folder'))!;
+        expect(input).toBeTruthy();
+        const clicked = vi.fn();
+        input.addEventListener('click', clicked);
+        expect(await invokeRepositoryUploadPick({
+            scope: { serverId: 'server', accountId: 'account' },
+            workspace: { serverId: 'server', machineId: 'm1', rootPath: '/repo' },
+            kind, destinationDir: 'requested/subdir',
+        })).toEqual({ status: 'requested' });
+        expect(clicked).toHaveBeenCalledTimes(1);
+        expect(machineRpcSpy).not.toHaveBeenCalled();
+        const file = new File(['hello'], 'a.txt');
+        const relativePath = kind === 'folder' ? 'docs/a.txt' : 'a.txt';
+        Object.defineProperty(file, 'webkitRelativePath', { value: kind === 'folder' ? relativePath : '' });
+        Object.defineProperty(input, 'files', { value: [file] });
+        await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+        await flushHookEffects();
+        expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server', machineId: 'm1', method: RPC_METHODS.STAT_FILE, payload: { path: `/repo/requested/subdir/${relativePath}` },
+        }));
+    });
+
+    it.each(['workspace', 'account', 'home'] as const)('retires an open Action picker after its %s changes', async changed => {
+        const inputs: HTMLInputElement[] = [];
+        const screen = await renderBrowser(inputs);
+        const input = inputs.find(candidate => !candidate.hasAttribute('webkitdirectory'))!;
+        expect(await invokeRepositoryUploadPick({
+            scope: { serverId: 'server', accountId: 'account' },
+            workspace: { serverId: 'server', machineId: 'm1', rootPath: '/repo' },
+            kind: 'files', destinationDir: 'requested/subdir',
+        })).toEqual({ status: 'requested' });
+        if (changed === 'workspace') {
+            const { WorkspaceRepositoryTreeBrowserView } = await import('./WorkspaceRepositoryTreeBrowserView');
+            await screen.update(<WorkspaceRepositoryTreeBrowserView scope={{ serverId: 'server', machineId: 'm1', rootPath: '/other' }} onOpenFile={vi.fn()} />);
+        } else {
+            const { getStorage } = await import('@/sync/domains/state/storage');
+            await act(async () => getStorage().setState({ profileScope: {
+                serverId: changed === 'home' ? 'other-home' : 'server', accountId: 'other-account',
+            } }));
+            // Returning to the same Account must not revive the earlier OS selection.
+            if (changed === 'account') await act(async () => getStorage().setState({ profileScope: { serverId: 'server', accountId: 'account' } }));
+        }
+        machineRpcSpy.mockClear();
+        Object.defineProperty(input, 'files', { value: [new File(['hello'], 'a.txt')] });
+        await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+        await flushHookEffects();
+        expect(machineRpcSpy).not.toHaveBeenCalled();
+    });
+
+    it('retires a native picker awaiting OS selection before transferring under another Account', async () => {
+        const { Platform } = await import('react-native');
+        Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
+        let finishSelection!: (value: unknown) => void;
+        nativeDocumentPickerBoundary.mockImplementationOnce(() => new Promise(resolve => { finishSelection = resolve; }));
+        try {
+            await renderBrowser();
+            const requested = invokeRepositoryUploadPick({
+                scope: { serverId: 'server', accountId: 'account' },
+                workspace: { serverId: 'server', machineId: 'm1', rootPath: '/repo' },
+                kind: 'files', destinationDir: 'requested/subdir',
+            });
+            await vi.waitFor(() => expect(finishSelection).toBeTypeOf('function'));
+            const { getStorage } = await import('@/sync/domains/state/storage');
+            await act(async () => getStorage().setState({ profileScope: { serverId: 'server', accountId: 'other-account' } }));
+            await act(async () => {
+                finishSelection({ canceled: false, assets: [{ uri: 'file:///selected/a.txt', name: 'a.txt', size: 5, mimeType: 'text/plain' }] });
+                await expect(requested).resolves.toEqual({ status: 'cancelled' });
+            });
+            expect(machineRpcSpy).not.toHaveBeenCalled();
+        } finally {
+            Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        }
     });
 });

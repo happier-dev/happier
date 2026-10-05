@@ -75,7 +75,7 @@ let restoreModuleLoader: (() => void) | null = null;
 async function mountHome(serverUrl: string) {
     // Metro's call-time require must return the same real mounted Sync owner as ESM imports.
     // This bridges the Node module-loading boundary only, not Account or domain behavior.
-    const actual = await import('@/sync/sync');
+    const actual = await import('@/sync/syncEngine');
     type Loader = (request: string, parent?: { filename?: string }, isMain?: boolean) => unknown;
     const { createRequire } = getVitestNodeBuiltin<{ createRequire(filename: string | URL): (id: string) => unknown }>('node:module');
     const module = createRequire(import.meta.url)('node:module') as { _load: Loader };

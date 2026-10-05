@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';
+import { SessionNavigationPill, sessionNavigationPillStyles } from '@/components/navigation/SessionNavigationPill';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { StatusDot } from '@/components/ui/status/StatusDot';
@@ -192,25 +193,6 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         ...Typography.default(),
     },
-    stayRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        paddingHorizontal: 18,
-        minHeight: 48,
-    },
-    stayLabel: {
-        fontSize: 14,
-        color: theme.colors.text.secondary,
-        ...Typography.default(),
-    },
-    stayName: {
-        flexShrink: 1,
-        fontSize: 14,
-        color: theme.colors.text.primary,
-        ...Typography.default('semiBold'),
-    },
     peekText: {
         fontSize: 15,
         lineHeight: 20,
@@ -369,7 +351,7 @@ export const SessionSwitcherPanel = React.memo(function SessionSwitcherPanel(pro
             {props.selected && (props.selected.excerpt || props.selected.draft) ? (
                 <SwitcherPeek row={props.selected} />
             ) : null}
-            <GlassPanel radius={PANEL_RADIUS} forceSolid style={styles.panel} surfaceColor={theme.colors.background.canvas}>
+            <GlassPanel radius={PANEL_RADIUS} style={styles.panel} surfaceColor={theme.colors.background.canvas}>
                 {props.docked ? (
                     <View style={styles.dockedHeader}>
                         <Text style={styles.dockedTitle} accessibilityRole="header">{t('phoneNav.switcher.title')}</Text>
@@ -441,7 +423,7 @@ const SwitcherPeek = React.memo(function SwitcherPeek(props: Readonly<{ row: Ses
     const where = [row.status?.text, row.timeLabel].filter(Boolean).join(' · ');
     return (
         <View style={[styles.peek, { bottom: '100%', marginBottom: 10 }]} pointerEvents="none">
-            <GlassPanel radius={20} forceSolid surfaceColor={theme.colors.surface.base} style={{ paddingHorizontal: 14, paddingVertical: 10, gap: 4 }}>
+            <GlassPanel radius={20} surfaceColor={theme.colors.surface.base} style={{ paddingHorizontal: 14, paddingVertical: 10, gap: 4 }}>
                 <View style={styles.peekWhere}>
                     <RowMark row={row} size={13} />
                     <Text style={styles.peekWhereText} numberOfLines={1}>{where || row.title}</Text>
@@ -460,12 +442,10 @@ const SwitcherPeek = React.memo(function SwitcherPeek(props: Readonly<{ row: Ses
 export const SessionSwitcherStayPill = React.memo(function SessionSwitcherStayPill(props: Readonly<{ title: string }>) {
     const { theme } = useUnistyles();
     return (
-        <GlassPanel radius={999} forceSolid surfaceColor={theme.colors.surface.base}>
-            <View style={styles.stayRow}>
-                <Icon name="arrow-down" size={14} color={theme.colors.text.secondary} />
-                <Text style={styles.stayLabel} numberOfLines={1}>{t('phoneNav.switcher.stayOn')}</Text>
-                <Text style={styles.stayName} numberOfLines={1}>{props.title}</Text>
-            </View>
-        </GlassPanel>
+        <SessionNavigationPill>
+            <Icon name="arrow-down" size={14} color={theme.colors.text.secondary} />
+            <Text style={sessionNavigationPillStyles.label} numberOfLines={1}>{t('phoneNav.switcher.stayOn')}</Text>
+            <Text style={sessionNavigationPillStyles.title} numberOfLines={1}>{props.title}</Text>
+        </SessionNavigationPill>
     );
 });

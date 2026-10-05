@@ -39,6 +39,7 @@ import {
     type AppRailEntry,
 } from './appRailModel';
 import { useAppShellLocation } from './useAppShellLocation';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 const renderUsage = (content: SidebarFooterPopoverContentProps) => <SidebarUsagePopoverContent {...content} />;
 
@@ -315,7 +316,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         paddingTop: 4,
         paddingBottom: 12,
-        backgroundColor: theme.colors.background.canvas,
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.background.canvas, 'chrome', true),
     },
     group: {
         alignItems: 'center',

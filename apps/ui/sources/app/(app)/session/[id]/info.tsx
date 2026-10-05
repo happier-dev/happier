@@ -390,6 +390,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 router.push(buildScopedSessionRouteHref({
                     sessionId: childSessionId,
                     serverId: options?.serverId ?? sessionServerId,
+                    query: options?.query,
                 }) as any);
             },
         }),

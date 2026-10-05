@@ -195,6 +195,18 @@ export function SessionSwitcherBand(props: Readonly<{
         return prepared;
     }, [countNext, countPrevious, countUp, switcher]);
 
+    const reveal = React.useCallback(() => {
+        'worklet';
+        const at = index.value;
+        const bottom = at >= 0 ? rowBottoms.value[at] : 0;
+        if (bottom === undefined) return;
+        const to = resolveSessionSwitcherRevealScroll({
+            scroll: scroll.value, rowBottom: bottom, rowHeight: SESSION_SWITCHER_ROW_HEIGHT,
+            viewportHeight: viewportHeight.value, contentHeight: contentHeight.value,
+        });
+        if (to !== scroll.value) scroll.value = reducedMotion ? to : withSpring(to, reanimatedMotionTokens.spring.travel);
+    }, [contentHeight, index, reducedMotion, rowBottoms, scroll, viewportHeight]);
+
     const frame = useFrameCallback((info) => {
         'worklet';
         const p = phase.value;
@@ -218,6 +230,7 @@ export function SessionSwitcherBand(props: Readonly<{
             if (next < -1 || next > count.value - 1) { autoAccumulator.value = 0; break; }
             anchorIndex.value += direction;
             index.value = next;
+            reveal();
             scrubbed.value = true;
             scheduleOnRN(hapticsSelection);
         }
@@ -234,10 +247,11 @@ export function SessionSwitcherBand(props: Readonly<{
         contentHeight.value = layout.contentHeight;
         viewportHeight.value = height - (docked ? 52 : 0);
         count.value = rows.length;
+        reveal();
         setLocked(mode !== 'up' || docked);
         setPanel({ mode, docked, prepared, layout, viewportHeight: height });
         if (!docked) frame.setActive(true);
-    }, [contentHeight, count, frame, measureViewport, prepare, rowBottoms, syncOn, viewportHeight]);
+    }, [contentHeight, count, frame, measureViewport, prepare, reveal, rowBottoms, syncOn, viewportHeight]);
 
     const hidePanel = React.useCallback(() => {
         frame.setActive(false);
@@ -312,17 +326,6 @@ export function SessionSwitcherBand(props: Readonly<{
     }), [dragUpEnabled, flickEnabled, holdEnabled, sidewaysEnabled]);
 
     const gesture = React.useMemo(() => {
-        const reveal = () => {
-            'worklet';
-            const at = index.value;
-            const bottom = at >= 0 ? rowBottoms.value[at] : 0;
-            if (bottom === undefined) return;
-            const to = resolveSessionSwitcherRevealScroll({
-                scroll: scroll.value, rowBottom: bottom, rowHeight: SESSION_SWITCHER_ROW_HEIGHT,
-                viewportHeight: viewportHeight.value, contentHeight: contentHeight.value,
-            });
-            if (to !== scroll.value) scroll.value = reducedMotion ? to : withSpring(to, reanimatedMotionTokens.spring.travel);
-        };
         const scrub = (y: number) => {
             'worklet';
             lastY.value = y;
@@ -468,7 +471,7 @@ export function SessionSwitcherBand(props: Readonly<{
     }, [
         anchorIndex, anchorY, barScrolls, contentHeight, count, countNext, countPrevious, countUp, finish, gestureEnabled,
         ghost, holdEnabled, index, lastY, lift, lockReached, maxAbsX, open, phase, prepare, reducedMotion, rowBottoms,
-        scroll, scrubbed, settings, showPanel, viewportHeight,
+        reveal, scroll, scrubbed, settings, showPanel, viewportHeight,
     ]);
 
     // Docked, the list scrolls by dragging; a drag that moves cancels the row press under it.

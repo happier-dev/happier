@@ -26,6 +26,7 @@ export type GitChangesTreeProps = Readonly<{
     snapshot: ScmWorkingSnapshot;
     /** The files of the current scope (each one of `selectScmChangedFiles(snapshot)`). */
     files: readonly ScmFileStatus[];
+    preferredPaths?: ReadonlySet<string>;
     selectedPaths: ReadonlySet<string>;
     selectionEnabled: boolean;
     /** While a proposed commit is selected the checkboxes keep their meaning but do not write. */
@@ -67,8 +68,9 @@ export const GitChangesTree = React.memo(function GitChangesTree(props: GitChang
     );
     const folderByPath = React.useMemo(() => {
         const selected = Array.from(selectedPaths);
-        return new Map(selectScmFolderSelections(scopedSnapshot, selected).map((folder) => [folder.path, folder]));
-    }, [scopedSnapshot, selectedPaths]);
+        const selectableSnapshot = narrowScmSnapshotToPaths(scopedSnapshot, new Set(Array.from(fileByPath.values()).filter((file) => file.status !== 'conflicted').map((file) => file.fullPath)));
+        return new Map(selectScmFolderSelections(selectableSnapshot, selected).map((folder) => [folder.path, folder]));
+    }, [scopedSnapshot, selectedPaths, fileByPath]);
     const selectionRevision = React.useMemo(
         () => Array.from(folderByPath.values(), (folder) => `${folder.path}:${folder.state}`).join('|')
             + `#${Array.from(selectedPaths).sort().join('|')}`,
@@ -82,6 +84,9 @@ export const GitChangesTree = React.memo(function GitChangesTree(props: GitChang
         if (!selectionEnabled) return null;
         return {
             revision: selectionRevision,
+            isSelectable: (node) => node.type === 'directory'
+                ? (latestRef.current.folderByPath.get(node.path)?.filePaths.length ?? 0) > 0
+                : latestRef.current.fileByPath.get(node.path)?.status !== 'conflicted',
             ...(props.selectionReadOnly ? { isDisabled: () => true } : {}),
             getState: (node: LazyDirectoryTreeNode) => {
                 const current = latestRef.current;
@@ -96,7 +101,7 @@ export const GitChangesTree = React.memo(function GitChangesTree(props: GitChang
                     return;
                 }
                 const file = current.fileByPath.get(node.path);
-                if (file) current.onToggleFile(file);
+                if (file && file.status !== 'conflicted') current.onToggleFile(file);
             },
             accessibilityLabel: (node: LazyDirectoryTreeNode) => node.type === 'directory'
                 ? t('sessionGitDisplay.selectFolder', { folder: node.name })
@@ -143,6 +148,7 @@ export const GitChangesTree = React.memo(function GitChangesTree(props: GitChang
             scope={scope}
             scmSnapshot={scopedSnapshot}
             changedOnly
+            preferredChangedPaths={props.preferredPaths}
             directoryListing={false}
             expandedPaths={NO_EXPANDED_PATHS}
             onExpandedPathsChange={noop}

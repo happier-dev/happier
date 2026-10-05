@@ -19,6 +19,26 @@ import { t } from '@/text';
 
 type PluginSurfaceFallbackState = Extract<PluginSurfacePresentationState, 'loading' | 'unavailable'>;
 
+type PluginSurfaceFallbackPresentationOptions = Readonly<{
+    state?: PluginSurfaceFallbackState;
+    reasonCode?: string | null;
+}>;
+
+/** Search only the human copy drawn by the unavailable card, never its diagnostic disclosure. */
+export function projectPluginSurfaceFallbackFindText(
+    options: PluginSurfaceFallbackPresentationOptions = {},
+): readonly Readonly<{ id: string; text: string; format: 'plain' }>[] {
+    const { card } = resolvePluginSurfaceStatePresentation({
+        state: options.state ?? 'unavailable',
+        reasonCode: options.reasonCode,
+    });
+    if (!card || card.kind === 'loading') return [];
+    return [
+        { id: 'structured-unavailable-title', text: card.title, format: 'plain' },
+        ...(card.reason ? [{ id: 'structured-unavailable-reason', text: card.reason, format: 'plain' as const }] : []),
+    ];
+}
+
 /** Destination-shaped placeholder: enough list rows to read as the page that is coming. */
 const LOADING_SKELETON_ROWS = 4;
 
@@ -64,6 +84,8 @@ export function PluginSurfaceFallback(props: Readonly<{
     onRetry?: () => void;
     /** Dynamic mount states announce through the shared surface-state owner. */
     accessibilitySemantics?: SurfaceStateAccessibilitySemantics;
+    /** Glyph-only decoration; semantic title and reason remain the shared owner's strings. */
+    renderText?: (field: 'title' | 'reason', text: string) => React.ReactNode;
 }>): React.ReactElement {
     const presentation = resolvePluginSurfaceStatePresentation({
         state: props.state ?? 'unavailable',
@@ -87,7 +109,9 @@ export function PluginSurfaceFallback(props: Readonly<{
             testID={props.testID}
             kind={card.kind}
             title={card.title}
+            titleContent={props.renderText?.('title', card.title)}
             reason={card.reason}
+            reasonContent={card.reason ? props.renderText?.('reason', card.reason) : undefined}
             diagnosticCode={presentation.diagnosticCode}
             action={resolvePluginSurfaceStateAction({
                 recoveryAction: presentation.recoveryAction,

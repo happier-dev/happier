@@ -33,6 +33,7 @@ import type {
 } from '@happier-dev/protocol/plugins/ui';
 import { arePaneStateJsonValuesEqual } from './paneStateStructuralEquality';
 import { readSessionTerminalWorkspace, reduceSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from '@/components/sessions/terminal/sessionTerminalWorkspace';
+import { resolveTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
 import {
     areSelectedPaneDestinationsEqual,
     createBuiltinPaneDestination,
@@ -494,8 +495,16 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             const terminalSelected = prev.bottom.selectedDestination?.kind === 'builtin'
                 ? prev.bottom.selectedDestination.id === 'terminal'
                 : prev.bottom.selectedDestination == null && prev.bottom.activeTabId === 'terminal';
+            const retainedIds = new Set(next.tabs.flatMap((tab) => tab.terminals.map((terminal) => terminal.id)));
+            const removedIds = new Set(workspace.tabs.flatMap((tab) => tab.terminals.map((terminal) => terminal.id)).filter((id) => !retainedIds.has(id)));
+            let details = prev.details;
+            if (removedIds.size) for (const tab of Object.values(details.tabsByKey)) {
+                const instanceId = resolveTerminalDetailsInstanceId({ resource: tab.resource, tabKey: tab.key });
+                if (instanceId && removedIds.has(instanceId)) details = applyCloseDetailsTab(details, tab.key);
+            }
             return upsertScope(state, action.scopeId, () => ({
                 ...prev,
+                details,
                 bottom: {
                     ...prev.bottom,
                     isOpen: next.tabs.length === 0 && terminalSelected ? false : reveal ? true : prev.bottom.isOpen,

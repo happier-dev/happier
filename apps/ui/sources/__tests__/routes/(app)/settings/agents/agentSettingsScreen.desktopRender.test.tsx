@@ -379,24 +379,24 @@ vi.mock('@/components/settings/agents/authentication/scheduleAgentAuthentication
 }));
 
 /** The one active-server fixture both server modules answer from. */
-function subscribeActiveServerFixture(listener: (snapshot: typeof activeServerSnapshot) => void): () => void {
-    activeServerSubscriber = listener;
+function subscribeActiveServerFixture(listener: (snapshot: typeof activeServerState.current) => void): () => void {
+    activeServerState.subscriber = listener;
     return () => {
-        if (activeServerSubscriber === listener) {
-            activeServerSubscriber = null;
+        if (activeServerState.subscriber === listener) {
+            activeServerState.subscriber = null;
         }
     };
 }
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => activeServerSnapshot,
+    getActiveServerSnapshot: () => activeServerState.current,
     subscribeActiveServer: subscribeActiveServerFixture,
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getServerProfilesGeneration: () => 0,
     subscribeServerProfiles: () => () => undefined,
-    getActiveServerSnapshot: () => activeServerSnapshot,
+    getActiveServerSnapshot: () => activeServerState.current,
     subscribeActiveServer: subscribeActiveServerFixture,
     loadHomeViewState: () => null,
     subscribeHomeViewState: () => () => undefined,

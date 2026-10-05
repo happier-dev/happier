@@ -1,15 +1,10 @@
 import * as React from 'react';
-import { Platform, Pressable, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform } from 'react-native';
 import {
     startDesktopWindowDragging,
     toggleDesktopWindowMaximize,
 } from '@/utils/platform/desktopWindowBridge';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-
-type DesktopWindowDragRegionProps = Readonly<{
-    testID: string;
-    style?: StyleProp<ViewStyle>;
-}>;
 
 export type DesktopWindowPointerLikeEvent = Readonly<{
     button?: number;
@@ -37,8 +32,6 @@ type ClosestCapableTarget = Readonly<{
 
 export type DesktopWindowDragMouseProps = Readonly<{
     onMouseDown?: (event: DesktopWindowPointerLikeEvent) => void;
-    onPointerDown?: (event: DesktopWindowPointerLikeEvent) => void;
-    'data-tauri-drag-region'?: true;
 }>;
 
 export type DesktopWindowTitlebarMouseAction = 'drag' | 'toggleMaximize' | 'none';
@@ -128,47 +121,17 @@ export function handleDesktopWindowTitlebarMouseAction(
 }
 
 export function useDesktopWindowDragMouseProps(enabled = true): DesktopWindowDragMouseProps {
-    const handledPointerDownRef = React.useRef(false);
-
     return React.useMemo(() => {
         if (Platform.OS !== 'web' || !enabled) {
             return {};
         }
 
-        const handleTitlebarMouseEvent = (event: DesktopWindowPointerLikeEvent, tag: string) => {
-            return handleDesktopWindowTitlebarMouseAction(event, tag) !== 'none';
-        };
-
+        // Mouse down carries the click count. Starting native drag on pointer down
+        // can consume that event before a double click reaches the titlebar owner.
         return {
-            'data-tauri-drag-region': true,
-            onPointerDown: (event: DesktopWindowPointerLikeEvent) => {
-                handledPointerDownRef.current = handleTitlebarMouseEvent(
-                    event,
-                    'DesktopWindowDragRegion.pointerDown',
-                );
-            },
             onMouseDown: (event: DesktopWindowPointerLikeEvent) => {
-                if (handledPointerDownRef.current) {
-                    handledPointerDownRef.current = false;
-                    return;
-                }
-                handleTitlebarMouseEvent(event, 'DesktopWindowDragRegion.mouseDown');
+                handleDesktopWindowTitlebarMouseAction(event, 'DesktopWindowDragRegion.mouseDown');
             },
         };
     }, [enabled]);
 }
-
-export const DesktopWindowDragRegion = React.memo((props: DesktopWindowDragRegionProps) => {
-    const handlePressIn = React.useCallback(() => {
-        fireAndForget(startDesktopWindowDragging(), { tag: 'DesktopWindowDragRegion.startDragging' });
-    }, []);
-
-    return (
-        <Pressable
-            testID={props.testID}
-            accessible={false}
-            style={props.style}
-            onPressIn={handlePressIn}
-        />
-    );
-});

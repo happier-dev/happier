@@ -2,18 +2,20 @@ import * as React from 'react';
 
 import type { WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { t } from '@/text';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 import type { SessionCompanionContentItem } from '../sessionCompanionContentModel';
+import type { SessionCompanionInstanceView } from '../SessionCompanionItemFrame';
 import { ChangesGlance } from './ChangesGlance';
 import { LocalServicesGlance } from './LocalServicesGlance';
 import { PaneLinkRow, sessionCompanionPaneLabel } from './PaneLinkRow';
 import { PluginGlance } from './PluginGlance';
 
 /** The Companion items that are glances or pane links rather than Board widgets (lab C1, bounded C3). */
-export type SessionCompanionGlanceItem = Extract<SessionCompanionContentItem, { kind: 'changes' | 'local_services' | 'pane' | 'plugin' }>;
+export type SessionCompanionGlanceItem = Extract<SessionCompanionContentItem, { kind: 'changes' | 'local_services' | 'pane' | 'instance' }>;
 
 export function isSessionCompanionGlanceItem(entry: SessionCompanionContentItem): entry is SessionCompanionGlanceItem {
-    return entry.kind === 'changes' || entry.kind === 'local_services' || entry.kind === 'pane' || entry.kind === 'plugin';
+    return entry.kind === 'changes' || entry.kind === 'local_services' || entry.kind === 'pane' || entry.kind === 'instance';
 }
 
 /** What a glance is called in its menu and reorder announcements. */
@@ -22,7 +24,13 @@ export function sessionCompanionGlanceLabel(entry: SessionCompanionGlanceItem): 
         case 'changes': return t('widgetGlances.changesTitle');
         case 'local_services': return t('widgetGlances.localServicesTitle');
         case 'pane': return sessionCompanionPaneLabel(entry.ref.paneId);
-        case 'plugin': return entry.ref.surface.localId;
+        case 'instance': {
+            const instance = entry.ref.instance;
+            const definition = instance.definition;
+            return instance.displayName ?? (definition.kind === 'installed' ? definition.surface.localId
+                : definition.kind === 'builtin' ? definition.id
+                : definition.kind === 'artifact' ? definition.artifactId : definition.definition.name);
+        }
     }
 }
 
@@ -34,9 +42,12 @@ export function sessionCompanionGlanceLabel(entry: SessionCompanionGlanceItem): 
 export function SessionCompanionGlance(props: Readonly<{
     entry: SessionCompanionGlanceItem;
     sessionId: string;
+    session: Session;
     serverId?: string | null;
     frameStyle: WidgetFrameStyle;
     headerAccessory: React.ReactNode;
+    /** A direct personal copy's rename field and repair line. */
+    instanceView?: SessionCompanionInstanceView;
     measurementOnly: boolean;
     testID: string;
 }>): React.ReactElement | null {
@@ -52,7 +63,7 @@ export function SessionCompanionGlance(props: Readonly<{
         case 'changes': return <ChangesGlance {...common} />;
         case 'local_services': return <LocalServicesGlance {...common} />;
         case 'pane': return <PaneLinkRow {...common} paneId={props.entry.ref.paneId} />;
-        case 'plugin': return <PluginGlance {...common} surface={props.entry.ref.surface} />;
+        case 'instance': return <PluginGlance {...common} session={props.session} instance={props.entry.ref.instance} {...(props.instanceView ? { instanceView: props.instanceView } : {})} />;
     }
 }
 

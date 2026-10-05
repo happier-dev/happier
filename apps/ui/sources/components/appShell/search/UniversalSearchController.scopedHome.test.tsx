@@ -174,30 +174,36 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServer
         return { ok: true };
     },
 }));
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: () => [],
-    storage: { getState: () => ({
-        sessionListRowsByServerId: harness.sessionListRows.reduce<Record<string, Record<string, typeof harness.sessionListRows[number]['session']>>>((byServer, row) => {
-            const serverId = row.serverId ?? '';
-            if (!serverId) return byServer;
-            byServer[serverId] ??= {};
-            byServer[serverId]![row.session.id] = row.session;
-            return byServer;
-        }, {}),
-        clearSessionListRowsForServerScope: () => undefined,
-        mergeSessionListRowsForServerScope: (serverId: string, sessions: typeof harness.sessionListRows[number]['session'][]) => {
-            for (const session of sessions) {
-                harness.sessionListRows = harness.sessionListRows.filter((row) => (
-                    row.serverId !== serverId || row.session.id !== session.id
-                ));
-                harness.sessionListRows.push({ serverId, serverName: serverId, session });
-            }
-        },
-    }) },
-}));
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    storage: { getState: () => ({ sessions: { 'session-b': { id: 'session-b', serverId: harness.portableIdentity ? 'local-home-b' : 'home-b' } } }) },
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useSetting: () => [],
+        storage: { getState: () => ({
+            sessions: {},
+            machines: {},
+            sessionListRowsByServerId: harness.sessionListRows.reduce<Record<string, Record<string, typeof harness.sessionListRows[number]['session']>>>((byServer, row) => {
+                const serverId = row.serverId ?? '';
+                if (!serverId) return byServer;
+                byServer[serverId] ??= {};
+                byServer[serverId]![row.session.id] = row.session;
+                return byServer;
+            }, {}),
+            clearSessionListRowsForServerScope: () => undefined,
+            mergeSessionListRowsForServerScope: (serverId: string, sessions: typeof harness.sessionListRows[number]['session'][]) => {
+                for (const session of sessions) {
+                    harness.sessionListRows = harness.sessionListRows.filter((row) => (
+                        row.serverId !== serverId || row.session.id !== session.id
+                    ));
+                    harness.sessionListRows.push({ serverId, serverName: serverId, session });
+                }
+            },
+        }) },
+    });
+});
+vi.mock('@/sync/domains/state/storageStore', async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    return { storage };
+});
 vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
     getActiveServerAccountScope: () => ({ serverId: 'home-a', accountId: 'account-1' }),
     captureActiveServerAccountScopeLifetime: () => {

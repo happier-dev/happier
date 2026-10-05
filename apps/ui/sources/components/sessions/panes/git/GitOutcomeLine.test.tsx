@@ -64,8 +64,9 @@ describe('GitOutcomeLine (Git lab C/S/SX)', () => {
     it('says how much a landed push moved, from the facts captured when it started, then fades after 6 s', async () => {
         vi.useFakeTimers();
         const screen = await render({ operation: { phase: 'running', action: 'push', id: 'p1', at: 1 } });
-        // Push progress lives in the header button, not in a second line.
-        expect(screen.root.findAll((node) => node.props.testID === 'session-git-outcome-running')).toHaveLength(0);
+        expect(allText(screen)).toContain('sessionGitPane.fidelity.pushing');
+        expect(allText(screen)).toContain('"count":3');
+        expect(allText(screen)).toContain('origin/v0.3');
 
         // The branch has caught up by the time the result lands; the line still says 3 commits moved.
         await act(async () => {
@@ -90,6 +91,32 @@ describe('GitOutcomeLine (Git lab C/S/SX)', () => {
 
         await screen.pressByTestIdAsync('session-git-outcome-needs_input.dismiss');
         expect(screen.findAllHostsByTestId('session-git-outcome-needs_input')).toHaveLength(0);
+    });
+
+    it('offers a rejected push the real pull recovery before pushing again', async () => {
+        const pullThenPush = vi.fn();
+        const screen = await render({
+            operation: { phase: 'needs_input', action: 'push', id: 'r2', at: 1, message: '', outcome: { v: 1, kind: 'needs_input', errorCode: 'REMOTE_NON_FAST_FORWARD', nextActions: [{ kind: 'choose_reconcile' }] } },
+            recovery: { pullThenPush },
+        });
+        await screen.pressByTestIdAsync('session-git-outcome-needs_input.action');
+        expect(pullThenPush).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('session-git-outcome-needs_input.action');
+        expect(pullThenPush).toHaveBeenCalledWith({ reconcile: 'rebase' });
+        pullThenPush.mockClear();
+        await act(async () => screen.setProps({ operation: { phase: 'needs_input', action: 'push', id: 'r3', at: 2, message: '', outcome: { v: 1, kind: 'needs_input', errorCode: 'REMOTE_NON_FAST_FORWARD', nextActions: [{ kind: 'choose_reconcile' }] } }, recovery: { pullThenPush } }));
+        await screen.pressByTestIdAsync('session-git-outcome-needs_input.action');
+        expect(pullThenPush).not.toHaveBeenCalled();
+    });
+
+    it('opens a reachable terminal for authentication without repeating the failed write', async () => {
+        const openTerminal = vi.fn();
+        const retry = vi.fn();
+        const screen = await render({ operation: { phase: 'needs_input', action: 'push', id: 'auth', at: 1, message: '', provider: 'GitHub', outcome: { v: 1, kind: 'needs_input', errorCode: 'REMOTE_AUTH_REQUIRED', nextActions: [{ kind: 'authenticate' }] } }, recovery: { openTerminal, retry }, authenticationCommand: 'gh auth login' });
+        await screen.pressByTestIdAsync('session-git-outcome-needs_input.action');
+        expect(openTerminal).toHaveBeenCalledOnce();
+        expect(retry).not.toHaveBeenCalled();
+        expect(allText(screen)).toContain('gh auth login');
     });
 
     it('shows progress for a write without its own control (a branch switch)', async () => {
@@ -133,13 +160,23 @@ describe('GitOutcomeLine (Git lab C/S/SX)', () => {
         const screen = await render({
             operation: { phase: 'failed', action: 'push', id: 'offline', at: 1, message: '', outcome: { v: 1, kind: 'failed', errorCode: 'REMOTE_NETWORK_FAILED', nextActions: [{ kind: 'retry' }] } },
             machineReachable: false,
+            machineLastSeenAt: 1234,
             recovery: { refresh, retry },
         });
 
         expect(allText(screen)).toContain('sessionGitPane.flow.failed.offlineTitle');
+        expect(allText(screen)).toContain('sessionGitPane.fidelity.lastSeen');
         await screen.pressByTestIdAsync('session-git-outcome-failed.action');
         expect(refresh).toHaveBeenCalledTimes(1);
         expect(retry).not.toHaveBeenCalled();
+    });
+
+    it('keeps a running remote operation alive with elapsed time from its actual start', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(10_000);
+        const screen = await render({ operation: { phase: 'running', action: 'push', id: 'elapsed', at: 10_000 } });
+        await act(async () => vi.advanceTimersByTime(2_000));
+        expect(allText(screen)).toContain('sessionGitPane.fidelity.elapsed:{"seconds":2}');
     });
 
     it('keeps an unknown outward result visible and reconciles without repeating the write', async () => {

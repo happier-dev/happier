@@ -158,7 +158,7 @@ describe('WorkspaceRepositoryTreeList', () => {
                 expandedPaths={[]}
                 onExpandedPathsChange={() => {}}
                 onOpenFile={() => {}}
-                onWebDropTargetChange={() => {}}
+                webFileDropEnabled
             />,
         );
 
@@ -248,23 +248,17 @@ describe('WorkspaceRepositoryTreeList', () => {
         screen.findAll((node) => (node.type as any) === 'WebDropTargetView'
             && node.findAll((child) => child.props?.testID === `repository-tree-row-${toTestIdSafeValue(path)}`).length > 0)[0];
 
-    it('routes a file row drag hover to its parent folder and marks a closed folder for auto-expand', async () => {
+    it('describes a file row destination and a closed folder for the common event owner', async () => {
         repositoryTreeBrowserState.nodes = [
             { path: 'src', name: 'src', type: 'directory', depth: 0, isExpanded: false, isLoadingChildren: false },
             { path: 'README.md', name: 'README.md', type: 'file', depth: 0, parentDirectoryPath: '' },
         ];
-        const onWebDropTargetChange = vi.fn();
-        const screen = await renderWithDrop({ onWebDropTargetChange });
+        const screen = await renderWithDrop({ webFileDropEnabled: true });
 
-        await act(async () => {
-            dropTargetOf(screen, 'README.md')?.props.onDragEnter({ dataTransfer: { types: ['Files'] }, stopPropagation: vi.fn() });
-        });
-        expect(onWebDropTargetChange).toHaveBeenLastCalledWith({ destinationDir: '', hoverPath: 'README.md', autoExpandDirectoryPath: null });
-
-        await act(async () => {
-            dropTargetOf(screen, 'src')?.props.onDragEnter({ dataTransfer: { types: ['Files'] }, stopPropagation: vi.fn() });
-        });
-        expect(onWebDropTargetChange).toHaveBeenLastCalledWith({ destinationDir: 'src', hoverPath: 'src', autoExpandDirectoryPath: 'src' });
+        expect(dropTargetOf(screen, 'README.md')?.props.repositoryFileDropTarget)
+            .toEqual({ destinationDir: '', hoverPath: 'README.md', autoExpandDirectoryPath: null });
+        expect(dropTargetOf(screen, 'src')?.props.repositoryFileDropTarget)
+            .toEqual({ destinationDir: 'src', hoverPath: 'src', autoExpandDirectoryPath: 'src' });
     });
 
     it('opens a file on press and pins it on double press', async () => {

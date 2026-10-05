@@ -5,6 +5,9 @@ import {
     buildQualifiedPluginContributionKey,
     formatQualifiedPluginActionId,
     parseQualifiedPluginActionId,
+    UiContributedActionExecuteRequestV1Schema,
+    UiContributedActionExecuteResponseV1Schema,
+    PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
     type ActionDefinitionSummaryV1,
     type PluginContributionIdentityV1,
     type PluginJsonSchemaV2,
@@ -25,6 +28,9 @@ import {
 } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import {
     dispatchPluginSurfaceAction,
+    type PluginSurfaceHostActionBinding,
+    type PluginSurfaceHostActionExecute,
+    type PluginSurfaceActionInvocationSurface,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import {
     createPluginUiProjectedActionResolver,
@@ -39,7 +45,14 @@ import {
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { machinePluginActionSchemasRead } from '@/sync/ops/machineContributionRegistryProjection';
 import { getPreferredLanguage } from '@/text';
+import { registerCurrentUiContextActionPort } from './currentUiContextActionRuntime';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { unavailable } from './currentUiContextVoiceToolBinding';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+export { bindCurrentUiContextVoiceToolPortToAdmission } from './currentUiContextVoiceToolBinding';
 
 import {
     useOptionalCurrentUiContextReader,
@@ -54,7 +67,7 @@ import {
  */
 export type CurrentUiContextVoiceInvocationOutcome =
     | Readonly<{ ok: true; result?: PluginUiJsonValueV1 }>
-    | Readonly<{ ok: false; code: PluginUiHostApiErrorCodeV1 | 'outcome_unknown' }>;
+    | Readonly<{ ok: false; code: PluginUiHostApiErrorCodeV1 | 'outcome_unknown'; errorCode?: string; actionHandlerInvocation?: 'notStarted' }>;
 
 export type CurrentUiContextVoiceCommandInvocationInput = Readonly<{
     commandId: string;
@@ -65,6 +78,9 @@ export type CurrentUiContextVoiceActionInvocationInput = Readonly<{
     action: PluginContributionIdentityV1;
     input?: PluginUiJsonValueV1;
     signal?: AbortSignal;
+    expectedContributorOccurrenceId?: string;
+    defaultSessionId?: string;
+    requiredDangerLevel?: 'safe';
 }>;
 
 /**
@@ -95,110 +111,15 @@ export type CurrentUiContextVoiceToolPort = CurrentUiContextReader & Readonly<{
 }>;
 
 type CurrentUiContextVoiceToolPortInput = Readonly<{
+    /** Voice callers omit this; ordinary host Actions retain their real surface. */
+    invocationSurface?: PluginSurfaceActionInvocationSurface;
+    hostAction?: PluginSurfaceHostActionBinding;
     reader: CurrentUiContextReader;
     /** Reads the latest AppShell projection at an effect boundary. */
     readProjection: () => PluginUiProjectionModel | null;
     /** Reads the incumbent app-target navigation binding at an effect boundary. */
     readNavigationBinding: () => PluginSurfaceDestinationNavigationBinding | null;
 }>;
-
-function unavailable(): CurrentUiContextVoiceInvocationOutcome {
-    return { ok: false, code: 'unavailable' };
-}
-
-/**
- * Narrows a stable current-UI port to one already-admitted Voice lifetime.
- * The AppShell port intentionally follows current refs while the attempt is
- * live; a capture that retires must instead stop reading or affecting a later
- * Account/client render. This wrapper adds no snapshot/cache or effect owner:
- * it only propagates that exact admission's existing cancellation signal into
- * the canonical reader and invocation boundaries.
- */
-export function bindCurrentUiContextVoiceToolPortToAdmission(
-    port: CurrentUiContextVoiceToolPort,
-    admissionRetirementSignal: AbortSignal,
-): CurrentUiContextVoiceToolPort {
-    const isCurrent = (): boolean => !admissionRetirementSignal.aborted;
-    const sourceInvokeCurrentUiCommand = port.invokeCurrentUiCommand;
-    const invokeCurrentUiCommand = sourceInvokeCurrentUiCommand
-        ? async (
-            request: CurrentUiContextVoiceCommandInvocationInput,
-        ): Promise<CurrentUiContextVoiceInvocationOutcome> => {
-            if (!isCurrent()) return unavailable();
-            const merged = mergeAbortSignals([admissionRetirementSignal, request.signal]);
-            try {
-                if (merged.signal.aborted) return unavailable();
-                // The wrapped AppShell port remains the sole effect/currentness
-                // owner. In particular, preserve a result it has already
-                // settled even if this admission retires before the await ends.
-                return await sourceInvokeCurrentUiCommand({ ...request, signal: merged.signal });
-            } finally {
-                merged.dispose();
-            }
-        }
-        : undefined;
-    const sourceInvokeAction = port.invokeAction;
-    const invokeAction = sourceInvokeAction
-        ? async (
-            request: CurrentUiContextVoiceActionInvocationInput,
-        ): Promise<CurrentUiContextVoiceInvocationOutcome> => {
-            if (!isCurrent()) return unavailable();
-            const merged = mergeAbortSignals([admissionRetirementSignal, request.signal]);
-            try {
-                if (merged.signal.aborted) return unavailable();
-                return await sourceInvokeAction({ ...request, signal: merged.signal });
-            } finally {
-                merged.dispose();
-            }
-        }
-        : undefined;
-
-    return Object.freeze({
-        ...port,
-        readCurrentUiContext: () => isCurrent() ? port.readCurrentUiContext() : null,
-        ...(port.readCurrentSessionId ? {
-            readCurrentSessionId: () => isCurrent() ? port.readCurrentSessionId!() : null,
-        } : {}),
-        resolveCurrentUiCommand: (commandId) => isCurrent()
-            ? port.resolveCurrentUiCommand(commandId)
-            : null,
-        subscribe: (listener) => {
-            if (!isCurrent()) return () => {};
-            let unsubscribed = false;
-            let unsubscribe = () => {};
-            const release = () => {
-                if (unsubscribed) return;
-                unsubscribed = true;
-                admissionRetirementSignal.removeEventListener('abort', release);
-                unsubscribe();
-            };
-            unsubscribe = port.subscribe(() => {
-                if (isCurrent()) listener();
-            });
-            admissionRetirementSignal.addEventListener('abort', release, { once: true });
-            if (!isCurrent()) release();
-            return release;
-        },
-        ...(port.listCurrentContributedActionDefinitions
-            ? {
-                listCurrentContributedActionDefinitions: () => isCurrent()
-                    ? port.listCurrentContributedActionDefinitions!()
-                    : [],
-            }
-            : {}),
-        ...(port.readCurrentContributedActionSchemas
-            ? {
-                readCurrentContributedActionSchemas: async (id: string, signal?: AbortSignal) => {
-                    if (!isCurrent()) return null;
-                    const schemas = await port.readCurrentContributedActionSchemas!(id, signal);
-                    return isCurrent() ? schemas : null;
-                },
-            }
-            : {}),
-        ...(invokeCurrentUiCommand ? { invokeCurrentUiCommand } : {}),
-        ...(invokeAction ? { invokeAction } : {}),
-    });
-}
 
 function stale(): CurrentUiContextVoiceInvocationOutcome {
     return { ok: false, code: 'stale_surface' };
@@ -430,19 +351,31 @@ export function createCurrentUiContextVoiceToolPort(
         if (request.signal?.aborted) return unavailable();
         const resolved = resolveCurrentAction(input.readProjection, request.action);
         if (!resolved || !hasCurrentClientActionRegistration(resolved)) return unavailable();
-        const sessionId = input.reader.readCurrentSessionId?.() ?? null;
+        if (request.expectedContributorOccurrenceId !== undefined && request.expectedContributorOccurrenceId !== resolved.action.occurrenceId) {
+            return { ok: false, code: 'stale_surface', errorCode: 'plugin_action_generation_retired', actionHandlerInvocation: 'notStarted' };
+        }
+        if (request.requiredDangerLevel === 'safe' && resolved.action.dangerLevel !== 'safe') {
+            return { ok: false, code: 'denied', errorCode: 'plugin_action_read_requires_safe', actionHandlerInvocation: 'notStarted' };
+        }
+        const currentSessionId = input.reader.readCurrentSessionId?.() ?? null;
+        const sessionId = request.defaultSessionId ?? currentSessionId;
+        // Only an implicit viewed-Session binding retires on navigation. An
+        // explicitly invoking Session (or a global Action) does not borrow it.
+        const followsViewedSession = includeCurrentUiContext
+            || ((input.invocationSurface ?? 'voice') === 'voice'
+                && request.defaultSessionId === undefined && resolved.action.scopes.includes('session'));
         // Observe this invocation through the existing committed-context owner.
         // Equality alone would revive an old binding after Session A → B → A.
         const sessionRetirement = new AbortController();
         const checkSession = () => {
-            if ((input.reader.readCurrentSessionId?.() ?? null) !== sessionId) sessionRetirement.abort();
+            if (followsViewedSession && (input.reader.readCurrentSessionId?.() ?? null) !== currentSessionId) sessionRetirement.abort();
         };
         const unsubscribe = input.reader.subscribe(checkSession);
         const mergedSignal = mergeAbortSignals([sessionRetirement.signal, request.signal]);
         checkSession();
         const isCurrent = (): boolean => (
             !mergedSignal.signal.aborted
-            && (input.reader.readCurrentSessionId?.() ?? null) === sessionId
+            && (!followsViewedSession || (input.reader.readCurrentSessionId?.() ?? null) === currentSessionId)
             && isCallerCurrent()
             && isResolvedActionCurrent(input.readProjection, request.action, resolved)
         );
@@ -478,7 +411,17 @@ export function createCurrentUiContextVoiceToolPort(
                 resolveContributedAction: (identity) => (
                     createPluginUiProjectedActionResolver(input.readProjection()?.actionsById)(identity)
                 ),
-                invocationSurface: 'voice',
+                invocationSurface: input.invocationSurface ?? 'voice',
+                hostAction: {
+                    execute: input.hostAction?.execute ?? (async (...args) => {
+                        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+                        return await createDefaultActionExecutor().execute(...args);
+                    }),
+                    context: { ...input.hostAction?.context,
+                        ...(resolved.origin.serverId ? { serverId: resolved.origin.serverId } : {}),
+                        ...(sessionId ? { defaultSessionId: sessionId } : {}),
+                    },
+                },
                 pluginUiProjection: input.readProjection(),
                 clientAction: {
                     ...(sessionId ? { sessionId } : {}),
@@ -589,10 +532,10 @@ export function createCurrentUiContextVoiceToolPort(
 /**
  * The stable attempt-local port follows current AppShell facts through refs,
  * so an already-created Voice attempt cannot recover a retired projection or
- * navigation binding from a prior render. No global store or callback registry
- * is introduced.
+ * navigation binding from a prior render. All reads remain provider-local;
+ * the ordinary Action adapter borrows this factory rather than mirroring context.
  */
-export function useCurrentUiContextVoiceToolPort(): CurrentUiContextVoiceToolPort | null {
+function useCurrentUiContextToolPortFactory() {
     const reader = useOptionalCurrentUiContextReader();
     const appShellProjection = useAppShellPluginUiProjection();
     const navigationBinding = usePluginSurfaceDestinationNavigationBinding();
@@ -601,14 +544,94 @@ export function useCurrentUiContextVoiceToolPort(): CurrentUiContextVoiceToolPor
     projectionRef.current = appShellProjection.pluginUiProjection;
     navigationBindingRef.current = navigationBinding;
 
-    return React.useMemo(
-        () => reader
+    return React.useCallback(
+        (invocationSurface: PluginSurfaceActionInvocationSurface, hostAction?: PluginSurfaceHostActionBinding) => reader
             ? createCurrentUiContextVoiceToolPort({
                 reader,
+                invocationSurface,
+                hostAction,
                 readProjection: () => projectionRef.current,
                 readNavigationBinding: () => navigationBindingRef.current,
             })
             : null,
         [reader],
     );
+}
+
+export function useCurrentUiContextVoiceToolPort(): CurrentUiContextVoiceToolPort | null {
+    const createPort = useCurrentUiContextToolPortFactory();
+    return React.useMemo(() => createPort('voice'), [createPort]);
+}
+
+/** Strict reverse ingress; execution still enters the ordinary Action front door. */
+export function createCurrentUiContributedActionRpcHandler(input: Readonly<{
+    machineId: string;
+    serverId: string;
+    readProjection: () => PluginUiProjectionModel | null;
+    isCurrent: () => boolean;
+    execute: PluginSurfaceHostActionExecute;
+}>) {
+    return async (params: unknown, context?: Readonly<{ signal: AbortSignal }>) => {
+        const parsed = UiContributedActionExecuteRequestV1Schema.safeParse(params);
+        if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters', actionHandlerInvocation: 'notStarted' };
+        const request = parsed.data;
+        const resolved = resolveCurrentAction(input.readProjection, request.action);
+        if (!input.isCurrent() || context?.signal.aborted || !resolved || resolved.action.execution.target !== 'client'
+            || resolved.origin.machineId !== input.machineId || resolved.origin.serverId !== input.serverId
+            || resolved.action.occurrenceId !== request.expectedContributorOccurrenceId || !hasCurrentClientActionRegistration(resolved)) {
+            return { ok: false, errorCode: 'contributed_action_unavailable', error: 'current_ui_action_unavailable', actionHandlerInvocation: 'notStarted' };
+        }
+        try {
+            const result = await input.execute('action.invoke', { action: request.action, input: request.input }, {
+                surface: request.surface,
+                serverId: input.serverId,
+                expectedContributedActionOccurrenceId: request.expectedContributorOccurrenceId,
+                ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
+                ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),
+                ...(context?.signal ? { signal: context.signal } : {}),
+            });
+            const response = result.ok ? { ok: true, result: result.result ?? null } : {
+                ok: false, errorCode: result.errorCode, error: result.error,
+                ...(result.details !== null && typeof result.details === 'object' && Reflect.get(result.details, 'actionHandlerInvocation') === 'notStarted'
+                    ? { actionHandlerInvocation: 'notStarted' } : {}),
+            };
+            const validated = UiContributedActionExecuteResponseV1Schema.safeParse(response);
+            if (validated.success) return validated.data;
+        } catch {
+            // Once admitted, a lost or malformed settlement never proves the effect did not run.
+        }
+        return { ok: false, errorCode: PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE, error: PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE };
+    };
+}
+
+/** Binds ordinary host Actions to the same provider-local reader and dispatcher. */
+export function CurrentUiContextActionHost(): null {
+    const createPort = useCurrentUiContextToolPortFactory();
+    const appShellProjection = useAppShellPluginUiProjection();
+    const server = useActiveServerSnapshot();
+    const projectionRef = React.useRef(appShellProjection.pluginUiProjection);
+    projectionRef.current = appShellProjection.pluginUiProjection;
+    const machineIds = [...new Set(Object.values(appShellProjection.pluginUiProjection?.actionsById ?? {}).flatMap((action) => {
+        const origin = readPluginUiContributionOrigin(action);
+        return action.execution.target === 'client' && origin?.phase === 'current' && origin.interactionEnabled
+            && origin.serverId === server.serverId ? [origin.machineId] : [];
+    }))].sort().join('\u0000');
+    React.useLayoutEffect(() => registerCurrentUiContextActionPort(createPort), [createPort]);
+    React.useLayoutEffect(() => {
+        if (!machineIds || !server.serverId) return;
+        const disposers = machineIds.split('\u0000').map((machineId) => apiSocket.registerMachineScopedRpcHandler(
+            machineId, RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE,
+            createCurrentUiContributedActionRpcHandler({
+                machineId, serverId: server.serverId,
+                readProjection: () => projectionRef.current,
+                isCurrent: () => getActiveServerSnapshot().serverId === server.serverId && getActiveServerSnapshot().generation === server.generation,
+                execute: async (...args) => {
+                    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+                    return await createDefaultActionExecutor().execute(...args);
+                },
+            }),
+        ));
+        return () => { for (const dispose of disposers) dispose(); };
+    }, [createPort, machineIds, server.serverId, server.generation]);
+    return null;
 }

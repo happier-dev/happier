@@ -32,6 +32,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { Icon } from '@/components/ui/icons/Icon';
 import { SessionCollaborationRailBadge } from '@/components/sessions/collaboration/sessionConversationAttention';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { PendingNavigationPill } from '@/components/sessions/pendingNavigation/PendingNavigationPill';
 
 import { useSessionSwitcherBand } from '../lateralSwipe/SessionSwitcherBand';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
@@ -93,6 +94,10 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
         }
     }, [switcherBand]);
     const session = useSession(props.sessionId, props.serverId);
+    const pendingNavigationAddress = React.useMemo(
+        () => normalizeSessionAddress(props.serverId ?? session?.serverId, props.sessionId),
+        [props.serverId, props.sessionId, session?.serverId],
+    );
     const scmStatus = useSessionProjectScmStatus(props.sessionId, props.serverId);
     const gitBadgeMode = useSetting('tabBarGitBadgeMode');
     const openTabsBadgeEnabled = useSetting('tabBarOpenTabsBadgeEnabled');
@@ -267,7 +272,9 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
             onSurfacePress={props.onSurfacePress}
             bandAccessibilityActions={bandAccessibilityActions}
             onBandAccessibilityAction={bandAccessibilityActions ? handleBandAccessibilityAction : undefined}
-            trailing={menuItems.length > 0 ? (
+            trailing={<>
+                <PendingNavigationPill address={pendingNavigationAddress} presentation="phone" />
+                {menuItems.length > 0 ? (
                 <DropdownMenu
                     open={moreOpen}
                     onOpenChange={setMoreOpen}
@@ -291,7 +298,8 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
                         />
                     )}
                 />
-            ) : null}
+                ) : null}
+            </>}
         />
     );
 });

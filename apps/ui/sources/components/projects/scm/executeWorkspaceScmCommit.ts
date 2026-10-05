@@ -31,7 +31,7 @@ export async function executeWorkspaceScmCommitUndoLast(input: Readonly<{
             cwd: input.scope.rootPath,
             expectedHeadOid: input.expectedHeadOid,
         }, { serverId: input.scope.serverId }),
-        refreshAfterSuccess: async () => {
+        refreshAfterMutation: async () => {
             await input.refreshScmData();
             // Snapshot controllers retain failure state and resolve their refresh promise.
             const refreshError = storage.getState().getWorkspaceScmSnapshotError(input.scope);
@@ -75,6 +75,12 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                     serverId: input.scope.serverId,
                 });
                 const outcome = normalizeScmOperationOutcome(response);
+                const effect = 'effect' in outcome ? outcome.effect : undefined;
+                const createdCommitSha = effect?.kind === 'commit' ? effect.commitSha : undefined;
+                if (createdCommitSha) {
+                    storage.getState().clearWorkspaceScmCommitSelectionPaths(input.scope);
+                    storage.getState().clearWorkspaceScmCommitSelectionPatches(input.scope);
+                }
                 if (outcome.kind !== 'succeeded') {
                     tryShowDaemonUnavailableAlertForScmOperationFailure({
                         errorCode: outcome.kind === 'failed' ? response.errorCode : undefined,
@@ -86,7 +92,7 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                     const errorMessage = buildScmCommitFailureMessage({
                         errorCode: response.errorCode,
                         error: response.error,
-                        commitSha: response.commitSha,
+                        commitSha: createdCommitSha,
                     });
                     reportWorkspaceScmOperation({
                         state: storage.getState(),
@@ -100,17 +106,14 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                         surface: 'files',
                         tracking: input.tracking,
                     });
-                    return;
+                    if (!createdCommitSha && outcome.kind !== 'outcome_unknown') return;
+                } else {
+                    didSucceed = true;
+                    reportWorkspaceScmOperation({
+                        state: storage.getState(), scope: input.scope, operation: 'commit', status: 'success',
+                        outcome, detail: createdCommitSha || undefined, surface: 'files', tracking: input.tracking,
+                    });
                 }
-
-                didSucceed = true;
-                const createdCommitSha = outcome.effect?.kind === 'commit' ? outcome.effect.commitSha : response.commitSha;
-                storage.getState().clearWorkspaceScmCommitSelectionPaths(input.scope);
-                storage.getState().clearWorkspaceScmCommitSelectionPatches(input.scope);
-                reportWorkspaceScmOperation({
-                    state: storage.getState(), scope: input.scope, operation: 'commit', status: 'success',
-                    outcome, detail: createdCommitSha || undefined, surface: 'files', tracking: input.tracking,
-                });
 
                 input.setScmOperationStatus(t('files.refreshingRepository'));
                 try {
@@ -118,7 +121,7 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                 } catch (refreshError) {
                     const refreshMessage = getScmUserFacingError({
                         error: refreshError instanceof Error ? refreshError.message : String(refreshError ?? ''),
-                        fallback: 'Commit was created, but repository refresh failed. Resolve the issue and try refreshing source control status.',
+                        fallback: createdCommitSha ? t('files.commitRefreshFailed', { sha: createdCommitSha }) : outcome.message ?? t('common.error'),
                     });
                     reportWorkspaceScmOperation({
                         state: storage.getState(),
@@ -131,7 +134,7 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                         outcome: createdCommitSha ? {
                             v: 1, kind: 'effect_applied_with_warning', errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED,
                             effect: { kind: 'commit', commitSha: createdCommitSha }, nextActions: [{ kind: 'refresh' }],
-                        } : undefined,
+                        } : outcome.kind === 'outcome_unknown' ? outcome : undefined,
                         surface: 'files',
                         tracking: input.tracking,
                     });

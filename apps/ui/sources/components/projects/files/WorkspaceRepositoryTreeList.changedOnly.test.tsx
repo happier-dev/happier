@@ -151,6 +151,14 @@ describe('WorkspaceRepositoryTreeList · Changed only', () => {
         expect(textOf(screen.findHostByTestId(`${rowId('apps/ui/sources')}-changes`))).toBe('3');
     });
 
+    it('renders permanent file metadata before any hover or action-menu interaction', async () => {
+        const screen = await render({ renderRowMetadata: (node) => node.type === 'file'
+            ? React.createElement('Text', { testID: `find-count:${node.path}` }, '3') : null });
+        expect(textOf(screen.findHostByTestId('find-count:AGENTS.md'))).toBe('3');
+        const row = screen.findAll((node) => node.props.testID === rowId('AGENTS.md') && node.props.node !== undefined)[0];
+        expect(row.props.rowActions).toBeNull();
+    });
+
     it('closes and reopens a folder of the footprint', async () => {
         const screen = await render();
         await act(async () => {

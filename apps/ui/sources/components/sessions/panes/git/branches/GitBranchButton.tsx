@@ -182,7 +182,7 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
         const trimmed = name.trim();
         if (!trimmed) return;
         closeMenu();
-        const result = await runSessionScmMutation({
+        await runSessionScmMutation({
             state: storage.getState(),
             sessionId: props.sessionId,
             ...(props.serverId === undefined ? {} : { serverId: props.serverId }),
@@ -191,8 +191,8 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
             fallbackError: t('files.branchMenu.create.failed'),
             run: () => sessionScmBranchCreate(props.sessionId, { name: trimmed, checkout: true }, props.serverId),
             successDetail: () => trimmed,
+            refreshAfterMutation: afterBranchWrite,
         });
-        if (result.started && result.response !== 'cancelled' && result.response.success) await afterBranchWrite();
     }, [afterBranchWrite, canCreate, closeMenu, props.sessionId, props.serverId, repoPath]);
 
     const switchBranch = React.useCallback(async (targetBranch: string) => {
@@ -222,7 +222,7 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
             ...(overwriteCurrentBranchStash ? { overwriteCurrentBranchStash: true } : null),
         }, props.serverId);
 
-        const result = await runSessionScmMutation({
+        await runSessionScmMutation({
             state: storage.getState(),
             sessionId: props.sessionId,
             ...(props.serverId === undefined ? {} : { serverId: props.serverId }),
@@ -246,8 +246,8 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
                 return overwrite ? await attemptCheckout(true) : 'cancelled' as const;
             },
             successDetail: () => target,
+            refreshAfterMutation: afterBranchWrite,
         });
-        if (result.started && result.response !== 'cancelled' && result.response.success) await afterBranchWrite();
     }, [
         afterBranchWrite, askBeforeOverwrite, branchSwitchSetting, canCheckout, closeMenu, currentBranch,
         props.sessionId, props.serverId, repoPath, snapshot,
@@ -256,7 +256,7 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
     const keepChangesAside = React.useCallback(async () => {
         if (!canCreateStash || disabled || changedCount === 0) return;
         closeMenu();
-        const result = await runSessionScmMutation({
+        await runSessionScmMutation({
             state: storage.getState(),
             sessionId: props.sessionId,
             ...(props.serverId === undefined ? {} : { serverId: props.serverId }),
@@ -265,10 +265,8 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
             fallbackError: t('sessionGitBranches.keepAsideFailed'),
             run: () => sessionScmStashCreate(props.sessionId, {}, props.serverId),
             successDetail: (response) => response.stashRef ?? undefined,
+            refreshAfterMutation: () => scmStatusSync.invalidateFromMutationAndAwait(props.sessionId, props.serverId),
         });
-        if (result.started && result.response !== 'cancelled' && result.response.success) {
-            await scmStatusSync.invalidateFromMutationAndAwait(props.sessionId, props.serverId);
-        }
     }, [canCreateStash, changedCount, closeMenu, disabled, props.sessionId, props.serverId, repoPath]);
 
     const createWorktreeFromCurrentBranch = React.useCallback(async () => {

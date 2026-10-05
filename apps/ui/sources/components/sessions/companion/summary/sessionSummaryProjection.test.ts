@@ -233,6 +233,15 @@ const fivePlan = projectSessionAgentPlan([
 ]);
 
 describe('the live hero (lab CA)', () => {
+    it('shows an older question before permissions and includes all waiting requests in the count', () => {
+        const model = projectSessionSummaryCard(input({
+            pendingPermissions: [pending('permission', 2_000)],
+            pendingUserActions: [{ id: 'question', kind: 'user_action', tool: 'AskUserQuestion', arguments: { questions: [] }, createdAt: 1_000 }],
+        }));
+        expect(model.needsYou).toMatchObject({ request: { id: 'question' }, moreCount: 1 });
+        expect(model.sinceMs).toBe(1_000);
+    });
+
     it('puts the oldest waiting ask in front, counts the rest, and times the wait from when it was asked', () => {
         const model = projectSessionSummaryCard(input({
             pendingPermissions: [pending('req-1', 1_000), pending('req-2', 2_000)],

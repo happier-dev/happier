@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { renderHook } from '@/dev/testkit';
+import { EMPTY_SCM_CAPABILITIES } from '@/scm/core/snapshotMappers';
 
 // System boundaries only: the machine RPCs and the modal. The operation lock, log and store are real.
 const { confirm, rpc } = vi.hoisted(() => ({
@@ -12,6 +13,7 @@ const { confirm, rpc } = vi.hoisted(() => ({
         sessionScmBranchMerge: vi.fn(),
         sessionScmBranchOperationSkip: vi.fn(),
         sessionScmRepositoryRemoveIndexLock: vi.fn(),
+        sessionScmStatusSnapshot: vi.fn(),
     },
 }));
 vi.mock('@/modal', async () => {
@@ -30,12 +32,21 @@ vi.mock('@/sync/ops/sessions', async (importOriginal) => {
         sessionScmBranchMerge: (...args: unknown[]) => rpc.sessionScmBranchMerge(...args),
         sessionScmBranchOperationSkip: (...args: unknown[]) => rpc.sessionScmBranchOperationSkip(...args),
         sessionScmRepositoryRemoveIndexLock: (...args: unknown[]) => rpc.sessionScmRepositoryRemoveIndexLock(...args),
+        sessionScmStatusSnapshot: (...args: unknown[]) => rpc.sessionScmStatusSnapshot(...args),
     } });
+});
+
+// Unrelated key-envelope HTTP API must never be called by repository mutation tests.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unexpected = () => { throw new Error('Unexpected session key-envelope HTTP request in Git'); };
+    return { createSessionDataKeyEnvelopeClient: unexpected, readSessionDataKeyEnvelopeCollectionPage: unexpected,
+        prepareSessionDataKeyEnvelopesForScope: unexpected, prepareSessionDataKeyEnvelopesDetached: unexpected };
 });
 vi.mock('@/sync/ops/sessionScm', async (importOriginal) => {
     const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
     return createSyncOpsModuleMock({ importOriginal, overrides: {
         sessionScmRepositoryRemoveIndexLock: (...args: unknown[]) => rpc.sessionScmRepositoryRemoveIndexLock(...args),
+        sessionScmStatusSnapshot: (...args: unknown[]) => rpc.sessionScmStatusSnapshot(...args),
     } });
 });
 
@@ -58,6 +69,14 @@ describe('useSessionGitRepositoryMutations', () => {
         rpc.sessionScmBranchMerge.mockReset().mockResolvedValue({ success: true, stdout: 'merged' });
         rpc.sessionScmBranchOperationSkip.mockReset().mockResolvedValue({ success: true, outcome: { v: 1, kind: 'succeeded', nextActions: [] } });
         rpc.sessionScmRepositoryRemoveIndexLock.mockReset();
+        rpc.sessionScmStatusSnapshot.mockReset().mockResolvedValue({ success: true, snapshot: {
+            projectKey: 'machine-1:/tmp/repo', fetchedAt: 1,
+            repo: { isRepo: true, rootPath: '/tmp/repo', backendId: 'git', mode: '.git' },
+            capabilities: EMPTY_SCM_CAPABILITIES,
+            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+            hasConflicts: false, entries: [],
+            totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+        } });
         confirm.mockClear();
     });
 
@@ -120,7 +139,7 @@ describe('useSessionGitRepositoryMutations', () => {
     it('reports a merge to the operation log the pane outcome line reads, and releases the lock', async () => {
         const response = await (await mutations()).mergeBranch('feature/review');
 
-        expect(response).toEqual({ success: true, stdout: 'merged' });
+        expect(response).toEqual({ success: true, stdout: 'merged', outcome: { v: 1, kind: 'succeeded', nextActions: [] } });
         expect(storage.getState().getSessionProjectScmOperationLog('s1')).toEqual(expect.arrayContaining([
             expect.objectContaining({ operation: 'branch_merge', status: 'success' }),
         ]));
@@ -138,7 +157,7 @@ describe('useSessionGitRepositoryMutations', () => {
         expect(confirm).toHaveBeenCalledTimes(1);
         expect(rpc.sessionScmRepositoryRemoveIndexLock).toHaveBeenCalledWith('s1', expect.objectContaining({ cwd: '/tmp/repo', confirmed: true }), undefined);
         expect(rpc.sessionScmRemoteAdd).toHaveBeenCalledTimes(2);
-        expect(response).toEqual({ success: true });
+        expect(response).toEqual({ success: true, outcome: { v: 1, kind: 'succeeded', nextActions: [] } });
     });
 
     it('records skipping a replayed commit with its canonical outcome and releases the operation lock', async () => {

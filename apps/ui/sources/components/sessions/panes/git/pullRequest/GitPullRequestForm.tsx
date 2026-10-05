@@ -27,7 +27,7 @@ import {
     resolveGitPullRequestFormAfterCreate,
     type GitPullRequestFormAfterCreate,
     type GitPullRequestFormPlacement,
-} from './gitPullRequestForm';
+} from './gitPullRequestFormState';
 
 export type GitPullRequestCreated = Readonly<{
     number: number | null;

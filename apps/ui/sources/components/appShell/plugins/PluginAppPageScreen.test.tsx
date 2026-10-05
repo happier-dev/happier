@@ -766,7 +766,7 @@ beforeEach(async () => {
     routerLocation.pathname = '/';
     pluginSurfaceAccountLifetime.value = pluginSurfaceAccountLifetime.create('server-1');
     accountEncryptionModeCredentials.value = { token: 'plugin-app-page-account-mode-test-token' };
-    const credentialBoundary = vi.spyOn((await import('@/sync/sync')).sync, 'getCredentials')
+    const credentialBoundary = vi.spyOn((await import('@/sync/syncEngine')).sync, 'getCredentials')
         .mockImplementation(() => {
             const credentials = accountEncryptionModeCredentials.value;
             if (credentials === null) {

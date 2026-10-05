@@ -10,9 +10,11 @@ import {
     activate as activatePublicAuthoringReviewClientActions,
 } from '../../../../../../packages/plugin-sdk/examples/public-authoring/ui/reviewClientActions.ts';
 import {
+    createActionExecutor,
     formatQualifiedPluginActionId,
     PluginProjectionInstalledPackageV2Schema,
     PluginProjectedActionV2Schema,
+    type ActionExecutorDeps,
     type CurrentUiContextSnapshotV1,
     type PluginContributionClientPlatform,
     type PluginMachineExecutionOriginV1,
@@ -50,12 +52,20 @@ vi.mock('@/sync/domains/local/services/preview/platform', () => ({
     resolveLocalServicePreviewPlatform: () => clientExecutablePlatformState.platform,
 }));
 
+// The shared approval owner is real; native dialog presentation confirms this
+// transport-lifetime case before the mock daemon RPC becomes pending.
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ confirmResult: true }).module;
+});
+
 /** Declared Action schemas the daemon answers per Action; never projected. */
 const actionSchemasByQualifiedId = new Map<string, Readonly<{ inputSchema: object; outputSchema?: object }>>();
 
 beforeEach(() => {
     actionSchemasByQualifiedId.clear();
     resetMachineProjectionReadsForTests();
+    machineRpcWithServerScopeMock.mockClear();
     machineRpcWithServerScopeMock.mockImplementation(async (request: Readonly<{
         method?: string;
         payload?: Readonly<{ qualifiedActionId?: string }>;
@@ -68,7 +78,9 @@ beforeEach(() => {
 
 import { resetMachineProjectionReadsForTests } from '@/sync/ops/machineContributionRegistryProjection';
 import type { CurrentUiContextResolvedCommand } from './CurrentUiContextProvider';
+import { executeCurrentUiContextAction, registerCurrentUiContextActionPort } from './currentUiContextActionRuntime';
 import {
+    createCurrentUiContributedActionRpcHandler,
     bindCurrentUiContextVoiceToolPortToAdmission,
     createCurrentUiContextVoiceToolPort,
     type CurrentUiContextVoiceCommandInvocationInput,
@@ -357,6 +369,9 @@ function clientActionIdentity(): PluginReactNativeBundleCacheIdentity {
 function createCurrentUiClientActionFixture(input: Readonly<{
     handler: PluginClientActionHandler;
     scopes?: PluginProjectedActionV2['scopes'];
+    surfaces?: PluginProjectedActionV2['surfaces'];
+    serverId?: string;
+    dangerLevel?: PluginProjectedActionV2['dangerLevel'];
 }>) {
     actionSchemasByQualifiedId.set(`${CLIENT_ACTION_ID.pluginId}/${CLIENT_ACTION_ID.localId}`, { inputSchema: {} });
     const action = PluginProjectedActionV2Schema.parse({
@@ -365,7 +380,7 @@ function createCurrentUiClientActionFixture(input: Readonly<{
         occurrenceId: `current-ui-client-action-occurrence-${CLIENT_ACTION_GENERATION}`,
         title: 'Retiring client action',
         scopes: input.scopes ?? ['global'],
-        surfaces: ['voice'],
+        surfaces: input.surfaces ?? ['voice'],
         execution: {
             target: 'client',
             client: {
@@ -376,13 +391,15 @@ function createCurrentUiClientActionFixture(input: Readonly<{
         },
         serverIdentityId: CLIENT_ACTION_EXECUTION_ORIGIN.serverIdentityId,
         materializationRef: CLIENT_ACTION_EXECUTION_ORIGIN.materializationRef,
-        dangerLevel: 'safe',
+        dangerLevel: input.dangerLevel ?? 'safe',
+        ...(input.dangerLevel && input.dangerLevel !== 'safe' ? { confirmation: { title: 'Confirm client mutation' } } : {}),
         available: true,
         authorization: CLIENT_ACTION_AUTHORIZATION,
     });
+    const hostOrigin = { ...CLIENT_ACTION_HOST_ORIGIN, serverId: input.serverId ?? CLIENT_ACTION_HOST_ORIGIN.serverId };
     const projectedAction = Object.freeze({
         ...action,
-        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: CLIENT_ACTION_HOST_ORIGIN,
+        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: hostOrigin,
     });
     const identity = clientActionIdentity();
     const bundleId = `reactNativeBundle:${CLIENT_ACTION_ID.pluginId}:${CLIENT_ACTION_ID.localId}`;
@@ -415,7 +432,7 @@ function createCurrentUiClientActionFixture(input: Readonly<{
                     loadPolicy: Object.freeze({ source: 'installedArtifact' }),
                     cacheIdentity: Object.freeze({ artifactDigest: identity.artifactDigest }),
                 }),
-                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: CLIENT_ACTION_HOST_ORIGIN,
+                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: hostOrigin,
             }),
         }),
     }) satisfies PluginUiProjectionModel;
@@ -534,6 +551,156 @@ function requireActionInvoker(port: ReturnType<typeof createCurrentUiContextVoic
 }
 
 describe('current UI context Voice tool port', () => {
+    it('keeps a known reverse client Action result when its own navigation changes the viewed Session', async () => {
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        const { invalidateAccountEncryptionModeCache } = await import('@/sync/api/account/apiAccountEncryptionMode');
+        const initialState = getStorage().getState();
+        const serverId = (await upsertAndActivateServer({ serverUrl: 'https://reverse-action.test', name: 'Reverse Action Home' })).id;
+        getStorage().getState().activateProfileScope({ serverId, accountId: 'reverse-account' });
+        const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('reverse-account') });
+        setRuntimeFetch(async (url) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/auth/ping') return Response.json({ ok: true });
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            throw new Error(`Unexpected reverse Action request: ${path}`);
+        });
+        let viewedSessionId = 'unrelated-viewed-session';
+        const listeners = new Set<() => void>();
+        const fixture = createCurrentUiClientActionFixture({
+            serverId, scopes: ['session'], surfaces: ['agent'],
+            handler: async (_input, context) => {
+                await context.ui.openSurface('result');
+                return { navigated: true };
+            },
+        });
+        const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction,
+            reader: {
+                readCurrentSessionId: () => viewedSessionId,
+                readCurrentUiContext: () => null,
+                resolveCurrentUiCommand: () => null,
+                subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+            },
+            readProjection: () => fixture.projection,
+            readNavigationBinding: () => ({ targetKind: 'app', registerOwner: () => () => {}, openSurface: async () => {
+                viewedSessionId = 'created-session';
+                for (const listener of listeners) listener();
+                return { ok: true };
+            } }),
+        }));
+        await fixture.composition.unload();
+        try {
+            await fixture.composition.reconcile([fixture.activation]);
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const handler = createCurrentUiContributedActionRpcHandler({
+                machineId: CLIENT_ACTION_HOST_ORIGIN.machineId, serverId,
+                readProjection: () => fixture.projection, isCurrent: () => true,
+                execute: createDefaultActionExecutor().execute,
+            });
+            expect(await handler({ v: 1, action: CLIENT_ACTION_ID, input: null, surface: 'agent',
+                expectedContributorOccurrenceId: fixture.action.occurrenceId, defaultSessionId: 'invoking-session' }))
+                .toEqual({ ok: true, result: { navigated: true } });
+            expect(viewedSessionId).toBe('created-session');
+        } finally {
+            unregister(); await fixture.composition.unload(); credentials.mockRestore(); resetRuntimeFetch();
+            getStorage().setState(initialState, true); invalidateAccountEncryptionModeCache();
+        }
+    });
+
+    it('routes generic action.invoke through the answering default UI executor', async () => {
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.show).mockClear();
+        const fixture = createCurrentUiClientActionFixture({
+            surfaces: ['agent', 'mcp', 'cli'],
+            handler: async (_input, context) => ({ surface: context.invocationSurface }),
+        });
+        await fixture.composition.unload();
+        const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+            readProjection: () => fixture.projection, readNavigationBinding: () => null,
+        }));
+        try {
+            await fixture.composition.reconcile([fixture.activation]);
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            for (const surface of ['agent', 'mcp', 'cli'] as const) {
+                expect(await createDefaultActionExecutor().execute('action.invoke', { action: CLIENT_ACTION_ID, input: null }, {
+                    surface, expectedContributedActionOccurrenceId: fixture.action.occurrenceId,
+                })).toEqual({ ok: true, result: { surface } });
+            }
+            expect(Modal.show).not.toHaveBeenCalled();
+        } finally { unregister(); await fixture.composition.unload(); }
+    });
+
+    it('rejects a reverse client Action for a replaced contributor occurrence before its handler runs', async () => {
+        const handler = vi.fn(async () => ({ entered: true }));
+        const fixture = createCurrentUiClientActionFixture({ handler, surfaces: ['agent', 'mcp', 'cli'] });
+        await fixture.composition.unload();
+        try {
+            await fixture.composition.reconcile([fixture.activation]);
+            const port = createCurrentUiContextVoiceToolPort({
+                invocationSurface: 'agent',
+                reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+                readProjection: () => fixture.projection, readNavigationBinding: () => null,
+            });
+            expect(await requireActionInvoker(port)({ action: CLIENT_ACTION_ID, expectedContributorOccurrenceId: 'retired-occurrence' }))
+                .toMatchObject({ ok: false, code: 'stale_surface', actionHandlerInvocation: 'notStarted' });
+            expect(handler).not.toHaveBeenCalled();
+        } finally { await fixture.composition.unload(); }
+    });
+
+    it('enforces the safe-only guard at generic default execution before a client handler can start', async () => {
+        const handler = vi.fn(async () => ({ mutated: true }));
+        const fixture = createCurrentUiClientActionFixture({ handler, surfaces: ['agent'], dangerLevel: 'writesRemote' });
+        await fixture.composition.unload();
+        const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+            readProjection: () => fixture.projection, readNavigationBinding: () => null,
+        }));
+        try {
+            await fixture.composition.reconcile([fixture.activation]);
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            expect(await createDefaultActionExecutor().execute('action.invoke', { action: CLIENT_ACTION_ID, input: null }, {
+                surface: 'agent', expectedContributedActionOccurrenceId: fixture.action.occurrenceId,
+                requiredContributedActionDangerLevel: 'safe',
+            })).toEqual({ ok: false, errorCode: 'plugin_action_read_requires_safe', error: 'plugin_action_read_requires_safe',
+                details: { actionHandlerInvocation: 'notStarted' } });
+            expect(handler).not.toHaveBeenCalled();
+            unregister();
+            expect(await createDefaultActionExecutor().execute('action.invoke', { action: CLIENT_ACTION_ID, input: null }, {
+                surface: 'agent',
+            })).toMatchObject({ ok: false, details: { actionHandlerInvocation: 'notStarted' } });
+        } finally { unregister(); await fixture.composition.unload(); }
+    });
+
+    it('binds nested builtin Actions to the canonical executor for each automated client origin', async () => {
+        // Only the external project inventory is reached; all executor policy remains real.
+        const executor = createActionExecutor({ projectsList: async () => ({ projects: [{ id: 'project-ui', name: 'Current project' }] }) } as unknown as ActionExecutorDeps);
+        const fixture = createCurrentUiClientActionFixture({
+            surfaces: ['agent', 'mcp', 'cli'],
+            handler: async (_input, context) => ({ surface: context.invocationSurface, projects: await context.ui.executeAction('projects.list', {}) }),
+        });
+        await fixture.composition.unload();
+        try {
+            await fixture.composition.reconcile([fixture.activation]);
+            for (const invocationSurface of ['agent', 'mcp', 'cli'] as const) {
+                const port = createCurrentUiContextVoiceToolPort({
+                    invocationSurface, hostAction: { execute: executor.execute },
+                    reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+                    readProjection: () => fixture.projection, readNavigationBinding: () => null,
+                });
+                expect(await requireActionInvoker(port)({ action: CLIENT_ACTION_ID, expectedContributorOccurrenceId: fixture.action.occurrenceId }))
+                    .toEqual({ ok: true, result: { surface: invocationSurface, projects: { projects: [{ id: 'project-ui', name: 'Current project' }] } } });
+            }
+        } finally { await fixture.composition.unload(); }
+    });
+
     it('fails closed across every port capability after its admitting lifetime retires while preserving a known in-flight settlement', async () => {
         const admission = new AbortController();
         const snapshot: CurrentUiContextSnapshotV1 = {
@@ -1015,6 +1182,38 @@ describe('current UI context Voice tool port', () => {
 
         await expect(requireCommandInvoker(port)({ commandId: COMMAND_ID })).resolves.toEqual({ ok: true });
         expect(openSurface).toHaveBeenCalledTimes(1);
+    });
+
+    it('dispatches an opaque client command as Agent/MCP rather than borrowing Voice admission', async () => {
+        const fixture = createCurrentUiClientActionFixture({
+            surfaces: ['agent', 'mcp'],
+            handler: async (_input, context) => ({ surface: context.invocationSurface }),
+        });
+        const current: CurrentUiContextResolvedCommand = {
+            id: COMMAND_ID, retirementSignal: new AbortController().signal,
+            command: { kind: 'executeAction', action: CLIENT_ACTION_ID },
+        };
+        await fixture.composition.unload();
+        try {
+            await fixture.composition.reconcile([fixture.activation]);
+            for (const invocationSurface of ['agent', 'mcp'] as const) {
+                const port = createCurrentUiContextVoiceToolPort({
+                    invocationSurface,
+                    reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => current, subscribe: () => () => {} },
+                    readProjection: () => fixture.projection, readNavigationBinding: () => null,
+                });
+                expect(await requireCommandInvoker(port)({ commandId: COMMAND_ID })).toEqual({ ok: true, result: { surface: invocationSurface } });
+                const unregister = registerCurrentUiContextActionPort((surface) => surface === invocationSurface ? port : null);
+                try {
+                    expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: COMMAND_ID }, context: { surface: invocationSurface } }))
+                        .toEqual({ ok: true, result: { surface: invocationSurface } });
+                } finally { unregister(); }
+                expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: COMMAND_ID }, context: { surface: invocationSurface } }))
+                    .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+            }
+        } finally {
+            await fixture.composition.unload();
+        }
     });
 
     it('preserves a known client-Action navigation failure when its exact Action retires while navigation settles', async () => {

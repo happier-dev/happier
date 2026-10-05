@@ -6,6 +6,22 @@ import type { WorkspaceState } from '../workspaceState';
 /** A top-row pane's horizontal span in window coordinates. */
 export type WorkspaceBarFrame = Readonly<{ x: number; width: number }>;
 
+export const WORKSPACE_BAR_CONTROL_GAP_PX = 12;
+
+/** Clip a measured pane to the title strip's actual interactive control reservations. */
+export function resolveWorkspaceBarSegmentFrame(input: Readonly<{
+    frame: WorkspaceBarFrame;
+    originX: number;
+    leadingEndPx: number;
+    trailingStartPx?: number;
+}>): Readonly<{ paneLeft: number; left: number; width: number }> | null {
+    const paneLeft = input.frame.x - input.originX;
+    const left = Math.max(paneLeft, input.leadingEndPx);
+    const right = Math.min(paneLeft + input.frame.width, input.trailingStartPx ?? Infinity);
+    const width = right - left;
+    return width > 0 ? { paneLeft, left, width } : null;
+}
+
 /**
  * Where the window's title strip is and where each top-row pane sits under it, so the strip can lay
  * each pane's tabs exactly over that pane (workspace lab T/S: "each top-row pane's tabs sit directly

@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
 import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { Icon } from '@/components/ui/icons/Icon';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import { t } from '@/text';
@@ -24,6 +25,7 @@ import { APP_RAIL_WIDTH_PX, APP_SHELL_TITLE_STRIP_HEIGHT_PX } from './appRailMet
 import { AppShellThemeToggle } from './AppShellThemeToggle';
 import type { CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { WorkspaceTitleBar } from '@/components/appShell/workspace/titleBar/WorkspaceTitleBar';
+import { WORKSPACE_BAR_CONTROL_GAP_PX } from '@/components/appShell/workspace/titleBar/workspaceBarGeometry';
 
 /**
  * The strip across the top of the window (lab `xrail-R1`): the window's own controls where the host
@@ -50,6 +52,8 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
      * lab T). The strip then carries those tabs after its own controls.
      */
     workspaceCatalog?: readonly CompactAppDestination[];
+    /** Interactive trailing chrome; its measured span is reserved from workspace tabs. */
+    trailing?: React.ReactNode;
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -58,21 +62,28 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
     const history = useDesktopSidebarHistoryNavigationAvailability();
     const windowControls = useResolvedDesktopWindowControls({ variant: 'expanded', desktopWindowControls: undefined, hasDesktopWindowControlsOverride: false });
     const home = React.useCallback(() => {
-        const result = runGuardedNavigation(() => props.navigation ? props.navigation.openHref('/') : router.push('/'));
+        if (props.navigation) { props.navigation.openHref('/'); return; }
+        const result = runGuardedNavigation(() => router.push('/'));
         if (result !== true) fireAndForget(result, { tag: 'AppShellTitleStrip.home' });
     }, [props.navigation, router]);
     const back = React.useCallback(() => {
-        const result = runGuardedNavigation(() => props.navigation ? props.navigation.back() : router.back());
+        if (props.navigation) { props.navigation.back(); return; }
+        const result = runGuardedNavigation(() => router.back());
         if (result !== true) fireAndForget(result, { tag: 'AppShellTitleStrip.back' });
     }, [props.navigation, router]);
     const forward = React.useCallback(() => {
+        if (props.navigation) { props.navigation.forward(); return; }
         const result = runGuardedNavigation(() => {
-            if (props.navigation) props.navigation.forward();
-            else (globalThis as { history?: { forward?: () => void } }).history?.forward?.();
+            (globalThis as { history?: { forward?: () => void } }).history?.forward?.();
         });
         if (result !== true) fireAndForget(result, { tag: 'AppShellTitleStrip.forward' });
     }, [props.navigation]);
     const [clusterEndPx, setClusterEndPx] = React.useState(0);
+    const [trailingStartPx, setTrailingStartPx] = React.useState<number | undefined>(undefined);
+    const onTrailingLayout = React.useCallback((event: { nativeEvent: { layout: { x: number } } }) => {
+        const next = Math.max(0, Math.round(event.nativeEvent.layout.x) - WORKSPACE_BAR_CONTROL_GAP_PX);
+        setTrailingStartPx((current) => current === next ? current : next);
+    }, []);
     const onClusterLayout = React.useCallback((event: { nativeEvent: { layout: { x: number; width: number } } }) => {
         const { x, width } = event.nativeEvent.layout;
         const next = Math.round(x + width);
@@ -80,8 +91,9 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
     }, []);
     const glyphColor = theme.colors.chrome.header.foreground;
     const toggleLabel = props.columnVisible ? t('common.collapse') : t('common.expand');
+    const stripHeightPx = Math.max(APP_SHELL_TITLE_STRIP_HEIGHT_PX, resolveTouchTargetFloorPx() ?? 0);
     return (
-        <View {...dragProps} testID="app-shell-title-strip" style={styles.strip}>
+        <View {...dragProps} testID="app-shell-title-strip" style={[styles.strip, { height: stripHeightPx }]}>
             <DesktopShellWindowControlsHost>{windowControls}</DesktopShellWindowControlsHost>
             <View style={styles.logoSlot}>
                 <Pressable
@@ -142,8 +154,15 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
                 <WorkspaceTitleBar
                     catalog={props.workspaceCatalog}
                     clusterEndPx={clusterEndPx}
-                    stripHeightPx={APP_SHELL_TITLE_STRIP_HEIGHT_PX}
+                    stripHeightPx={stripHeightPx}
+                    trailingStartPx={props.trailing ? trailingStartPx : undefined}
                 />
+            ) : null}
+            {props.trailing ? (
+                <View testID="app-shell-title-strip-trailing" style={styles.trailing} onLayout={onTrailingLayout}
+                    {...(Platform.OS === 'web' ? { dataSet: { desktopWindowNoDrag: 'true' } } : {})}>
+                    {props.trailing}
+                </View>
             ) : null}
         </View>
     );
@@ -169,5 +188,12 @@ const stylesheet = StyleSheet.create(() => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
+    },
+    trailing: {
+        marginLeft: 'auto',
+        flexShrink: 1,
+        minWidth: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 }));

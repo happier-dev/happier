@@ -117,16 +117,12 @@ vi.mock('@/sync/domains/server/url/bootstrapActiveServerFromWebLocation', () => 
     bootstrapActiveServerFromWebLocation: () => null,
 }));
 
-vi.mock('@/sync/domains/server/url/shouldHoldAuthenticatedShellForWebServerOverride', () => ({
-    shouldHoldAuthenticatedShellForWebServerOverride: () => false,
-}));
-
 vi.mock('@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation', () => ({
     consumeLegacySessionDeepLinkFromWebLocation: () => null,
 }));
 
 vi.mock('@/sync/domains/server/url/resolveAuthenticatedWebServerUrlOverrideAction', () => ({
-    resolveAuthenticatedWebServerUrlOverrideAction: () => ({ kind: 'none' }),
+    resolveWebServerUrlOverrideAction: () => ({ kind: 'none' }),
 }));
 
 vi.mock('@/utils/path/terminalConnectUrl', () => ({

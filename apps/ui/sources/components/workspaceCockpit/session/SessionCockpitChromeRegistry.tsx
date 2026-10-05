@@ -99,6 +99,9 @@ export function resetSessionSwitcherStateForTests(): void {
 // preventing nested scroll content (`ItemList`) from reserving it a second time.
 export const SessionCockpitBottomChromeHeightContext = React.createContext(0);
 const SessionCockpitBottomChromeHeightSetterContext = React.createContext<SessionCockpitBottomChromeHeightSetter>(NOOP_SET_BOTTOM_CHROME_HEIGHT);
+// One shell-owned floating band (the phone Voice Island), measured independently of the bar.
+const SessionCockpitFloatingBottomChromeHeightContext = React.createContext(0);
+const SessionCockpitFloatingBottomChromeReporterContext = React.createContext<SessionCockpitBottomChromeHeightSetter>(NOOP_SET_BOTTOM_CHROME_HEIGHT);
 /**
  * The composer band that floats **above** the bottom chrome, published separately from it.
  *
@@ -115,6 +118,7 @@ const SessionCockpitDismissControllerContext = React.createContext<SessionCockpi
 
 export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children: React.ReactNode }>) {
     const [bottomChromeHeight, setBottomChromeHeightState] = React.useState(0);
+    const [floatingBottomChromeHeight, setFloatingBottomChromeHeight] = React.useState(0);
     const [composerChromeHeightById, setComposerChromeHeightById] = React.useState<Readonly<Record<string, number>>>({});
     const [registration, setRegistration] = React.useState<SessionCockpitChromeRegistration | null>(null);
     const [dismissingSessionId, setDismissingSessionId] = React.useState<string | null>(null);
@@ -222,17 +226,21 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
         <SessionCockpitChromeRegisterContext.Provider value={register}>
             <SessionCockpitBottomChromeHeightSetterContext.Provider value={setBottomChromeHeight}>
                 <SessionCockpitBottomChromeHeightContext.Provider value={bottomChromeHeight}>
-                    <SessionCockpitComposerChromeReporterContext.Provider value={reportComposerChromeHeight}>
-                        <SessionCockpitComposerChromeHeightContext.Provider value={composerChromeHeight}>
-                            <SessionCockpitDismissControllerContext.Provider value={dismissController}>
-                                <SessionCockpitDismissingSessionIdContext.Provider value={dismissingSessionId}>
-                                    <SessionCockpitChromeRegistrationContext.Provider value={registration}>
-                                        {props.children}
-                                    </SessionCockpitChromeRegistrationContext.Provider>
-                                </SessionCockpitDismissingSessionIdContext.Provider>
-                            </SessionCockpitDismissControllerContext.Provider>
-                        </SessionCockpitComposerChromeHeightContext.Provider>
-                    </SessionCockpitComposerChromeReporterContext.Provider>
+                    <SessionCockpitFloatingBottomChromeReporterContext.Provider value={setFloatingBottomChromeHeight}>
+                        <SessionCockpitFloatingBottomChromeHeightContext.Provider value={floatingBottomChromeHeight}>
+                            <SessionCockpitComposerChromeReporterContext.Provider value={reportComposerChromeHeight}>
+                                <SessionCockpitComposerChromeHeightContext.Provider value={composerChromeHeight}>
+                                    <SessionCockpitDismissControllerContext.Provider value={dismissController}>
+                                        <SessionCockpitDismissingSessionIdContext.Provider value={dismissingSessionId}>
+                                            <SessionCockpitChromeRegistrationContext.Provider value={registration}>
+                                                {props.children}
+                                            </SessionCockpitChromeRegistrationContext.Provider>
+                                        </SessionCockpitDismissingSessionIdContext.Provider>
+                                    </SessionCockpitDismissControllerContext.Provider>
+                                </SessionCockpitComposerChromeHeightContext.Provider>
+                            </SessionCockpitComposerChromeReporterContext.Provider>
+                        </SessionCockpitFloatingBottomChromeHeightContext.Provider>
+                    </SessionCockpitFloatingBottomChromeReporterContext.Provider>
                 </SessionCockpitBottomChromeHeightContext.Provider>
             </SessionCockpitBottomChromeHeightSetterContext.Provider>
         </SessionCockpitChromeRegisterContext.Provider>
@@ -253,6 +261,23 @@ export function useSessionCockpitBottomChromeHeight(): number {
 
 export function useSessionCockpitBottomChromeHeightSetter(): (height: number) => void {
     return React.useContext(SessionCockpitBottomChromeHeightSetterContext);
+}
+
+/** Composer reservation; content lists still consume the bar alone. */
+export function useSessionCockpitComposerBottomChromeHeight(): number {
+    return useSessionCockpitBottomChromeHeight() + React.useContext(SessionCockpitFloatingBottomChromeHeightContext);
+}
+
+/** The shell withdraws its measured floating band on suppression, container change or unmount. */
+export function useReportSessionCockpitFloatingBottomChromeHeight(enabled: boolean): (height: number) => void {
+    const report = React.useContext(SessionCockpitFloatingBottomChromeReporterContext);
+    React.useEffect(() => {
+        if (!enabled) report(0);
+        return () => report(0);
+    }, [enabled, report]);
+    return React.useCallback((height: number) => {
+        if (enabled) report(Number.isFinite(height) ? Math.max(0, height) : 0);
+    }, [enabled, report]);
 }
 
 /**

@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { SessionCompanionPresentationItemRefV1Schema } from '@happier-dev/protocol/sessions';
+import type { WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
 
 import { useMutateSessionCompanionPreference } from '@/sync/domains/state/storage';
 
@@ -6,6 +8,7 @@ import { useSessionCompanionPreference, type SessionCompanionAvailability } from
 import {
     addSessionCompanionItem,
     areSessionCompanionItemsEqual,
+    areSessionCompanionItemContentsEqual,
     areSessionCompanionPreferencesEqual,
     hideSessionCompanion,
     moveSessionCompanionItem,
@@ -17,12 +20,15 @@ import {
     setSessionCompanionDensity,
     setSessionCompanionEdge,
     setSessionCompanionItemFrameStyle,
+    setSessionCompanionInstanceInputs,
+    renameSessionCompanionInstance,
     showSessionCompanion,
     type SessionCompanionDensity,
     type SessionCompanionFrameStyle,
     type SessionCompanionEdge,
     type SessionCompanionItemRefV1,
     type SessionCompanionPreferenceV1,
+    type SessionCompanionRemovalGuard,
 } from './sessionCompanionPreference';
 
 /**
@@ -47,7 +53,7 @@ function areItemListsEqual(
 ): boolean {
     return first.length === second.length && first.every((item, index) => {
         const other = second[index];
-        return other !== undefined && areSessionCompanionItemsEqual(item, other) && item.frameStyle === other.frameStyle;
+        return other !== undefined && areSessionCompanionItemContentsEqual(item, other);
     });
 }
 
@@ -102,7 +108,7 @@ export function resolveSessionCompanionLocalInverse(
             if (!currentKeys.includes(itemKey)) return null;
             const appliedItem = outcome.applied.items.find((item) => sessionCompanionItemKey(item) === itemKey);
             const currentItem = current.items.find((item) => sessionCompanionItemKey(item) === itemKey);
-            if (appliedItem?.frameStyle !== currentItem?.frameStyle) return null;
+            if (!appliedItem || !currentItem || !areSessionCompanionItemContentsEqual(appliedItem, currentItem)) return null;
             restoredItems = current.items.filter((item) => sessionCompanionItemKey(item) !== itemKey);
         } else if (mutation.kind === 'removed') {
             if (currentKeys.includes(itemKey)) return null;
@@ -172,9 +178,7 @@ function toStoredCompanionEntry(preference: SessionCompanionPreferenceV1) {
         collapsed: preference.collapsed,
         edge: preference.edge,
         density: preference.density,
-        items: preference.items.map((item) => item.kind === 'plugin'
-            ? { ...item, surface: { ...item.surface } }
-            : { ...item }),
+        items: preference.items.map((item) => SessionCompanionPresentationItemRefV1Schema.parse(item)),
     };
 }
 
@@ -190,9 +194,11 @@ export type SessionCompanionController = Readonly<{
     setEdge: (edge: SessionCompanionEdge) => SessionCompanionMutationOutcome | null;
     setDensity: (density: SessionCompanionDensity) => SessionCompanionMutationOutcome | null;
     addItem: (item: SessionCompanionItemRefV1, index?: number) => SessionCompanionMutationOutcome | null;
-    removeItem: (item: SessionCompanionItemRefV1) => SessionCompanionMutationOutcome | null;
+    removeItem: (item: SessionCompanionItemRefV1, guard?: SessionCompanionRemovalGuard) => SessionCompanionMutationOutcome | null;
     moveItem: (item: SessionCompanionItemRefV1, toIndex: number) => SessionCompanionMutationOutcome | null;
     setItemFrameStyle: (item: SessionCompanionItemRefV1, style: SessionCompanionFrameStyle | null) => SessionCompanionMutationOutcome | null;
+    setInstanceInputs: (instanceId: string, bindings: WidgetInputBindingsV1) => SessionCompanionMutationOutcome | null;
+    renameInstance: (instanceId: string, displayName: string | null) => SessionCompanionMutationOutcome | null;
     openFullSurface: () => void;
     /**
      * Restores an outcome's previous value, or reports `false` when it went stale.
@@ -296,8 +302,8 @@ export function useSessionCompanionController(input: Readonly<{
             (current) => addSessionCompanionItem(current, item, index),
             { kind: 'added', item },
         ),
-        removeItem: (item: SessionCompanionItemRefV1) => applyMutation(
-            (current) => removeSessionCompanionItem(current, item),
+        removeItem: (item: SessionCompanionItemRefV1, guard?: SessionCompanionRemovalGuard) => applyMutation(
+            (current) => removeSessionCompanionItem(current, item, guard),
             { kind: 'removed', item },
         ),
         moveItem: (item: SessionCompanionItemRefV1, toIndex: number) => applyMutation(
@@ -308,6 +314,8 @@ export function useSessionCompanionController(input: Readonly<{
             (current) => setSessionCompanionItemFrameStyle(current, item, style),
             { kind: 'frameStyle', item },
         ),
+        setInstanceInputs: (instanceId: string, bindings: WidgetInputBindingsV1) => applyMutation((current) => setSessionCompanionInstanceInputs(current, instanceId, bindings)),
+        renameInstance: (instanceId: string, displayName: string | null) => applyMutation((current) => renameSessionCompanionInstance(current, instanceId, displayName)),
         openFullSurface,
         applyLocalInverse,
         realmKey,

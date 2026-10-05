@@ -14,6 +14,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { usePathname, useRouter } from 'expo-router';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
+import { offerThisComputerConnectionToHome } from '@/components/serverProfiles/offerThisComputerConnectionToHome';
 import { Typography } from '@/constants/Typography';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { listServerSelectionTargets } from '@/sync/domains/server/selection/serverSelectionResolver';
@@ -40,6 +41,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import {
     areServerProfileIdentifiersEquivalent,
     getActiveServerHomeCarrier,
+    getServerProfileById,
     listServerProfiles,
     resolveServerProfileScopeId,
 } from '@/sync/domains/server/serverProfiles';
@@ -691,6 +693,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const switchServer = React.useCallback(async (
         serverId: string,
         scope: 'tab' | 'device',
+        intent: 'direct' | 'group' = 'group',
     ) => {
         setPendingServerId(serverId);
         try {
@@ -699,6 +702,10 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                 setOpen(false);
                 setDetailsExpanded(false);
                 setPopoverStep('root');
+                if (intent === 'direct') {
+                    const profile = getServerProfileById(serverId);
+                    if (profile) await offerThisComputerConnectionToHome(profile);
+                }
             }
             return result;
         } finally {

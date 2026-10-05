@@ -19,6 +19,7 @@ import { t } from '@/text';
 export const GitConflictNotice = React.memo(function GitConflictNotice(props: Readonly<{
     sessionId: string;
     serverId?: string;
+    agentName?: string | null;
     /** The repository's in-progress operation, as the Git owner derives it (kind, Continue/Abort availability). */
     operation: ScmOperationState | null;
     conflictPaths: readonly string[];
@@ -67,13 +68,13 @@ export const GitConflictNotice = React.memo(function GitConflictNotice(props: Re
             : t('sessionGitPane.flow.conflicts.readyToContinue', { operation: operationName(kind) })
         : t('sessionGitPane.flow.conflicts.filesInConflict', { count, formatted: formatExactCount(count) });
     const description = count > 0
-        ? t('sessionGitPane.flow.conflicts.body')
+        ? `${props.agentName ? t('sessionGitPane.fidelity.conflictBody', { agent: props.agentName }) : t('sessionGitPane.flow.conflicts.body')} ${props.operation?.canAbort ? t('sessionGitPane.fidelity.conflictReassurance') : t('sessionGitPane.flow.conflicts.continueBody')}`
         : t('sessionGitPane.flow.conflicts.continueBody');
     // Continue and Abort are offered exactly when the Git owner says they can run (never while files are unresolved).
     const canContinue = props.operation?.canContinue === true;
     const canAbort = props.operation?.canAbort === true;
     const primary = count > 0
-        ? (kind ? { label: t('sessionGitPane.flow.conflicts.askAgent'), onPress: askAgent, disabled: asking || props.busy, loading: asking, testID: 'session-git-conflicts-ask-agent' } : null)
+        ? (kind ? { label: props.agentName ? t('sessionGitPane.fidelity.askAgent', { agent: props.agentName }) : t('sessionGitPane.flow.conflicts.askAgent'), onPress: askAgent, disabled: asking || props.busy, loading: asking, testID: 'session-git-conflicts-ask-agent' } : null)
         : kind && canContinue
             ? { label: t('sessionGitPane.flow.conflicts.continue', { operation: operationName(kind) }), onPress: () => props.onContinue(kind), disabled: props.busy, testID: 'session-git-conflicts-continue' }
             : null;
@@ -87,10 +88,11 @@ export const GitConflictNotice = React.memo(function GitConflictNotice(props: Re
     return (
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 6 }}>
             <AttentionBanner
+                placement="inline"
                 testID="session-git-conflicts"
                 title={title}
                 description={description}
-                action={primary}
+                action={primary ? { ...primary, display: 'default' } : null}
                 secondaryAction={secondary}
                 moreActions={skip}
                 announce="alert"

@@ -14,6 +14,9 @@ import { useConnectionHealth } from '@/components/navigation/connectionStatus/us
 import { UpdatesPopoverButton } from '@/components/updates/UpdatesPopoverButton';
 import { useSharedUpdatesSummary } from '@/updates/useUpdatesSummary';
 import { Icon } from '@/components/ui/icons/Icon';
+import { AppShellThemeToggle } from './appRail/AppShellThemeToggle';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import {
     shouldForceFreshNewSessionEntryFromPressEvent,
     useResolveNewSessionOrdinaryEntryRoute,
@@ -109,8 +112,9 @@ export const HomeHeaderNotAuth = React.memo(() => {
 function HeaderRight() {
     const router = useRouter();
     const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
-    const styles = stylesheet;
     const { theme } = useUnistyles();
+    const touchTarget = resolveTouchTargetFloorPx() ?? 32;
+    const gap = Math.max(0, touchTarget - 32);
     const handleNewSession = React.useCallback((event?: unknown) => {
         const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
             forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
@@ -119,16 +123,19 @@ function HeaderRight() {
     }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
     return (
-        <Pressable
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap }}>
+        <AppShellThemeToggle buttonSize={32} glyphSize={22} color={theme.colors.chrome.header.foreground} interactiveTargetGapPx={gap} />
+        <IconButton
             testID="home-header-start-new-session"
             onPress={handleNewSession}
-            hitSlop={15}
-            style={styles.headerButton}
-            accessibilityRole="button"
+            size={32}
+            variant="plain"
+            minimumInteractiveTargetSize={touchTarget}
+            interactiveTargetGapPx={gap}
             accessibilityLabel={t('newSession.title')}
-        >
-            <Icon name="plus" size={29} color={theme.colors.chrome.header.foreground} />
-        </Pressable>
+            icon={<Icon name="plus" size={29} color={theme.colors.chrome.header.foreground} />}
+        />
+      </View>
     );
 }
 

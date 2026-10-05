@@ -41,7 +41,7 @@ describe('RouteRemovalStepConsumer', () => {
             active: true,
             state: createWorkspaceState({ id: 'plugin-tab', target: { kind: 'plugin:notes', params: {} }, pinned: false, preview: false }),
             canGoBack: true, canGoForward: false, openHref: () => true,
-            activateTab: () => {}, closeTab: () => {}, dispatch: () => {}, back: () => {}, forward: () => {},
+            activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {}, back: () => {}, forward: () => {},
             navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
             registerBackStep: (tabId, step) => {
                 participants.set(tabId, step);

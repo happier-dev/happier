@@ -3,11 +3,49 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
+import { resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
 
-import { PluginSurfaceFallback } from './PluginSurfaceFallback';
+import { PluginSurfaceFallback, projectPluginSurfaceFallbackFindText } from './PluginSurfaceFallback';
 
 describe('PluginSurfaceFallback', () => {
+    it('decorates the displayed fallback glyphs while retaining human accessibility copy', async () => {
+        const reasonCode = 'hosted_web_bridge_timeout';
+        const card = resolvePluginSurfaceStatePresentation({ state: 'unavailable', reasonCode }).card!;
+        const screen = await renderScreen(
+            <PluginSurfaceFallback
+                testID="structured-unavailable"
+                reasonCode={reasonCode}
+                renderText={(field, text) => (
+                    <FindHighlightedText
+                        text={text}
+                        ranges={[{ start: 0, end: text.length, current: field === 'title' }]}
+                    />
+                )}
+            />,
+        );
+
+        expect(screen.findByTestId('find-match-current')?.children.join('')).toBe(card.title);
+        expect(screen.findByTestId('find-match-all')?.children.join('')).toBe(card.reason);
+        expect(screen.getTextContent()).toContain(card.title);
+        expect(screen.getTextContent()).toContain(card.reason);
+        expect(screen.getTextContent()).not.toContain(reasonCode);
+    });
+
+    it('projects exactly the displayed unavailable title and reason, excluding raw diagnostics and skeleton copy', async () => {
+        const reasonCode = 'hosted_web_bridge_timeout';
+        const screen = await renderScreen(<PluginSurfaceFallback testID="structured-unavailable" reasonCode={reasonCode} />);
+        const fields = projectPluginSurfaceFallbackFindText({ reasonCode });
+
+        expect(fields).toEqual([
+            { id: 'structured-unavailable-title', text: screen.findByTestId('structured-unavailable-title')?.children.join(''), format: 'plain' },
+            { id: 'structured-unavailable-reason', text: screen.findByTestId('structured-unavailable-reason')?.children.join(''), format: 'plain' },
+        ]);
+        expect(fields.map((field) => field.text).join('\n')).not.toContain(reasonCode);
+        expect(projectPluginSurfaceFallbackFindText({ state: 'loading', reasonCode })).toEqual([]);
+    });
+
     it('draws a destination-shaped skeleton while loading, with no alarming copy or action', async () => {
         const onRetry = vi.fn();
         const onManage = vi.fn();

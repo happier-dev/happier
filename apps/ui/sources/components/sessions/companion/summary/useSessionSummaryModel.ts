@@ -33,6 +33,9 @@ import { useSessionRecap } from './useSessionRecap';
 import { projectSessionAgentPlan } from '../plan/sessionAgentPlan';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { listSessionPendingPermissions, type SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
+import { listPendingRequestListsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
+import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import type { SessionPendingRequestLists } from '@happier-dev/session-core/pending';
 
 type SessionUsageLike = Readonly<{
     contextSize?: number;
@@ -59,6 +62,10 @@ const REALM_UNAVAILABLE_SUMMARY: SessionSummaryCardModel = Object.freeze({
 });
 
 const NO_PENDING_PERMISSIONS: readonly SessionPendingPermission[] = Object.freeze([]);
+const NO_PENDING_REQUESTS: SessionPendingRequestLists = Object.freeze({
+    permissionRequests: Object.freeze([]),
+    userActionRequests: Object.freeze([]),
+});
 
 /** The running turn's observed start, the same fact the submit-mode owner reads. */
 function readTurnStartedAtMs(session: Session): number | null {
@@ -139,6 +146,22 @@ export function useSessionSummaryModel(input: Readonly<{
     // its narrow rerender signature are unchanged.
     const liveSession = useSession(address?.sessionId ?? '', address?.serverId ?? null);
     const awarenessSource = liveSession ?? session;
+    const transcriptSource = useOptionalSessionTranscriptSource();
+    const transcriptPendingRequests = transcriptSource?.usePendingRequests();
+    const pendingRequests = React.useMemo(() => {
+        if (!address) return NO_PENDING_REQUESTS;
+        if (transcriptSource) {
+            if (transcriptSource.sessionId !== address.sessionId
+                || !transcriptSource.serverId
+                || !areServerProfileIdentifiersEquivalent(transcriptSource.serverId, address.serverId)) {
+                return NO_PENDING_REQUESTS;
+            }
+            return transcriptPendingRequests ?? NO_PENDING_REQUESTS;
+        }
+        // Standalone presentation may use the exact Session row, never ambient
+        // transcript storage keyed only by a same-id Session from another Home.
+        return listPendingRequestListsFromSession(awarenessSource, []);
+    }, [address, awarenessSource, transcriptPendingRequests, transcriptSource]);
     const awareness = React.useMemo(
         () => projectUiSessionAwareness(awarenessSource, awarenessNowMs),
         [awarenessNowMs, awarenessSource],
@@ -149,8 +172,8 @@ export function useSessionSummaryModel(input: Readonly<{
     // Pending asks and the Plan come from the live row: both are exactly the facts
     // the stabilised shell Session omits from its render signature.
     const pendingPermissions = React.useMemo(
-        () => (address ? listSessionPendingPermissions(awarenessSource, accountScope) : NO_PENDING_PERMISSIONS),
-        [accountScope, address, awarenessSource],
+        () => (address ? listSessionPendingPermissions(awarenessSource, accountScope, pendingRequests.permissionRequests) : NO_PENDING_PERMISSIONS),
+        [accountScope, address, awarenessSource, pendingRequests.permissionRequests],
     );
     const plan = projectSessionAgentPlan(awarenessSource.todos);
     const scm = React.useMemo(() => buildSessionScmSummary(scmSnapshot), [scmSnapshot]);
@@ -181,6 +204,7 @@ export function useSessionSummaryModel(input: Readonly<{
         usage: usageFacts,
         recap,
         pendingPermissions,
+        pendingUserActions: pendingRequests.userActionRequests,
         plan,
         turnStartedAtMs: readTurnStartedAtMs(awarenessSource),
     });

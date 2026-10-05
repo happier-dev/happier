@@ -11,6 +11,8 @@ import {
     moveSessionCompanionItem,
     setSessionCompanionItemFrameStyle,
     showSessionCompanion,
+    setSessionCompanionInstanceInputs,
+    renameSessionCompanionInstance,
     type SessionCompanionPreferenceV1,
 } from '../state/sessionCompanionPreference';
 import type { SessionCompanionController } from '../state/useSessionCompanionController';
@@ -41,8 +43,10 @@ function controllerStub(overrides: Partial<SessionCompanionController> = {}): Se
         setEdge: (edge) => outcome({ ...preference, edge }),
         setDensity: () => null,
         setItemFrameStyle: (item, style) => outcome(setSessionCompanionItemFrameStyle(preference, item, style)),
+        setInstanceInputs: (instanceId, bindings) => outcome(setSessionCompanionInstanceInputs(preference, instanceId, bindings)),
+        renameInstance: (instanceId, displayName) => outcome(renameSessionCompanionInstance(preference, instanceId, displayName)),
         addItem: (item, index) => outcome(addSessionCompanionItem(preference, item, index)),
-        removeItem: (item) => outcome(removeSessionCompanionItem(preference, item)),
+        removeItem: (item, guard) => outcome(removeSessionCompanionItem(preference, item, guard)),
         moveItem: (item, index) => outcome(moveSessionCompanionItem(preference, item, index)),
         openFullSurface: () => {},
         applyLocalInverse: () => true,
@@ -77,10 +81,32 @@ function ports(overrides: Partial<SessionPresentationPorts> = {}): SessionPresen
 const intent = (value: CurrentSessionPresentationIntentV1) => value;
 
 describe('applySessionPresentationIntent', () => {
+    it('reports a guarded transfer refusal instead of pretending a changed item was removed', () => {
+        const companion = controllerStub();
+        const instance = { v: 1 as const, id: 'copy-a', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
+        const item = { kind: 'instance' as const, instance };
+        companion.addItem(item);
+        companion.setItemFrameStyle(item, 'plain');
+        expect(applySessionPresentationIntent(ports({ companion }), { kind: 'companion.item.remove', item,
+            expectedInstance: instance, expectedPresentation: { frameStyle: null, nativeIndex: 0 } })).toEqual({ status: 'invalidTarget' });
+        expect(companion.preference.items).toEqual([{ ...item, frameStyle: 'plain' }]);
+    });
+    it('captures the acknowledged addition before a later notice-triggered edit without widening the wire status', () => {
+        const companion = controllerStub();
+        const instance = { v: 1 as const, id: 'copy-a', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
+        const item = { kind: 'instance' as const, instance, frameStyle: 'card' as const };
+        let committed: SessionCompanionPreferenceV1 | undefined;
+        const result = applySessionPresentationIntent(ports({ companion, canAddCompanionItem: () => true,
+            publishNotice: () => { companion.renameInstance(instance.id, 'Newer edit'); } }),
+            { kind: 'companion.item.add', item }, outcome => { committed = outcome.applied; });
+        expect(result).toEqual({ status: 'applied' });
+        expect(committed?.items).toEqual([item]);
+        expect(companion.preference.items[0]).toMatchObject({ instance: { displayName: 'Newer edit' } });
+    });
     it('uses the mounted catalog for additions and permits frame edits/removal of retained unavailable references', () => {
         const companion = controllerStub();
         companion.show();
-        const retained = { kind: 'plugin' as const, surface: { pluginId: 'acme.review', localId: 'missing' } };
+        const retained = { kind: 'instance' as const, instance: { v: 1 as const, id: 'copy-a', definition: { kind: 'installed' as const, surface: { pluginId: 'acme.review', localId: 'missing' } }, bindings: {} } };
         companion.addItem(retained);
         const owner = ports({ companion });
         expect(applySessionPresentationIntent(owner, { kind: 'companion.item.add', item: { kind: 'pane', paneId: 'not-a-pane' } })).toEqual({ status: 'invalidTarget' });
@@ -88,7 +114,7 @@ describe('applySessionPresentationIntent', () => {
         expect(applySessionPresentationIntent(owner, { kind: 'companion.item.frameStyle.set', item: retained, frameStyle: 'plain' })).toEqual({ status: 'applied' });
         expect(companion.preference.items).toContainEqual({ ...retained, frameStyle: 'plain' });
         expect(applySessionPresentationIntent(owner, { kind: 'companion.item.remove', item: retained })).toEqual({ status: 'applied' });
-        expect(companion.preference.items.some((ref) => ref.kind === 'plugin')).toBe(false);
+        expect(companion.preference.items.some((ref) => ref.kind === 'instance')).toBe(false);
     });
     it('reveals an exact Board item only after its Companion preference mutation applied', () => {
         const order: string[] = [];

@@ -88,7 +88,7 @@ installPickerCommonModuleMocks({
         }).module;
         return {
             ...module,
-            useLocalSearchParams: () => machineRouteParams,
+            useLocalSearchParams: () => pickerRouteBoundary.params,
         };
     },
     storage: async (importOriginal) =>

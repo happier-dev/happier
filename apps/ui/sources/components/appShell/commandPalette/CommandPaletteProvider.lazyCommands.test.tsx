@@ -99,7 +99,8 @@ vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => vi.fn(),
 }));
 
-vi.mock('@/utils/platform/desktopHost', () => ({
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
     isDesktopHost: () => false,
 }));
 

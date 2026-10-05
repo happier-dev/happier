@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
+// Locale is an environment boundary; section ownership and activation remain real.
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
+
 import type { SelectionListDynamicSection, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 
 import {
@@ -48,6 +54,106 @@ function staticOptionIds(
 }
 
 describe('buildUniversalSearchSections', () => {
+    it('offers text-in-files for one character with a non-activatable refinement hint for an incomplete page', async () => {
+        const source = {
+            status: 'ready' as const,
+            resolverKey: 'workspace-content',
+            resolve: async () => ({ results: [], hasMore: true }),
+        };
+        const sections = buildUniversalSearchSections(input({
+            query: 'needle',
+            source: 'fileContent',
+            fileContent: source,
+        }));
+        expect(sections.map((section) => section.id)).toEqual(['fileContent']);
+        const content = dynamicSections(sections)[0]!;
+        expect(content.visibleWhen?.('')).toBe(false);
+        expect(content.visibleWhen?.('n')).toBe(true);
+        expect(content.visibleWhen?.(' ')).toBe(true);
+        expect(content.visibleWhen?.('ne')).toBe(true);
+        expect(content.visibleWhen?.(' a')).toBe(true);
+        const page = await content.resolve('needle', new AbortController().signal);
+        expect(page.options).toHaveLength(0);
+        expect(page.resultHint).toBe('universalSearch.content.refineSearch');
+        const unavailable = dynamicSections(buildUniversalSearchSections(input({
+            source: 'fileContent', fileContent: { status: 'unavailable', resolverKey: 'offline', hint: 'unavailable' },
+        })))[0]!;
+        expect(unavailable.visibleWhen?.('n')).toBe(true);
+    });
+
+    it('keeps multiple content hits grouped by file and preserves literal query whitespace', async () => {
+        const resolve = vi.fn(async (_query: string) => ({
+            results: [4, 9].map((line) => ({
+                id: `src/a.ts:${line}:2`,
+                sourceId: 'fileContent', scopeKey: 'exact-workspace', kind: 'workspaceFile',
+                title: `src/a.ts:${line}`, subtitle: ' literal ',
+                fileContent: { path: 'src/a.ts', line, column16: 2, length16: 9, text: '  literal ', before: ['before'], after: ['after'] },
+                target: {
+                    kind: 'workspaceFile' as const,
+                    scope: { serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo' },
+                    path: 'src/a.ts', workspaceRefId: 'workspace-a', sessionId: null,
+                    serverId: 'home-a', accountId: 'account-a',
+                    anchor: { kind: 'fileLine' as const, startLine: line },
+                },
+            })),
+        }));
+        const commit = vi.fn();
+        const sections = buildUniversalSearchSections(input({
+            query: ' literal ',
+            fileContent: { status: 'ready', resolverKey: 'scope-a', resolve },
+            onCommitResult: commit,
+        }));
+        const content = dynamicSections(sections).find((section) => section.id === 'fileContent')!;
+        expect(content).toBeDefined();
+        const page = await content.resolve(' literal ', new AbortController().signal);
+        // Each hit names its file and line (Find lab G1: `path:line`); the head ellipsizes so the file name stays.
+        expect(page.options.map((option) => option.label)).toEqual(['src/a.ts:4', 'src/a.ts:9']);
+        expect(page.options.map((option) => option.labelEllipsizeMode)).toEqual(['head', 'head']);
+        expect(page.options[1]?.accessibilityLabel).toContain('src/a.ts:9');
+        expect(resolve.mock.calls[0]?.[0]).toBe(' literal ');
+        expect(page.options.map((option) => option.id)).toEqual([
+            'fileContent::exact-workspace::src/a.ts:4:2', 'fileContent::exact-workspace::src/a.ts:9:2',
+        ]);
+        expect(page.options[0]?.subtitleContent).toBeDefined();
+        page.options[1]?.onSelect?.();
+        expect(commit).toHaveBeenCalledWith(expect.objectContaining({
+            target: expect.objectContaining({ anchor: { kind: 'fileLine', startLine: 9 } }),
+        }));
+    });
+    it('names the line a `path:line` file hit opens at', async () => {
+        const target = {
+            kind: 'workspaceFile' as const,
+            scope: { serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo' },
+            path: 'src/settings/SettingsModal.tsx', workspaceRefId: null, sessionId: null,
+            serverId: 'home-a', accountId: 'account-a',
+        };
+        const results: UniversalSearchResult[] = [
+            { id: 'a', sourceId: 'files', scopeKey: 'ws', kind: 'workspaceFile', title: 'SettingsModal.tsx', subtitle: 'src/settings', target: { ...target, anchor: { kind: 'fileLine', startLine: 23 } } },
+            { id: 'b', sourceId: 'files', scopeKey: 'ws', kind: 'workspaceFile', title: 'Other.tsx', subtitle: 'src/settings', target: { ...target, path: 'src/settings/Other.tsx' } },
+        ];
+        const sections = buildUniversalSearchSections(input({
+            query: 'SettingsModal.tsx:23',
+            files: { status: 'ready', resolverKey: 'ws', resolve: async () => results },
+        }));
+        const files = dynamicSections(sections).find((section) => section.id === 'files')!;
+        const page = await files.resolve('SettingsModal.tsx:23', new AbortController().signal);
+        expect(page.options.map((option) => option.label)).toEqual(['SettingsModal.tsx:23', 'Other.tsx']);
+    });
+    it('offers external conversation search only as an explicit activation for the machine in scope', () => {
+        const onSearch = vi.fn();
+        const base = {
+            externalConversationSearch: { machineLabel: 'Work machine', onSearch },
+        };
+        expect(buildUniversalSearchSections(input(base)).some((section) => section.id === 'externalConversations')).toBe(false);
+        const sections = buildUniversalSearchSections(input({ ...base, query: 'body-only phrase' }));
+        const section = sections.find((entry) => entry.id === 'externalConversations');
+        expect(section).toMatchObject({ kind: 'static', options: [expect.objectContaining({ id: 'external-conversations:search' })] });
+        expect(onSearch).not.toHaveBeenCalled();
+        if (!section || section.kind !== 'static') throw new Error('Missing explicit conversation search row');
+        section.options[0]!.onSelect?.();
+        expect(onSearch).toHaveBeenCalledWith('body-only phrase');
+    });
+
     it('projects complete-inventory progress and failure through the real Sessions section', () => {
         const loading = buildUniversalSearchSections(input({
             query: 'missing session',

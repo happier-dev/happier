@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import {
@@ -10,8 +11,19 @@ import {
 import { createSessionBoardSourceAvailabilityResolver } from '@/components/sessions/board/sessionBoardItemPresentation';
 import { createSessionFixture } from '@/dev/testkit';
 import { createSessionSurfaceNoteDocumentV1 } from '@happier-dev/protocol/sessions/board';
+import type { SessionWidgetHostProps } from '@/components/sessions/board/SessionWidgetHost';
+import { sessionCompanionGlanceLabel } from './glances/SessionCompanionGlance';
 
 vi.mock('@/text', () => createTextModuleMock());
+
+it('names an inline Companion copy from its published definition, preserving its local rename', () => {
+    const instance = { v: 1, id: 'shared-copy', bindings: {}, definition: { kind: 'inline', definition: {
+        v: 1, id: 'shared-definition', name: 'Shared checks', body: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } },
+        inputs: { fields: [] }, inputSchema: { type: 'object' }, provenance: { source: { kind: 'authored' } },
+    } } } as const;
+    expect(sessionCompanionGlanceLabel({ kind: 'instance', ref: { kind: 'instance', instance } })).toBe('Shared checks');
+    expect(sessionCompanionGlanceLabel({ kind: 'instance', ref: { kind: 'instance', instance: { ...instance, displayName: 'My checks' } } })).toBe('My checks');
+});
 
 const summaryModel = {
     scope: 'exact' as const,
@@ -35,12 +47,18 @@ vi.mock('./summary/useSessionSummaryModel', () => ({
 }));
 
 const widgetHostProps = vi.fn();
-vi.mock('@/components/sessions/board/SessionWidgetHost', () => ({
-    SessionWidgetHost: (props: Record<string, unknown>) => {
-        widgetHostProps(props);
-        return null;
-    },
-}));
+vi.mock('@/components/sessions/board/SessionWidgetHost', async () => {
+    const actual = await vi.importActual<typeof import('@/components/sessions/board/SessionWidgetHost')>(
+        '@/components/sessions/board/SessionWidgetHost',
+    );
+    return {
+        ...actual,
+        SessionWidgetHost: (props: SessionWidgetHostProps) => {
+            widgetHostProps(props);
+            return <actual.SessionWidgetHost {...props} />;
+        },
+    };
+});
 
 import {
     projectSessionBoard,
@@ -52,6 +70,7 @@ import { SessionCompanionContent } from './SessionCompanionContent';
 import {
     HIDDEN_SESSION_COMPANION_PREFERENCE_V1,
     SESSION_SUMMARY_COMPANION_ITEM,
+    moveSessionCompanionItem,
     type SessionCompanionItemRefV1,
     type SessionCompanionPreferenceV1,
 } from './state/sessionCompanionPreference';
@@ -71,7 +90,7 @@ const installedItem = (itemId: string): SessionBoardItemProjection => ({
             title: 'External conversations',
             frame: 'card',
             height: { mode: 'auto', fallback: 'regular' },
-            source: { kind: 'installedSurface', surface: { pluginId: 'channels', localId: 'conversations' } },
+            source: { kind: 'widget', instance: { v: 1, id: itemId, definition: { kind: 'installed', surface: { pluginId: 'channels', localId: 'conversations' } }, bindings: {} } },
         },
     },
 });
@@ -136,6 +155,8 @@ function controller(items: readonly SessionCompanionItemRefV1[]): SessionCompani
         removeItem,
         moveItem,
         setItemFrameStyle: () => null,
+        setInstanceInputs: () => null,
+        renameInstance: () => null,
         openFullSurface: () => {},
         applyLocalInverse,
         realmKey: 'account-a:home-1:session-1',
@@ -155,7 +176,7 @@ describe('SessionCompanionContent (mounted)', () => {
     it('mounts a widget through the shared host with the exact Session and shell-derived primary mount', async () => {
         const pluginRuntime = { serverId: 'server-a' } as never;
         const callerHostedHtmlRuntime = { serverIdentityId: 'server-identity-a' } as never;
-        await renderScreen(
+        const renderer = await renderScreen(
             <SessionCompanionContent
                 session={session}
                 serverId="server-a"
@@ -174,7 +195,7 @@ describe('SessionCompanionContent (mounted)', () => {
             />,
         );
 
-        expect(widgetHostProps).toHaveBeenCalledTimes(1);
+        expect(renderer.findByTestId('session-companion-content-item-widget:w1')).not.toBeNull();
         expect(widgetHostProps.mock.calls[0]?.[0]).toMatchObject({
             sessionId: 'session-1',
             host: 'companion',
@@ -219,7 +240,7 @@ describe('SessionCompanionContent (mounted)', () => {
             />,
         );
 
-        expect(widgetHostProps).toHaveBeenCalledTimes(1);
+        expect(renderer.findByTestId('measurement-content-item-widget:w1')).not.toBeNull();
         expect(widgetHostProps.mock.calls[0]?.[0]).toMatchObject({
             sessionId: 'session-1',
             host: 'companion',
@@ -307,7 +328,7 @@ describe('SessionCompanionContent (mounted)', () => {
         const [actionOwner] = renderer.findAll((node) => Array.isArray(node.props?.actions)
             && node.props?.overflowTriggerTestID === 'session-companion-content-item-widget:w1-actions');
         const actions = actionOwner?.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>;
-        expect(actions.map((action) => action.id)).toEqual(['open-board', 'manage-plugin', 'remove']);
+        expect(actions.map((action) => action.id)).toEqual(['open-board', 'manage-plugin', 'frameStyle', 'remove']);
         actions.find((action) => action.id === 'manage-plugin')?.onPress?.();
         expect(managePlugin).toHaveBeenCalledWith('w1');
         expect(removeItem).not.toHaveBeenCalled();
@@ -514,6 +535,51 @@ describe('SessionCompanionContent (mounted)', () => {
         retirePresentationNotice();
         actions.find((action) => action.id === 'move-down')?.onPress?.();
         expect(readPresentationNotice()).toBeNull();
+    });
+
+    it('refuses a configured-instance menu move when the qualified widget Action owner is unavailable', async () => {
+        const instance = { kind: 'instance' as const, instance: { v: 1 as const, id: 'personal-summary', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} } };
+        const pane = { kind: 'widget' as const, widgetId: 'w1' };
+        let preference: SessionCompanionPreferenceV1 = { ...HIDDEN_SESSION_COMPANION_PREFERENCE_V1, visible: true, items: [SESSION_SUMMARY_COMPANION_ITEM, instance, pane] };
+        const companion: SessionCompanionController = {
+            ...controller(preference.items),
+            moveItem: (item, index) => {
+                const previous = preference;
+                preference = moveSessionCompanionItem(previous, item, index);
+                return preference === previous ? null : { previous, applied: preference };
+            },
+        };
+        const renderer = await renderScreen(<SessionCompanionContent session={session} serverId="server-a" controller={companion}
+            boardBinding={binding({ itemsById: new Map([['w1', readyItem('w1')]]) })} resolvePrimaryHost={() => null} />);
+        const [owner] = renderer.findAll(node => Array.isArray(node.props?.actions)
+            && node.props?.overflowTriggerTestID === 'session-companion-content-item-instance:personal-summary-actions');
+        const actions = owner?.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>;
+        actions.find(action => action.id === 'move-up')?.onPress?.();
+        expect(preference.items).toEqual([SESSION_SUMMARY_COMPANION_ITEM, instance, pane]);
+        expect(readPresentationNotice()).toMatchObject({ key: 'widgets.instance.move', severity: 'error' });
+    });
+
+    it('renames a personal widget copy in place through the Companion owner; an empty name goes back to the widget’s own', async () => {
+        const instance = { kind: 'instance' as const, instance: { v: 1 as const, id: 'personal-summary', definition: { kind: 'builtin' as const, id: 'session_summary' },
+            bindings: { session: { kind: 'context' as const, slot: 'session' } } } };
+        const renameInstance = vi.fn((_instanceId: string, _displayName: string | null) => null);
+        const companion: SessionCompanionController = { ...controller([instance]), renameInstance };
+        const renderer = await renderScreen(<SessionCompanionContent session={session} serverId="server-a" controller={companion}
+            boardBinding={binding()} resolvePrimaryHost={() => null} />);
+        const menu = () => renderer.findAll(node => Array.isArray(node.props?.actions)
+            && node.props?.overflowTriggerTestID === 'session-companion-content-item-instance:personal-summary-actions')[0]!;
+        const rename = async (text: string) => {
+            await act(async () => { (menu().props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>).find(action => action.id === 'rename')?.onPress?.(); });
+            const field = renderer.findByTestId('session-companion-content-item-instance:personal-summary-title-input')!;
+            await act(async () => { field.props.onChangeText(text); });
+            await act(async () => { renderer.findByTestId('session-companion-content-item-instance:personal-summary-title-input')!.props.onSubmitEditing(); });
+        };
+        await rename('Release soak');
+        expect(renameInstance).toHaveBeenLastCalledWith('personal-summary', 'Release soak');
+        expect(renderer.findByTestId('session-companion-content-item-instance:personal-summary-title-input')).toBeNull();
+        await rename('  ');
+        // Nothing to clear yet: the copy still has the widget's own name.
+        expect(renameInstance).toHaveBeenCalledTimes(1);
     });
 
     it('gives every mounted item a reachable local action menu', async () => {

@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import type { PluginUiDetailsPanePresentation } from '@happier-dev/plugin-ui/advanced';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import {
@@ -38,6 +39,19 @@ export type PaneHeaderContent = Readonly<{
 }>;
 
 export type PaneHeaderProps = PaneHeaderContent & Readonly<{
+    /** Semantic focus binding supplied by the pane content owner. */
+    headingRef?: PluginUiDetailsPanePresentation['headingRef'];
+    /** Identity mark beside the title; it has no backing tile. */
+    leading?: React.ReactNode;
+    /** A title that is itself a control, such as a named-object switcher. */
+    titleControl?: React.ReactNode;
+    /** null allows a long title to wrap; the default pane band stays on one line. */
+    titleNumberOfLines?: number | null;
+    titleTextStyle?: StyleProp<TextStyle>;
+    /** View controls aligned with the facts rather than with the title actions. */
+    lineTrailing?: React.ReactNode;
+    /** An inline affordance belonging to the final fact (copying its identifier). */
+    lineEnd?: React.ReactNode;
     /** Shows the close button. */
     onClose?: () => void;
     /**
@@ -61,18 +75,25 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     return (
         <View testID={testID} style={large ? styles.large : [styles.band, { height }]}>
             <View style={styles.titleBlock}>
+                <View style={styles.titleRow}>
+                {props.leading ? <View style={styles.identityMark}>{props.leading}</View> : null}
+                {props.titleControl ?? (
                 <Text
+                    ref={props.headingRef}
+                    tabIndex={props.headingRef ? -1 : undefined}
                     testID={`${testID}.title`}
-                    numberOfLines={1}
+                    numberOfLines={props.titleNumberOfLines === null ? undefined : props.titleNumberOfLines ?? 1}
                     accessibilityRole="header"
-                    style={large ? styles.largeTitle : styles.title}
+                    style={[large ? styles.largeTitle : styles.title, styles.titleText, props.titleTextStyle]}
                 >
                     {props.title}
                 </Text>
-                {line && (line.segments.length > 0 || line.leading) ? (
+                )}
+                </View>
+                {(line && (line.segments.length > 0 || line.leading)) || props.lineTrailing ? (
                     <View style={[styles.line, large ? styles.largeLine : null]}>
-                        {line.leading ? <View style={[styles.lineLeading, line.segments.length === 0 ? styles.leadingOnly : null]}>{line.leading}</View> : null}
-                        {line.segments.length > 0 ? <Text testID={`${testID}.subtitle`} numberOfLines={1} style={[styles.subtitle, large ? styles.largeSubtitle : null]}>
+                        {line?.leading ? <View style={[styles.lineLeading, line.segments.length === 0 ? styles.leadingOnly : null]}>{line.leading}</View> : null}
+                        {line && line.segments.length > 0 ? <Text testID={`${testID}.subtitle`} numberOfLines={1} style={[styles.subtitle, large ? styles.largeSubtitle : null]}>
                             {line.segments.map((segment, index) => (
                                 <React.Fragment key={index}>
                                     {index > 0 ? (isToneSegment(segment) && isToneSegment(line.segments[index - 1]!) ? ' ' : ' · ') : null}
@@ -86,6 +107,8 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                                 </React.Fragment>
                             ))}
                         </Text> : null}
+                        {props.lineEnd}
+                        {props.lineTrailing ? <View style={styles.lineTrailing}>{props.lineTrailing}</View> : null}
                     </View>
                 ) : null}
             </View>
@@ -129,6 +152,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
         justifyContent: 'center',
     },
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
+    titleText: { flexShrink: 1, minWidth: 0 },
+    identityMark: { flexShrink: 0, alignSelf: 'flex-start', marginTop: 2 },
+    lineTrailing: { flexShrink: 0, marginLeft: 'auto' },
     largeTitle: {
         ...pageTitleTypography(),
         color: theme.colors.text.primary,

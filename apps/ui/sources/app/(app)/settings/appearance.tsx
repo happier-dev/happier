@@ -5,6 +5,7 @@ import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { ThemeModePreview } from '@/components/settings/appearance/ThemeModePreview';
+import { GlassAppearanceSection } from '@/components/settings/appearance/GlassAppearanceControls';
 import { AvatarStylePreview } from '@/components/settings/appearance/AvatarStylePreview';
 import { APPEARANCE_SETTINGS } from '@/components/settings/appearance/appearanceSettings';
 import { HomeLayoutEditor } from '@/components/hub/layout/HomeLayoutEditor';
@@ -17,6 +18,7 @@ import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useSettingMutable, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useOpenPersonalize } from '@/components/onboarding/personalize/useOpenPersonalize';
 import * as Localization from 'expo-localization';
 import { Switch } from '@/components/ui/forms/Switch';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -77,6 +79,7 @@ const isKnownAvatarStyle = (style: string): style is KnownAvatarStyle => {
 
 export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen() {
     const router = useRouter();
+    const openPersonalize = useOpenPersonalize();
     const { theme } = useUnistyles();
     // On a phone the theme counts would be squeezed beside the summary, so they join it instead.
     const narrowWindow = useWindowDimensions().width < PAGE_LIST_METRICS.rowStackBelowWidthPx;
@@ -95,7 +98,6 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     const [loadingIndicatorSpeed, setLoadingIndicatorSpeed] = useLocalSettingMutable('loadingIndicatorSpeed');
     const [loadingIndicatorPause, setLoadingIndicatorPause] = useLocalSettingMutable('loadingIndicatorPause');
     const [uiMultiPanePanelsEnabled, setUiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
-    const [uiBackdropBlurEnabled, setUiBackdropBlurEnabled] = useLocalSettingMutable('uiBackdropBlurEnabled');
     const [hideConnectedAccountIdentities, setHideConnectedAccountIdentities] = useLocalSettingMutable('hideConnectedAccountIdentities');
     const [detailsPaneTabsBehavior, setDetailsPaneTabsBehavior] = useLocalSettingMutable('detailsPaneTabsBehavior');
     const [settingsNavSidebarEnabled, setSettingsNavSidebarEnabled] = useLocalSettingMutable('settingsNavSidebarEnabled');
@@ -107,8 +109,6 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     const [tabBarOpenTabsBadgeEnabled, setTabBarOpenTabsBadgeEnabled] = useSettingMutable('tabBarOpenTabsBadgeEnabled');
     const [tabBarShowLabels, setTabBarShowLabels] = useSettingMutable('tabBarShowLabels');
     const [tabBarSize, setTabBarSize] = useSettingMutable('tabBarSize');
-    const [glassBlurEnabled, setGlassBlurEnabled] = useSettingMutable('glassBlurEnabled');
-    const [glassBlurIntensity, setGlassBlurIntensity] = useSettingMutable('glassBlurIntensity');
     const [visualEffectsLevel, setVisualEffectsLevel] = useSettingMutable('visualEffectsLevel');
     const [contextGaugeStyle, setContextGaugeStyle] = useSettingMutable('contextGaugeStyle');
     const [animatedNumbers, setAnimatedNumbers] = useSettingMutable('animatedNumbers');
@@ -175,14 +175,6 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
             { id: 'gauge', title: t('settingsAppearance.visualEffects.contextGaugeOptions.gauge') },
             { id: 'text', title: t('settingsAppearance.visualEffects.contextGaugeOptions.text') },
             { id: 'hidden', title: t('settingsAppearance.visualEffects.contextGaugeOptions.hidden') },
-        ];
-    }, []);
-
-    const glassBlurIntensityMenuItems = React.useMemo((): readonly DropdownMenuItem[] => {
-        return [
-            { id: 'light', title: t('settingsAppearance.glass.intensityLight') },
-            { id: 'regular', title: t('settingsAppearance.glass.intensityRegular') },
-            { id: 'strong', title: t('settingsAppearance.glass.intensityStrong') },
         ];
     }, []);
 
@@ -297,7 +289,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
         if (!confirmed) return;
         const defaults = resolveAppearanceDefaults();
         // Custom themes are the user's own content; only which theme each mode uses goes back.
-        applyThemeSelection(defaults.themePreference, clearActiveThemeProfiles(safeThemeProfiles));
+        await applyThemeSelection(defaults.themePreference, clearActiveThemeProfiles(safeThemeProfiles));
         applyLocalSettings(defaults.local);
         applySettings(defaults.account);
     }, [applyLocalSettings, applySettings, applyThemeSelection, safeThemeProfiles]);
@@ -351,8 +343,31 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                 }
             />
 
+            {/* Personalize Happier: the guided walk through the same choices, replayable here (lab R3). */}
+            <ItemGroup>
+                <SettingRow
+                    setting={APPEARANCE_SETTINGS.settings.personalize}
+                    testID="settings-appearance-personalize"
+                    icon={<Icon name="palette" />}
+                    subtitle={t('personalize.replaySubtitle')}
+                    showChevron={false}
+                    onPress={() => openPersonalize('look')}
+                    rightElementOutsidePressable
+                    rightElement={(
+                        <RoundButton
+                            testID="settings-appearance-personalize.start"
+                            size="small"
+                            display="secondary"
+                            title={t('personalize.replayAction')}
+                            onPress={() => openPersonalize('look')}
+                        />
+                    )}
+                />
+            </ItemGroup>
+
             {/* Theme: the mode is a visual choice; each mode's theme stays one tap away. */}
             <ItemGroup title={t('settingsAppearance.theme')}>
+                <SettingAnchor setting={APPEARANCE_SETTINGS.settings.themeMode}>
                 <SectionContentRow testID="settings-appearance-themeMode">
                     <SelectionTiles
                         variant="visual"
@@ -362,9 +377,9 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                         value={themeModeValue}
                         onChange={(next) => {
                             if (next === 'adaptive') {
-                                applyThemeSelection('adaptive', safeThemeProfiles);
+                                return applyThemeSelection('adaptive', safeThemeProfiles);
                             } else if (next === 'light' || next === 'dark') {
-                                applyThemeSelection(next, safeThemeProfiles);
+                                return applyThemeSelection(next, safeThemeProfiles);
                             }
                         }}
                         options={[
@@ -374,6 +389,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                         ]}
                     />
                 </SectionContentRow>
+                </SettingAnchor>
                 <SettingRow
                     setting={APPEARANCE_SETTINGS.settings.themes}
                     testID="settings-appearance-themeProfiles"
@@ -401,6 +417,8 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                     />
                 ) : null}
             </ItemGroup>
+
+            <GlassAppearanceSection />
 
             {/* Text & density */}
             <ItemGroup title={t('settingsAppearance.text')}>
@@ -537,43 +555,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                     }
                     showChevron={false}
                 />
-                <SettingRow
-                    setting={APPEARANCE_SETTINGS.settings.backdropBlur}
-                    subtitleLines={0}
-                    rightElement={<Switch value={uiBackdropBlurEnabled !== false} onValueChange={setUiBackdropBlurEnabled} />}
-                    showChevron={false}
-                />
             </ItemGroup>
-
-            {/* Glass surfaces */}
-            {/* Intensity waits on the glass switch in this section. */}
-            <SettingSection section={APPEARANCE_SETTINGS.sectionRefs.glass}>
-            <ItemGroup title={t('settingsAppearance.glass.title')} description={t('settingsAppearance.glass.footer')}>
-                <SettingRow
-                    setting={APPEARANCE_SETTINGS.settings.glassBlur}
-                    rightElement={
-                        <Switch
-                            testID="settings-appearance-glassBlur-switch"
-                            value={glassBlurEnabled}
-                            onValueChange={setGlassBlurEnabled}
-                        />
-                    }
-                    showChevron={false}
-                />
-                {glassBlurEnabled ? (
-                    <SettingAnchor setting={APPEARANCE_SETTINGS.settings.glassIntensity}>
-                        <SegmentedChoiceItem
-                            title={t(APPEARANCE_SETTINGS.settings.glassIntensity.titleKey)}
-                            testID="settings-appearance-glassBlurIntensity-select"
-                            testIDPrefix="settings-appearance-glassBlurIntensity"
-                            options={toChoices<'light' | 'regular' | 'strong'>(glassBlurIntensityMenuItems)}
-                            value={glassBlurIntensity}
-                            onChange={setGlassBlurIntensity}
-                        />
-                    </SettingAnchor>
-                ) : null}
-            </ItemGroup>
-            </SettingSection>
 
             {/* How sessions look */}
             <ItemGroup title={t('tabs.sessions')}>

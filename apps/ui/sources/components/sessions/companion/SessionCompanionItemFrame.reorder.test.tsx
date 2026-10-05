@@ -1,11 +1,15 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CurrentSessionPresentationActionInputV1Schema } from '@happier-dev/protocol/sessions';
 
 import { findGestureByKind } from '@/dev/testkit/mocks/gestureHandler';
-import { renderScreen } from '@/dev/testkit';
-
-import { SessionCompanionItemFrame, type SessionCompanionItemMove } from './SessionCompanionItemFrame';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop';
+import { resolveSessionCompanionEntityDrop } from '@/components/sessions/board/sessionSurfaceEntityDrop';
+import type { SessionSurfaceEntityBinding } from '@/components/sessions/board/SessionSurfaceEntityDrag';
+import { moveSessionCompanionItem, normalizeSessionCompanionPreference, sessionCompanionItemKey } from './state/sessionCompanionPreference';
+import { SessionCompanionItemFrame } from './SessionCompanionItemFrame';
 
 vi.mock('react-native', async () => (
     await import('@/dev/testkit/mocks/reactNative')
@@ -16,126 +20,104 @@ vi.mock('react-native-gesture-handler', async () => {
     return createGestureHandlerMock();
 });
 
-vi.mock('react-native-worklets', () => ({
-    scheduleOnRN: (callback: (...args: unknown[]) => unknown, ...args: unknown[]) => callback(...args),
-}));
-
-const ORDERED_KEYS = ['summary', 'widget:a', 'widget:b'] as const;
-
-const RECTS = new Map([
-    ['summary', { x: 0, y: 0, width: 300, height: 100 }],
-    ['widget:a', { x: 0, y: 110, width: 300, height: 100 }],
-    ['widget:b', { x: 0, y: 220, width: 300, height: 100 }],
-]);
-
-/**
- * `findGestureByKind` walks a gesture chain, not a render tree: the pointer drag
- * is reached the same way every other reorder suite reaches it — through the
- * `GestureDetector` the handle mounts. Passing the tree root instead silently
- * returns `null`, which the optional-chained handler calls below would then make
- * unobservable.
- */
-function findPanGesture(screen: Awaited<ReturnType<typeof renderScreen>>) {
-    const detector = screen.tree.root.findAll(
-        (node) => String(node.type) === 'GestureDetector',
-        { deep: true },
-    )[0];
-    return findGestureByKind(
-        (detector?.props as { gesture?: Parameters<typeof findGestureByKind>[0] } | undefined)?.gesture,
-        'pan',
-    );
-}
+const SCOPE = { serverId: 'home-1', accountId: 'account-1' };
+const ADDRESS = { serverId: SCOPE.serverId, sessionId: 'session-1' };
+const SUMMARY = { kind: 'builtin' as const, id: 'session_summary' as const };
+const INITIAL_KEYS = ['builtin:session_summary', 'widget:a', 'widget:b'];
+const DESTINATION = { side: 'after' as const, itemKey: 'widget:b' };
 
 function keyEvent(key: string) {
     return { key, nativeEvent: { key }, preventDefault: vi.fn(), stopPropagation: vi.fn() };
 }
 
-async function renderFrame(overrides: Partial<SessionCompanionItemMove> = {}, itemKey = 'summary') {
-    const moveToIndex = vi.fn();
+async function renderFrame() {
+    const runtime = (await renderHook(() => useEntityDragDropRuntime())).getCurrent();
+    let preference = normalizeSessionCompanionPreference({
+        v: 1, visible: true, collapsed: false, edge: 'trailing', density: 'compact',
+        items: [SUMMARY, { kind: 'widget', widgetId: 'a' }, { kind: 'widget', widgetId: 'b' }],
+    });
+    const retire = runtime.registerTarget({
+        id: 'companion-reorder', scope: SCOPE, acceptedKinds: ['companion-item'],
+        getBounds: () => ({ x: 0, y: 220, width: 300, height: 100 }),
+        listDestinations: () => [{ destination: DESTINATION, label: 'After second widget' }],
+        resolve: ({ item }) => resolveSessionCompanionEntityDrop({
+            item, scope: SCOPE, address: ADDRESS, board: null, items: preference.items, ready: true,
+            anchor: DESTINATION, preview: { verb: 'Move after', target: 'Second widget' },
+        }),
+        execute: async effect => {
+            const input = CurrentSessionPresentationActionInputV1Schema.parse(effect.input);
+            if (input.intent.kind !== 'companion.item.move') throw new Error('Expected Companion order effect');
+            preference = moveSessionCompanionItem(preference, input.intent.item, input.intent.toIndex);
+            return { status: 'applied' };
+        },
+    });
+    const entityDrag: SessionSurfaceEntityBinding = {
+        scope: SCOPE, isCurrent: () => true, title: 'Session summary',
+        getItem: () => ({ kind: 'companion-item', scope: SCOPE, address: ADDRESS, item: SUMMARY }),
+        keyboardDestination: (_intent, _selected, destinations) => destinations[0] ?? null,
+    };
     const screen = await renderScreen(
-        <SessionCompanionItemFrame
-            testID="companion-item"
-            label="Session summary"
-            actions={[]}
-            move={{
-                itemKey,
-                orderedKeys: [...ORDERED_KEYS],
-                rects: RECTS,
-                moveToIndex,
-                ...overrides,
-            }}
-        >
+        <SessionCompanionItemFrame testID="companion-item" label="Session summary" actions={[]} entityDrag={entityDrag}>
             {(accessory) => accessory}
         </SessionCompanionItemFrame>,
     );
-    return { screen, moveToIndex };
+    const pan = findGestureByKind(screen.tree.root.findByType('GestureDetector' as never).props.gesture, 'pan');
+    return {
+        screen, pan, runtime,
+        keys: () => preference.items.map(sessionCompanionItemKey),
+        dispose: async () => { await act(async () => { retire(); runtime.cancel(); }); },
+    };
 }
 
-describe('SessionCompanionItemFrame reorder', () => {
-    it('commits one semantic index from a completed pointer drag over another card', async () => {
-        const { screen, moveToIndex } = await renderFrame();
-        const gesture = findPanGesture(screen);
-        expect(gesture).toBeTruthy();
+describe('SessionCompanionItemFrame shared-runtime reorder', () => {
+    beforeEach(() => { standardCleanup(); });
 
-        await act(async () => {
-            gesture?.__handlers.onStart?.({});
-            gesture?.__handlers.onUpdate?.({ translationX: 0, translationY: 240 });
-            // Dropped past the middle of the third card: after `widget:b`, which
-            // with the dragged item removed is target index 2.
-            gesture?.__handlers.onEnd?.({ translationX: 0, translationY: 240 }, true);
-        });
-
-        expect(moveToIndex).toHaveBeenCalledOnce();
-        expect(moveToIndex).toHaveBeenLastCalledWith(2);
+    it.each(['pointer', 'keyboard'] as const)('applies the same current Companion order from %s release', async input => {
+        const frame = await renderFrame();
+        try {
+            const handle = () => frame.screen.findHostByTestId('companion-item-move-handle');
+            expect(frame.pan).not.toBeNull();
+            await act(async () => {
+                if (input === 'pointer') {
+                    frame.pan?.__handlers.onStart?.({ absoluteX: 150, absoluteY: 50 });
+                    frame.pan?.__handlers.onUpdate?.({ absoluteX: 150, absoluteY: 290 });
+                } else {
+                    handle()?.props.onKeyDown?.(keyEvent(' '));
+                    handle()?.props.onKeyDown?.(keyEvent('ArrowDown'));
+                }
+            });
+            expect(frame.keys()).toEqual(INITIAL_KEYS);
+            expect(frame.runtime.getSnapshot().admission?.status).toBe('allowed');
+            await act(async () => {
+                if (input === 'pointer') {
+                    frame.pan?.__handlers.onEnd?.({ absoluteX: 150, absoluteY: 290 }, true);
+                    frame.pan?.__handlers.onFinalize?.();
+                } else handle()?.props.onKeyDown?.(keyEvent('Enter'));
+            });
+            expect(frame.keys()).toEqual(['widget:a', 'widget:b', 'builtin:session_summary']);
+        } finally { await frame.dispose(); }
     });
 
-    it('writes nothing when the system takes the pointer away instead of a drop', async () => {
-        const { screen, moveToIndex } = await renderFrame();
-        const gesture = findPanGesture(screen);
-
-        await act(async () => {
-            gesture?.__handlers.onStart?.({});
-            gesture?.__handlers.onEnd?.({ translationX: 0, translationY: 240 }, false);
-        });
-
-        expect(moveToIndex).not.toHaveBeenCalled();
+    it('preserves the Companion order when the system takes the pointer away', async () => {
+        const frame = await renderFrame();
+        try {
+            await act(async () => {
+                frame.pan?.__handlers.onStart?.({ absoluteX: 150, absoluteY: 50 });
+                frame.pan?.__handlers.onUpdate?.({ absoluteX: 150, absoluteY: 290 });
+            });
+            expect(frame.runtime.getSnapshot().admission?.status).toBe('allowed');
+            await act(async () => {
+                frame.pan?.__handlers.onEnd?.({ absoluteX: 150, absoluteY: 290 }, false);
+                frame.pan?.__handlers.onFinalize?.();
+            });
+            expect(frame.keys()).toEqual(INITIAL_KEYS);
+            expect(frame.runtime.getSnapshot().phase).toBe('idle');
+        } finally { await frame.dispose(); }
     });
 
-    it('cancels an in-flight pointer drag from the handle without writing', async () => {
-        const { screen, moveToIndex } = await renderFrame();
-        const gesture = findPanGesture(screen);
-
-        await act(async () => { gesture?.__handlers.onStart?.({}); });
-        await act(async () => {
-            screen.findHostByTestId('companion-item-move-handle')?.props.onKeyDown?.(keyEvent('Escape'));
-        });
-        await act(async () => { gesture?.__handlers.onEnd?.({ translationX: 0, translationY: 240 }, true); });
-
-        expect(moveToIndex).not.toHaveBeenCalled();
-    });
-
-    it('offers the same reorder through the handle keyboard path', async () => {
-        const { screen, moveToIndex } = await renderFrame({}, 'widget:b');
-        const handle = () => screen.findHostByTestId('companion-item-move-handle');
-
-        await act(async () => { handle()?.props.onKeyDown?.(keyEvent(' ')); });
-        await act(async () => { handle()?.props.onKeyDown?.(keyEvent('ArrowUp')); });
-        expect(moveToIndex).not.toHaveBeenCalled();
-        await act(async () => { handle()?.props.onKeyDown?.(keyEvent('Enter')); });
-
-        expect(moveToIndex).toHaveBeenCalledOnce();
-        expect(moveToIndex).toHaveBeenLastCalledWith(1);
-    });
-
-    it('publishes no reorder affordance for a single-item Companion', async () => {
-        const moveToIndex = vi.fn();
+    it('publishes no reorder affordance when its owner supplies no binding', async () => {
         const screen = await renderScreen(
-            <SessionCompanionItemFrame
-                testID="companion-item"
-                label="Session summary"
-                actions={[]}
-                move={{ itemKey: 'summary', orderedKeys: ['summary'], rects: RECTS, moveToIndex }}
-            >
+            <SessionCompanionItemFrame testID="companion-item" label="Session summary" actions={[]}>
                 {(accessory) => accessory}
             </SessionCompanionItemFrame>,
         );

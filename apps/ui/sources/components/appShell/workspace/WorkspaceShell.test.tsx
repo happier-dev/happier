@@ -9,8 +9,20 @@ import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from
 import { createWorkspaceState, reduceWorkspaceState, type WorkspaceState } from './workspaceState';
 import { WorkspaceShell } from './WorkspaceShell';
 import type { SplitCanvasHostControls } from '../splitCanvas/components/SplitCanvasHost';
+import { registerWorkspaceRouteContext } from './workspaceRouteContext';
 
 installPanelCommonModuleMocks();
+// Expo's module-loader boundary supplies the empty new-tab body used by this shell journey.
+registerWorkspaceRouteContext((key) => {
+    if (key !== './(app)/index.tsx') throw new Error(`Unexpected shell route: ${key}`);
+    return { WorkspaceRouteBody: () => null };
+});
+// Recipient-envelope HTTP/process APIs are outside this deterministic workspace owner harness.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unavailable = () => { throw new Error('Unexpected recipient-envelope API in workspace owner test'); };
+    return { createSessionDataKeyEnvelopeClient: unavailable, readSessionDataKeyEnvelopeCollectionPage: unavailable,
+        prepareSessionDataKeyEnvelopesForScope: unavailable, prepareSessionDataKeyEnvelopesDetached: unavailable };
+});
 // The popover's portal/measurement boundary renders the open tab menu inline; the menu itself is real.
 vi.mock('@/components/ui/popover', async (importOriginal) => {
     const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
@@ -29,6 +41,7 @@ function Harness(props: Readonly<{ initial: WorkspaceState }>) {
         newTab: { id: 'empty', target: { kind: 'newTab', params: {} }, pinned: false, preview: false } });
     const value: WorkspaceNavigationContextValue = {
         active: true, state, dispatch, closeTab, canvasControlsRef,
+        closeTabs: (groupId, tabIds) => { for (const tabId of tabIds) if (!state.tabs[tabId]?.pinned) closeTab(groupId, tabId); },
         activateTab: (groupId, tabId) => dispatch({ type: 'activateTab', groupId, tabId }),
         canGoBack: false, canGoForward: false, openHref: () => false,
         navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),

@@ -50,7 +50,7 @@ export function GitKeptAsideNotice(props: GitKeptAsideNoticeProps): React.ReactE
         if (!stashRef || !hasCapturedObject) return;
         setRestoring(true);
         try {
-            const result = await runSessionScmMutation({
+            await runSessionScmMutation({
                 state: storage.getState(),
                 sessionId,
                 ...(serverId === undefined ? {} : { serverId }),
@@ -58,10 +58,8 @@ export function GitKeptAsideNotice(props: GitKeptAsideNoticeProps): React.ReactE
                 cwd: snapshot?.repo.rootPath ?? null,
                 fallbackError: t('sessionGitBranches.notice.restoreFailed'),
                 run: () => sessionScmStashPop(sessionId, { stashRef }, serverId),
+                refreshAfterMutation: () => scmStatusSync.invalidateFromMutationAndAwait(sessionId, serverId),
             });
-            if (result.started && result.response !== 'cancelled' && result.response.success) {
-                await scmStatusSync.invalidateFromMutationAndAwait(sessionId, serverId);
-            }
         } finally {
             setRestoring(false);
         }

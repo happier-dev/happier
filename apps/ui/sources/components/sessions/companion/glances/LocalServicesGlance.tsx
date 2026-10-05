@@ -16,7 +16,6 @@ import { Text } from '@/components/ui/text/Text';
 import { WidgetFrame, type WidgetFrameBody, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { Typography } from '@/constants/Typography';
 import { selectLocalServiceInventoryRows } from '@/sync/domains/local/services/inventory/store';
-import { useLocalServiceInventory } from '@/sync/domains/local/services/inventory/useLocalServiceInventory';
 import { selectLocalServiceLaunchTargets, type LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import { buildLocalServiceRows, selectLocalServiceRunningCount } from '@/sync/domains/local/services/serviceRow';
 import { t } from '@/text';
@@ -42,7 +41,8 @@ const stylesheet = StyleSheet.create((theme) => ({
 export type LocalServicesGlanceState =
     | Readonly<{ kind: 'loading' }>
     | Readonly<{ kind: 'noMachine' }>
-    | Readonly<{ kind: 'ready'; rows: readonly LocalServicesGlanceRow[]; runningCount: number }>;
+    | Readonly<{ kind: 'error' }>
+    | Readonly<{ kind: 'ready'; rows: readonly LocalServicesGlanceRow[]; runningCount: number; refreshFailed?: boolean }>;
 
 /**
  * The Local services glance (lab WC, C1, round 2): what runs where, Open on a running service, and a
@@ -53,10 +53,12 @@ export const LocalServicesGlanceView = React.memo(function LocalServicesGlanceVi
     state: LocalServicesGlanceState;
     machineName: string | null;
     frameStyle: WidgetFrameStyle;
+    presentation?: 'frame' | 'body';
     menu?: React.ReactNode;
-    /** Last-known while the machine is away ("as of 10:42"); replaces the running count. */
+    /** Last-known while away or after a failed refresh; replaces the running count. */
     asOf?: number | null;
     onOpen?: (target: LocalServiceLaunchTarget) => void;
+    onRetry?: () => void;
     testID: string;
 }>) {
     const { theme } = useUnistyles();
@@ -67,6 +69,11 @@ export const LocalServicesGlanceView = React.memo(function LocalServicesGlanceVi
         body = { kind: 'loading', accessibilityLabel: t('widgetGlances.servicesLoading') };
     } else if (state.kind === 'noMachine') {
         body = { kind: 'content', children: <Text style={styles.quiet}>{t('widgetGlances.noMachine')}</Text> };
+    } else if (state.kind === 'error') {
+        body = {
+            kind: 'error', title: t('localServices.inventory.errorTitle'), reason: t('widgetGlances.servicesReadFailed'),
+            ...(props.onRetry ? { action: { label: t('common.retry'), onPress: props.onRetry } } : {}),
+        };
     } else if (state.rows.length === 0) {
         body = { kind: 'content', children: <Text style={styles.quiet}>{t('widgetGlances.nothingRunning')}</Text> };
     } else {
@@ -112,6 +119,7 @@ export const LocalServicesGlanceView = React.memo(function LocalServicesGlanceVi
             : null;
     return (
         <WidgetFrame
+            presentation={props.presentation}
             testID={props.testID}
             frameStyle={props.frameStyle}
             placement="companion"
@@ -121,6 +129,9 @@ export const LocalServicesGlanceView = React.memo(function LocalServicesGlanceVi
             meta={meta}
             menu={props.menu}
             body={body}
+            footer={state.kind === 'ready' && state.refreshFailed
+                ? { kind: 'refreshFailed', reason: t('widgetGlances.servicesReadFailed'), onRetry: props.onRetry }
+                : null}
         />
     );
 });
@@ -129,6 +140,8 @@ type LocalServicesGlanceProps = Readonly<{
     sessionId: string;
     serverId: string | null;
     frameStyle: WidgetFrameStyle;
+    presentation?: 'frame' | 'body';
+    onAfterDetailsOpen?: () => void;
     menu?: React.ReactNode;
     measurementOnly: boolean;
     testID: string;
@@ -143,6 +156,7 @@ export function LocalServicesGlance(props: LocalServicesGlanceProps) {
     if (props.measurementOnly) {
         return (
             <LocalServicesGlanceView
+                presentation={props.presentation}
                 testID={props.testID}
                 state={{ kind: 'loading' }}
                 machineName={null}
@@ -163,7 +177,6 @@ function LocalServicesLiveGlance(props: LocalServicesGlanceProps) {
         sessionId: props.sessionId,
         scope: 'workspace',
     });
-    const inventory = useLocalServiceInventory({ inventoryState: feeds.inventoryState });
     const scopeId = useDestinationPaneScopeId(createSessionPaneScopeId(props.sessionId, props.serverId));
     const openInBrowser = useServicesOpenInBrowser({
         scopeId,
@@ -171,20 +184,25 @@ function LocalServicesLiveGlance(props: LocalServicesGlanceProps) {
         machineId,
         serverId: props.serverId,
         sessionId: props.sessionId,
+        onAfterDetailsOpen: props.onAfterDetailsOpen,
     });
     const state = React.useMemo<LocalServicesGlanceState>(() => {
         if (!machineId) return { kind: 'noMachine' };
-        if (!feeds.launcherState && (inventory.status === 'loading' || feeds.inventoryState.generatedAt === null)) {
-            return { kind: 'loading' };
-        }
         const rows = buildLocalServiceRows({
             inventoryRows: selectLocalServiceInventoryRows(feeds.inventoryState),
             launchTargets: feeds.launcherState ? selectLocalServiceLaunchTargets(feeds.launcherState) : [],
             sessionId: props.sessionId,
             scope: 'workspace',
         });
-        return { kind: 'ready', rows: resolveLocalServicesGlanceRows(rows), runningCount: selectLocalServiceRunningCount(rows) };
-    }, [feeds.inventoryState, feeds.launcherState, inventory.status, machineId, props.sessionId]);
+        const refreshFailed = feeds.inventoryState.refreshState === 'error' || feeds.launcherState?.refreshStatus === 'error';
+        if (rows.length === 0) {
+            if (refreshFailed) return { kind: 'error' };
+            if (feeds.inventoryState.generatedAt === null || !feeds.launcherState || feeds.launcherState.updatedAt === null) {
+                return { kind: 'loading' };
+            }
+        }
+        return { kind: 'ready', rows: resolveLocalServicesGlanceRows(rows), runningCount: selectLocalServiceRunningCount(rows), refreshFailed };
+    }, [feeds.inventoryState, feeds.launcherState, machineId, props.sessionId]);
     const open = React.useCallback((target: LocalServiceLaunchTarget) => {
         void openInBrowser(target);
     }, [openInBrowser]);
@@ -192,13 +210,17 @@ function LocalServicesLiveGlance(props: LocalServicesGlanceProps) {
     return (
         <View testID={`${props.testID}.live`}>
             <LocalServicesGlanceView
+                presentation={props.presentation}
                 testID={props.testID}
                 state={state}
                 machineName={machine.name}
                 frameStyle={props.frameStyle}
                 menu={props.menu}
-                asOf={away ? feeds.inventoryState.generatedAt : null}
+                asOf={away || (state.kind === 'ready' && state.refreshFailed)
+                    ? feeds.launcherState?.updatedAt ?? feeds.inventoryState.generatedAt
+                    : null}
                 onOpen={open}
+                onRetry={feeds.refresh}
             />
         </View>
     );

@@ -1,12 +1,18 @@
 import * as React from 'react';
 
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
+import { FileIcon } from '@/components/ui/media/FileIcon';
+import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import type {
     SelectionListDynamicSection,
     SelectionListOption,
     SelectionListSectionDescriptor,
 } from '@/components/ui/selectionList';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
+import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { Typography } from '@/constants/Typography';
 
 import type { Command } from '@/components/appShell/commandPalette/types';
 import {
@@ -48,6 +54,7 @@ import {
 /** Bounded empty-query recents. Not a ranking service — just "what you had open". */
 const EMPTY_QUERY_RECENT_LIMIT = 5;
 const DEFAULT_ROW_LIMIT = 20;
+export const EXTERNAL_CONVERSATION_SEARCH_OPTION_ID = 'external-conversations:search';
 
 export type UniversalSearchSessionEntity = Readonly<{
     sessionId: string;
@@ -96,6 +103,7 @@ export type UniversalSearchDynamicSource = Readonly<{
             results: readonly UniversalSearchResult[];
             emptyHint?: string;
             resultHint?: string;
+            hasMore?: boolean;
         }>
     >;
 }>;
@@ -105,11 +113,13 @@ function isUniversalSearchResolvePage(
         results: readonly UniversalSearchResult[];
         emptyHint?: string;
         resultHint?: string;
+        hasMore?: boolean;
     }>,
 ): value is Readonly<{
     results: readonly UniversalSearchResult[];
     emptyHint?: string;
     resultHint?: string;
+    hasMore?: boolean;
 }> {
     return typeof value === 'object' && value !== null && 'results' in value;
 }
@@ -142,9 +152,13 @@ export type BuildUniversalSearchSectionsInput = Readonly<{
     searchSettingsPages: (query: string) => readonly UniversalSearchSettingsPageEntity[];
     transcript: UniversalSearchSource;
     files: UniversalSearchSource;
+    fileContent?: UniversalSearchSource;
+    source?: 'fileContent';
     commits: UniversalSearchSource;
     /** Already-built plugin provider sections; this module adds no plugin policy. */
     pluginSections: readonly SelectionListDynamicSection[];
+    /** Explicit activation only: typing in Search never scans Agent transcripts. */
+    externalConversationSearch?: Readonly<{ machineLabel: string; onSearch(query: string): void }>;
     /**
      * Records the selected identity. It deliberately does NOT navigate: the
      * option-level callback runs BEFORE the list-level `onSelect`, and plan
@@ -159,6 +173,37 @@ function icon(name: IconName): () => React.ReactElement {
     return () => <Icon name={name} size={ICON_SIZE.md} />;
 }
 
+/** Leading code kept before a match deep in a long line, so the match itself stays on screen. */
+const SNIPPET_LEAD_CHARS = 32;
+
+/**
+ * The matching line under a Text-in-files hit (Find lab `.fd-snip`): one quiet mono line, indentation
+ * dropped, the match marked with the Find tint every surface uses, and a long lead elided so the match
+ * shows. The row's label already names `path:line`.
+ */
+function FileContentSnippet({ match }: Readonly<{ match: NonNullable<UniversalSearchResult['fileContent']> }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const start = Math.max(0, match.column16 - 1);
+    const lead = match.text.slice(0, start).trimStart();
+    const shownLead = lead.length > SNIPPET_LEAD_CHARS + 8 ? `…${lead.slice(-SNIPPET_LEAD_CHARS)}` : lead;
+    const text = `${shownLead}${match.text.slice(start)}`;
+    const ranges = [{ start: shownLead.length, end: shownLead.length + match.length16, current: false }];
+    return (
+        <View style={{ marginTop: 2 }}>
+            <Text useDefaultTypography={false} numberOfLines={1} style={{ ...Typography.mono(), fontSize: 12, lineHeight: 17, color: theme.colors.text.secondary }}>
+                <FindHighlightedText text={text} ranges={ranges} />
+            </Text>
+        </View>
+    );
+}
+
+/** A file's own type mark (the Files tree's), not a generic glyph. */
+function fileIcon(path: string): () => React.ReactElement {
+    const name = path.slice(path.lastIndexOf('/') + 1);
+    // A filled type tile reads larger than a line glyph; the small size matches its optical weight.
+    return () => <FileIcon fileName={name} size={ICON_SIZE.sm} />;
+}
+
 function toOption(
     result: UniversalSearchResult,
     iconName: IconName,
@@ -167,14 +212,20 @@ function toOption(
     return {
         id: buildUniversalSearchOptionId(result.sourceId, result.scopeKey, result.id),
         testID: `universal-search:option:${result.sourceId}:${result.id}`,
-        label: result.title,
+        label: result.target.kind === 'workspaceFile' && !result.fileContent && result.target.anchor && 'startLine' in result.target.anchor
+            // A `path:line` hit says where it lands.
+            ? `${result.title}:${result.target.anchor.startLine}`
+            : result.title,
         ...(result.subtitle ? { subtitle: result.subtitle } : {}),
+        ...(result.fileContent ? { subtitleContent: () => <FileContentSnippet match={result.fileContent!} /> } : {}),
         ...(result.searchText ? { searchText: result.searchText } : {}),
         ...(result.exactSearchText ? { exactSearchText: result.exactSearchText } : {}),
         ...((result.kind === 'project' || result.kind === 'workspaceFile') && result.subtitle
             ? { subtitleEllipsizeMode: 'head' as const }
             : {}),
-        icon: icon(iconName),
+        icon: result.fileContent ? fileIcon(result.fileContent.path)
+            : result.kind === 'workspaceFile' && result.target.kind === 'workspaceFile' ? fileIcon(result.target.path)
+            : icon(iconName),
         onSelect: () => { onCommit(result); },
     };
 }
@@ -185,7 +236,9 @@ function buildDynamicSection(
         title: string;
         source: UniversalSearchSource;
         iconName: IconName;
-        rowLimit: number;
+        rowLimit?: number;
+        minQueryLength?: number;
+        preserveQuery?: boolean;
         onCommit: (result: UniversalSearchResult) => void;
     }>,
 ): SelectionListDynamicSection[] {
@@ -197,7 +250,7 @@ function buildDynamicSection(
             id: input.sourceId,
             title: input.title,
             resolverKey: `${input.sourceId}|${source.resolverKey}`,
-            visibleWhen: (value: string) => value.trim().length > 0,
+            visibleWhen: (value: string) => (input.preserveQuery ? value.length : value.trim().length) >= (input.minQueryLength ?? 1),
             debounceMs: 0,
             loadingSkeletonRows: 0,
             showSkeletonsOnFirstLoad: true,
@@ -213,21 +266,34 @@ function buildDynamicSection(
         id: input.sourceId,
         title: input.title,
         resolverKey: `${input.sourceId}|${source.resolverKey}`,
-        visibleWhen: (value: string) => value.trim().length > 0,
+        visibleWhen: (value: string) => (input.preserveQuery ? value.length : value.trim().length) >= (input.minQueryLength ?? 1),
         resultFiltering: 'provider',
         showSkeletonsOnFirstLoad: true,
         resultTransition: 'none',
         resolve: async (seed, signal) => {
-            const resolved = await source.resolve(seed.trim(), signal);
+            const resolved = await source.resolve(input.preserveQuery ? seed : seed.trim(), signal);
             const page = isUniversalSearchResolvePage(resolved)
                 ? resolved
                 : { results: resolved, emptyHint: undefined };
+            // Hits arrive grouped by file; each row names its `path:line` (Find lab G1) so any row read alone,
+            // spoken or scrolled to, still says where it lands.
+            const options = page.results.slice(0, input.rowLimit).map((result) => {
+                const option = toOption(result, input.iconName, input.onCommit);
+                if (!result.fileContent) return option;
+                const location = `${result.fileContent.path}:${result.fileContent.line}`;
+                return {
+                    ...option,
+                    label: location,
+                    labelEllipsizeMode: 'head' as const,
+                    accessibilityLabel: `${location} ${result.fileContent.text.trim()}`,
+                };
+            });
             return {
-                options: page.results
-                    .slice(0, input.rowLimit)
-                    .map((result) => toOption(result, input.iconName, input.onCommit)),
+                options,
                 ...(page.emptyHint !== undefined ? { emptyHint: page.emptyHint } : {}),
-                ...(page.resultHint !== undefined
+                ...(input.sourceId === UNIVERSAL_SEARCH_SOURCE_IDS.fileContent && page.hasMore
+                    ? { resultHint: t('universalSearch.content.refineSearch') }
+                    : page.resultHint !== undefined
                     ? { resultHint: page.resultHint }
                     : source.resultHint !== undefined ? { resultHint: source.resultHint } : {}),
             };
@@ -254,6 +320,8 @@ export function buildUniversalSearchSections(
     const rowLimit = input.rowLimit ?? DEFAULT_ROW_LIMIT;
     const onCommit = input.onCommitResult;
     const sections: SelectionListSectionDescriptor[] = [];
+    const contentSections = buildDynamicSection({ sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.fileContent, title: t('universalSearch.content.textInFiles'), source: input.fileContent ?? { status: 'absent' }, iconName: 'file', preserveQuery: true, onCommit }).map((section) => ({ kind: 'dynamic' as const, ...section }));
+    if (input.source === 'fileContent') return contentSections;
 
     // Construction, currentness, availability, i18n and activation of commands
     // all stay with `buildCommandPaletteCommands`.
@@ -346,6 +414,21 @@ export function buildUniversalSearchSections(
     }
 
     const projects = narrowLocalEntities(input.projects, query, EMPTY_QUERY_RECENT_LIMIT);
+    if (query.length > 0 && input.externalConversationSearch) {
+        const search = input.externalConversationSearch;
+        sections.push({
+            kind: 'static',
+            id: 'externalConversations',
+            options: [{
+                id: EXTERNAL_CONVERSATION_SEARCH_OPTION_ID,
+                testID: 'universal-search:external-conversations:search',
+                label: t('externalSessions.browseContentPaletteSearch', { query: input.query }),
+                subtitle: t('externalSessions.browseContentOnMachine', { machine: search.machineLabel }),
+                icon: icon('chat-circle-dots'),
+                onSelect: () => search.onSearch(input.query),
+            }],
+        });
+    }
     if (projects.length > 0) {
         sections.push({
             kind: 'static',
@@ -397,6 +480,7 @@ export function buildUniversalSearchSections(
         sections.push({ kind: 'dynamic', ...section });
     }
 
+    sections.push(...contentSections);
     for (const section of buildDynamicSection({
         sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.commits,
         title: t('universalSearch.sections.commits'),

@@ -20,7 +20,6 @@ import {
     buildSessionTerminalPaneMenuItems,
     TERMINAL_MENU_GLYPH_PX,
 } from '@/components/sessions/terminal/strip/sessionTerminalMenus';
-import { SessionTerminalLeafHandlesContext } from '@/components/sessions/terminal/strip/sessionTerminalLeafHandles';
 import { useSessionTerminalTabMenu } from '@/components/sessions/terminal/strip/useSessionTerminalTabMenu';
 import { SessionTerminalWorkspaceView } from '@/components/sessions/terminal/strip/SessionTerminalWorkspaceView';
 import { useSessionTerminalWorkspace } from '@/components/sessions/terminal/useSessionTerminalWorkspace';
@@ -152,7 +151,7 @@ export const SessionBottomPanel = React.memo((props: Readonly<{ sessionId: strin
         }
     }, [attach, focusTerminal, openShell, otherMachines, pane, run, scripts, workspace.tabs]);
 
-    const tabMenu = useSessionTerminalTabMenu({ scopeId: props.scopeId, workspace, tabs, run, onOpenedInDetails: pane.closeBottom });
+    const tabMenu = useSessionTerminalTabMenu({ scopeId: props.scopeId, workspace, tabs, run });
 
     const paneMenuItems = React.useMemo(() => buildSessionTerminalPaneMenuItems({
         showList: workspace.showList,
@@ -197,7 +196,6 @@ export const SessionBottomPanel = React.memo((props: Readonly<{ sessionId: strin
                     testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-bottompanel-surface-terminal')}
                     style={{ flex: 1, minHeight: 0, minWidth: 0 }}
                 >
-                    <SessionTerminalLeafHandlesContext.Provider value={tabMenu.leafHandles}>
                         <SessionTerminalWorkspaceView
                             scopeId={props.scopeId}
                             workspace={workspace}
@@ -224,7 +222,6 @@ export const SessionBottomPanel = React.memo((props: Readonly<{ sessionId: strin
                             emptyAction={openShell}
                             testIdPrefix={sessionScreenTestIdsEnabled ? 'session-bottompanel-terminals' : undefined}
                         />
-                    </SessionTerminalLeafHandlesContext.Provider>
                 </View>
             ) : null}
         </View>

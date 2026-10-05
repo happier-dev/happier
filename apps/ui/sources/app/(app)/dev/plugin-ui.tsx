@@ -7,6 +7,9 @@ import {
     BrandMark as PluginBrandMark,
     Card as PluginCard,
     CodeBlock as PluginCodeBlock,
+    Chart as PluginChart,
+    DataRows as PluginDataRows,
+    DataTable as PluginDataTable,
     ContextMenu as PluginContextMenu,
     Divider as PluginDivider,
     Dropdown as PluginDropdown,
@@ -27,6 +30,7 @@ import {
     Markdown as PluginMarkdown,
     Menu as PluginMenu,
     Metadata as PluginMetadata,
+    Metric as PluginMetric,
     Popover as PluginPopover,
     Progress as PluginProgress,
     Row as PluginRow,
@@ -58,6 +62,7 @@ import type { PluginUiHostApi, RenderContext, SurfaceContext } from '@happier-de
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
 import { Ionicons } from '@expo/vector-icons';
 import { CollectionPreviewSample } from '@/components/dev/pluginUi/CollectionPreviewSample';
+import { FindBarSpecimen } from '@/components/dev/pluginUi/FindBarSpecimen';
 import { CorePageAnatomySample, PluginPageAnatomySample } from '@/components/dev/pluginUi/PageAnatomySample';
 import { CoreNavigationColumnSample, PluginNavigationColumnSample } from '@/components/dev/pluginUi/NavigationColumnSample';
 import { appShellColumnSurface } from '@/components/navigation/shell/appRail/appShellColumnSurface';
@@ -201,6 +206,9 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
             methods: ['context', 'watchContext'],
         }),
         context: async () => current,
+        widgetArea: async () => {
+            throw new Error('dev surface has no Widget area');
+        },
         watchContext: async (listener: (context: SurfaceContext) => void) => {
             listeners.add(listener);
             return {
@@ -266,6 +274,9 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
             throw new Error('dev surface has no Composer');
         },
         readSession: async () => null,
+        readEntityDragItem: async () => { throw new Error('dev surface has no mounted entity runtime'); },
+        updateEntityDragDrop: async () => { throw new Error('dev surface has no mounted entity runtime'); },
+        watchEntityDragDrop: async () => { throw new Error('dev surface has no mounted entity runtime'); },
         readStoredImage: async () => { throw new Error('dev surface has no stored images'); },
         watchLiveStream: async () => { throw new Error('dev surface has no live streams'); },
         watchSession: async () => {
@@ -415,6 +426,15 @@ function PluginExpandedSamples() {
                     </PluginRow>
                     <PluginDivider />
                     <PluginMetadata entries={[{ label: 'Owner', value: 'plugin-ui' }]} />
+                    <PluginMetric label="Signups this week" value={1284}
+                        comparison={{ value: '+18%', label: 'vs the week before', meaning: 'good' }} />
+                    <PluginChart label="Signups per day" style="bar" points={[{ x: 'Thu', y: 142 }, { x: 'Fri', y: 168 },
+                        { x: 'Sat', y: 151 }, { x: 'Sun', y: 190 }, { x: 'Mon', y: 214 }, { x: 'Tue', y: 236 }, { x: 'Wed', y: 183 }]} />
+                    <PluginDataRows label="Onboarding funnel" columns={[{ label: 'Step' }, { label: 'People', proportion: true }]}
+                        rows={[['Signed up', 1284], ['Paired a machine', 812], ['Started a session', 655]]} />
+                    <PluginDataTable label="Newest people" columns={[{ label: 'Person' }, { label: 'Plan', priority: 'secondary' },
+                        { label: 'Got to' }, { label: 'Joined' }]} rows={[['Mira Kovač', 'Team', 'Paired 2 machines', '10:38'],
+                        ['Jonas Weber', 'Free', 'Started a session', '10:21']]} />
                     <PluginLink title="Documentation" url="https://example.test" />
                     <PluginProgress value={0.5} label="Half complete" />
                     <PluginBanner title="Portable" description="One shared presentation seam." tone="info" />
@@ -725,6 +745,11 @@ export default function PluginUiSharedPresentationScreen() {
     return (
         <ScrollView style={styles.container} testID="dev-plugin-ui-shared-presentation">
             <View style={styles.content}>
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Find bar — every state (Find lab fx / ffind)</Text>
+                    <FindBarSpecimen />
+                </View>
+
                 <View style={styles.section} testID="dev-plugin-ui-page-anatomy">
                     <Text style={styles.sectionTitle}>Configuration page anatomy — Happier core | plugin</Text>
                     <View style={styles.sideBySide}>

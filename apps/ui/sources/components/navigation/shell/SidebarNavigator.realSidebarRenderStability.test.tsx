@@ -175,6 +175,7 @@ vi.mock('@/utils/platform/desktopWindowBridge', () => ({
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
+    SafeAreaInsetsContext: React.createContext({ top: 0, bottom: 0, left: 0, right: 0 }),
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
@@ -247,6 +248,9 @@ vi.mock('@/components/ui/popover', () => ({
     PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
+// Configure the platform boundaries before loading the real shell, outside behavior-test timeouts.
+const { SidebarNavigator } = await import('./SidebarNavigator');
+
 afterEach(() => {
     hoistedState.isDesktopHost = false;
     hoistedState.startDesktopWindowDragging.mockReset();
@@ -257,7 +261,6 @@ afterEach(() => {
     hoistedState.listenDesktopWindowState.mockReset();
     hoistedState.listenDesktopWindowState.mockResolvedValue(async () => {});
     standardCleanup();
-    vi.resetModules();
 });
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -269,8 +272,6 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 
 describe('SidebarNavigator real sidebar render stability', () => {
     it('renders the authenticated app shell with the real rail and Sessions column on web', async () => {
-        const { SidebarNavigator } = await import('./SidebarNavigator');
-
         const screen = await renderScreen(<SidebarNavigator />);
 
         expect(screen.findByTestId('main-view')).toBeTruthy();
@@ -283,8 +284,6 @@ describe('SidebarNavigator real sidebar render stability', () => {
     it('starts Tauri dragging from the main content titlebar strip without blocking interactive targets', async () => {
         hoistedState.isDesktopHost = true;
         const documentListenerSpy = installDocumentEventListenerSpy();
-        const { SidebarNavigator } = await import('./SidebarNavigator');
-
         try {
             const screen = await renderScreen(<SidebarNavigator />);
             const dragSurface = screen.findByTestId('desktop-main-content-drag-surface');

@@ -10,7 +10,14 @@ import { qualifyPaneScopeId } from '@/components/appShell/panes/paneScopeIdentit
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 export type DestinationNavigation = Pick<ReturnType<typeof useRouter>, 'push' | 'replace' | 'back'>
-    & Partial<ReturnType<typeof useRouter>>;
+    & Partial<ReturnType<typeof useRouter>> & {
+        /** Open another destination without retiring the caller's mounted draft. */
+        pushRetainingCurrent?: ReturnType<typeof useRouter>['push'];
+    };
+
+type DestinationRouter = ReturnType<typeof useRouter> & {
+    pushRetainingCurrent: ReturnType<typeof useRouter>['push'];
+};
 
 type DestinationInstanceContextValue = Readonly<{
     tabId: string;
@@ -84,7 +91,7 @@ export function useDestinationPaneScopeId(resourceScopeId: string): string {
     return qualifyPaneScopeId(resourceScopeId, useDestinationInstanceKey());
 }
 
-export function useDestinationRouter(): ReturnType<typeof useRouter> {
+export function useDestinationRouter(): DestinationRouter {
     const instance = React.useContext(DestinationInstanceContext);
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
     if (!instance) return useWorkspaceOrExpoRouter();
@@ -104,6 +111,7 @@ export function useDestinationRouter(): ReturnType<typeof useRouter> {
             reload: unsupported,
             prefetch: () => {},
             ...navigation,
+            pushRetainingCurrent: navigation.pushRetainingCurrent ?? unsupported,
         };
     }, [instance.navigation]);
 }
@@ -112,14 +120,20 @@ function useWorkspaceOrExpoRouter() {
     const workspace = useOptionalWorkspaceNavigation();
     const router = useRouter();
     return React.useMemo(() => {
-        if (!workspace?.active) return router;
+        if (!workspace?.active) return { ...router, pushRetainingCurrent: router.push };
         const navigate: typeof router.push = (href, options) => {
             if (!workspace.openHref(resolveHref(href))) router.push(href, options);
         };
         const replace: typeof router.replace = (href, options) => {
             if (!workspace.openHref(resolveHref(href), { replace: true })) router.replace(href, options);
         };
-        return { ...router, push: navigate, navigate, replace,
+        const pushRetainingCurrent: typeof router.push = (href, options) => {
+            const group = workspace.state.groups[workspace.state.focusedGroupId];
+            const navigation = workspace.navigationForTab(group.activeTabId);
+            if (!navigation.pushRetainingCurrent) throw new Error('The workspace navigation owner did not supply draft retention');
+            navigation.pushRetainingCurrent(href, options);
+        };
+        return { ...router, push: navigate, navigate, replace, pushRetainingCurrent,
             back: workspace.back,
             canGoBack: () => workspace.canGoBack };
     }, [router, workspace]);

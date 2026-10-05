@@ -173,7 +173,7 @@ describe('SidebarUsagePopoverContent', () => {
         expect(screen.findByTestId('sidebar-usage-as-of')).toBeNull();
     });
 
-    it('shows each account reading time instead of labeling old values with the newest account time', async () => {
+    it('labels the shared header with the oldest account reading instead of the newest account time', async () => {
         state.summaries = [
             { ...summary('claude:a', 'Work', 73), fetchedAt: 1_000 },
             { ...summary('claude:b', 'Personal', 40), fetchedAt: 5_000 },
@@ -181,9 +181,8 @@ describe('SidebarUsagePopoverContent', () => {
         const screen = await renderContent();
         const { SurfaceAsOfLabel } = await import('@/components/ui/surfaces/SurfaceAsOfLabel');
         const times = screen.findAllByType(SurfaceAsOfLabel)
-            .filter((label) => label.props.testID !== 'sidebar-usage-as-of')
             .map((label) => label.props.at);
-        expect(times).toEqual([1_000, 5_000]);
+        expect(times).toEqual([1_000]);
     });
 
     it('explains what usage is for when no account is connected', async () => {
@@ -251,6 +250,20 @@ describe('SidebarUsagePopoverContent', () => {
                 />,
             );
         }
+
+        it('shows freshness once in the header for all accounts and for the scoped session', async () => {
+            const { SurfaceAsOfLabel } = await import('@/components/ui/surfaces/SurfaceAsOfLabel');
+            const allAccounts = await renderView();
+            expect(allAccounts.findAllByType(SurfaceAsOfLabel)).toHaveLength(1);
+            expect(allAccounts.findByTestId('sidebar-usage-as-of')).toBeTruthy();
+
+            const session = await renderView({
+                session: { accountKey: 'claude:work', ownSignIn: null, scopeLine: null, nextMove: null },
+            });
+            const labels = session.findAllByType(SurfaceAsOfLabel);
+            expect(labels).toHaveLength(1);
+            expect(labels[0].props.at).toBe(2_000);
+        });
 
         it('refreshes only the session account until All accounts explicitly widens the scope', async () => {
             const scopes: Array<readonly string[] | undefined> = [];

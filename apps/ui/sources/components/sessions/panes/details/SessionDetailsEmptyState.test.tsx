@@ -44,6 +44,15 @@ function changedSnapshot(count: number, extraEntries: readonly unknown[] = []) {
 }
 
 describe('SessionDetailsEmptyState', () => {
+    it('offers the host file browser alongside Review', async () => {
+        snapshot = changedSnapshot(4);
+        const onBrowseFiles = vi.fn();
+        const { SessionDetailsEmptyState } = await import('./SessionDetailsEmptyState');
+        const screen = await renderScreen(<SessionDetailsEmptyState sessionId="s1" openDetailsTab={vi.fn()} onBrowseFiles={onBrowseFiles} />);
+        await screen.pressByTestIdAsync('pane-details-empty-state-secondary-action');
+        expect(onBrowseFiles).toHaveBeenCalledOnce();
+    });
+
     it('invites reading the session changes and opens Review', async () => {
         snapshot = changedSnapshot(4);
         const openDetailsTab = vi.fn();
@@ -74,4 +83,3 @@ describe('SessionDetailsEmptyState', () => {
         expect(screen.getTextContent()).toContain('detailsSurface.chrome.reviewChanges:{"count":2}');
     });
 });
-

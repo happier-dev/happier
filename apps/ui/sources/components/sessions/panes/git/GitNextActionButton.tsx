@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
@@ -32,8 +33,9 @@ export const GitNextActionButton = React.memo(function GitNextActionButton(props
     const [open, setOpen] = React.useState(false);
     const { primary } = props;
     const running = props.runningKey !== null && props.runningKey === primary.key;
-    const tone = primary.emphasis === 'primary' ? 'primary' : 'default';
-    const contentColor = tone === 'primary'
+    const attention = primary.key === 'resolve' || primary.emphasis === 'attention';
+    const tone = primary.emphasis === 'primary' && !running && !attention ? 'primary' : 'default';
+    const contentColor = attention ? theme.colors.state.warning.foreground : tone === 'primary'
         ? theme.colors.button.primary.tint
         : primary.emphasis === 'quiet' ? theme.colors.text.secondary : theme.colors.text.primary;
     const onPrimary = React.useCallback(() => props.onRun(primary.key), [primary.key, props.onRun]);
@@ -80,9 +82,10 @@ export const GitNextActionButton = React.memo(function GitNextActionButton(props
                 tone={tone}
                 disabled={primary.disabled || running || primary.key === 'up-to-date'}
                 busy={running}
-                icon={running ? undefined : <Icon name={actionIcon(primary.key)} size={14} color={contentColor} />}
+                labelColor={contentColor}
+                icon={running ? <ActivitySpinner size={14} color={contentColor} /> : <Icon name={actionIcon(primary.key)} size={14} color={contentColor} />}
                 onPress={onPrimary}
-                style={styles.primaryPart}
+                style={[styles.primaryPart, attention ? { backgroundColor: theme.colors.state.warning.background, borderColor: theme.colors.state.warning.border } : null, running || primary.emphasis === 'quiet' ? { borderWidth: 0, backgroundColor: 'transparent', opacity: 1 } : null]}
             />
             <DropdownMenu
                 open={open}
@@ -102,7 +105,7 @@ export const GitNextActionButton = React.memo(function GitNextActionButton(props
                         tone={tone}
                         icon={<Icon name="caret-down" size={12} color={contentColor} />}
                         onPress={toggle}
-                        style={styles.chevronPart}
+                        style={[styles.chevronPart, attention ? { backgroundColor: theme.colors.state.warning.background, borderColor: theme.colors.state.warning.border } : null, running || primary.emphasis === 'quiet' ? { borderWidth: 0, backgroundColor: 'transparent' } : null]}
                     />
                 )}
             />

@@ -12,6 +12,9 @@ import {
     normalizeSessionCompanionPreference,
     removeSessionCompanionItem,
     showSessionCompanion,
+    setSessionCompanionInstanceInputs,
+    renameSessionCompanionInstance,
+    setSessionCompanionItemFrameStyle,
     type SessionCompanionItemRefV1,
     type SessionCompanionPreferenceV1,
 } from './sessionCompanionPreference';
@@ -28,12 +31,18 @@ const visible: SessionCompanionPreferenceV1 = {
 };
 
 describe('session companion preference schema', () => {
+    it('keeps independently configured copies while a shared Board reference remains separate', () => {
+        const instance = { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'acme.tools', localId: 'glance' } }, bindings: { session: { kind: 'value', value: 'session-a' } } };
+        const second = { ...instance, id: 'copy-b', bindings: { session: { kind: 'value', value: 'session-b' } } };
+        const refs = [{ kind: 'instance', instance }, { kind: 'instance', instance: second }, widget('shared-item')];
+        expect(normalizeSessionCompanionPreference({ ...visible, items: refs }).items).toEqual(refs);
+    });
     it('retains compact glances and pane links with independent frame overrides, deduplicating by reference identity', () => {
         const refs = [
             { kind: 'builtin', id: 'changes', frameStyle: 'card' },
             { kind: 'builtin', id: 'local_services' },
             { kind: 'pane', paneId: 'git', frameStyle: 'plain' },
-            { kind: 'plugin', surface: { pluginId: 'acme.tools', localId: 'glance' }, frameStyle: 'card' },
+            { kind: 'instance', instance: { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'acme.tools', localId: 'glance' } }, bindings: {} }, frameStyle: 'card' },
         ];
         const normalized = normalizeSessionCompanionPreference({ ...visible, items: [...refs, { ...refs[2], frameStyle: 'card' }] });
         expect(normalized.items).toEqual(refs);
@@ -100,6 +109,35 @@ describe('normalizeSessionCompanionPreference', () => {
 });
 
 describe('session companion mutations', () => {
+    it('conditionally removes only the captured personal instance and presentation, preserving later edits', () => {
+        const instance = { v: 1 as const, id: 'copy-a', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
+        const item = { kind: 'instance' as const, instance };
+        const original = normalizeSessionCompanionPreference({ ...visible, items: [SESSION_SUMMARY_COMPANION_ITEM, item, widget('shared-item')] });
+        const guard = { expectedInstance: instance, expectedPresentation: { frameStyle: null, nativeIndex: 1 } };
+        const edited = renameSessionCompanionInstance(original, instance.id, 'Changed while moving');
+        expect(removeSessionCompanionItem(edited, item, guard)).toBe(edited);
+        const reframed = setSessionCompanionItemFrameStyle(original, item, 'plain');
+        expect(removeSessionCompanionItem(reframed, item, guard)).toBe(reframed);
+        const reordered = moveSessionCompanionItem(original, item, 0);
+        expect(removeSessionCompanionItem(reordered, item, guard)).toBe(reordered);
+        const unrelated = { ...original, density: 'comfortable' as const };
+        expect(removeSessionCompanionItem(unrelated, item, guard)).toEqual({ ...unrelated, items: [SESSION_SUMMARY_COMPANION_ITEM, widget('shared-item')] });
+        // A human removal still acts on identity rather than a transfer snapshot.
+        expect(removeSessionCompanionItem(edited, item).items).toEqual([SESSION_SUMMARY_COMPANION_ITEM, widget('shared-item')]);
+    });
+    it('edits one personal copy without rewriting its sibling or the shared Board reference', () => {
+        const instance = { v: 1 as const, id: 'copy-a', definition: { kind: 'installed' as const, surface: { pluginId: 'acme.tools', localId: 'glance' } }, bindings: {} };
+        const original = normalizeSessionCompanionPreference({ ...visible, items: [{ kind: 'instance', instance }, { kind: 'instance', instance: { ...instance, id: 'copy-b' } }, widget('shared-item')] });
+        const edited = setSessionCompanionInstanceInputs(original, 'copy-a', { session: { kind: 'value', value: 'session-b' } });
+        expect(edited.items[0]).toMatchObject({ instance: { bindings: { session: { kind: 'value', value: 'session-b' } } } });
+        expect(edited.items.slice(1)).toEqual(original.items.slice(1));
+        expect(edited.items[1]).toBe(original.items[1]);
+        expect(edited.items[2]).toBe(original.items[2]);
+        expect(original.items[0]).toMatchObject({ instance: { bindings: {} } });
+        expect(setSessionCompanionInstanceInputs(edited, 'copy-a', { session: { kind: 'value', value: 'session-b' } })).toBe(edited);
+        expect(renameSessionCompanionInstance(edited, 'copy-a', 'Pinned').items[0]).toMatchObject({ instance: { displayName: 'Pinned' } });
+        expect(removeSessionCompanionItem(edited, { kind: 'instance', instance }).items).toEqual(original.items.slice(1));
+    });
     it('seeds the Session Summary only when nothing is selected yet', () => {
         expect(showSessionCompanion(HIDDEN_SESSION_COMPANION_PREFERENCE_V1)).toEqual({
             ...HIDDEN_SESSION_COMPANION_PREFERENCE_V1,

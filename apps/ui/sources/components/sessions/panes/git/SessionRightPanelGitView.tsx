@@ -1,4 +1,5 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol';
+import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
 import { useSessionFilePaneNavigation } from '@/components/sessions/panes/useSessionFileDetailsOpener';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import * as React from 'react';
@@ -35,7 +36,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { selectScmChangedFiles, selectScmConflictFiles } from '@/scm/scmStatusFiles';
 import { isFileSelectedForCommit } from '@/scm/operations/commitSelectionHints';
-import { resolveForceWithLeaseTarget } from '@/scm/operations/remoteTarget';
+import { inferRemoteTargetFromSnapshot, resolveForceWithLeaseTarget } from '@/scm/operations/remoteTarget';
 import { resolveSessionGitPaneActions, resolveSessionGitPaneHeaderFacts, type SessionGitPaneActionKey } from './sessionGitPaneHeader';
 import {
     useProjectForSession,
@@ -43,6 +44,7 @@ import {
     useSessionProjectScmCommitSelectionPaths,
     useSessionProjectScmCommitSelectionPatches,
     useSessionProjectScmInFlightOperation,
+    useSessionProjectScmOperationLog,
     useSessionProjectScmSnapshot,
     useSessionProjectScmSnapshotError,
     useSessionRealtimeScmTranscriptConsumer,
@@ -51,6 +53,9 @@ import {
 } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { useSessionMachineName } from '@/components/sessions/agents/presentation/useSessionMachineName';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { resolveAgentIdFromSessionMetadata, getAgentCore } from '@/agents/catalog/catalog';
+import { useSessionTerminalAction } from '@/components/sessions/terminal/useSessionTerminalAction';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
@@ -76,8 +81,10 @@ import { GitPullRequestSection } from './pullRequest/GitPullRequestSection';
 import { GitBranchButton } from './branches/GitBranchButton';
 import { GitKeptAsideNotice } from './branches/GitKeptAsideNotice';
 import { GitDisplayMenu, useGitDisplaySettings } from './display/GitDisplayMenu';
-import { requestGitPullRequestForm } from './pullRequest/gitPullRequestForm';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { requestGitPullRequestForm } from './pullRequest/gitPullRequestFormState';
 import { resolveSourceControlPullRequestViewModel } from '@/components/workspaces/scm/update/resolveSourceControlPullRequestViewModel';
+import { selectLastSuccessfulScmPushAt } from '@/scm/operations/selectScmWriteOperation';
 
 export type SessionRightPanelGitViewProps = Readonly<{
     sessionId: string;
@@ -93,6 +100,8 @@ export type SessionRightPanelGitViewProps = Readonly<{
 export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitViewProps) => {
     const router = useDestinationRouter();
     const { theme } = useUnistyles();
+    const phone = useDeviceType() === 'phone';
+    const terminal = useSessionTerminalAction({ sessionId: props.sessionId, serverId: props.serverId, scopeId: props.scopeId });
     const pane = useAppPaneScope(props.scopeId);
     const fileNavigation = useSessionFilePaneNavigation({ scopeId: props.scopeId, sessionId: props.sessionId, serverId: props.serverId ?? resolveServerIdForSessionIdFromLocalCache(props.sessionId) });
     const resumeSession = useSessionResumeAction();
@@ -108,7 +117,26 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const setCommitDraftMessage = scmDraft.setCommitMessage;
     const { paneLayout, changesLayout } = useGitDisplaySettings();
     const displayMenu = React.useMemo(() => <GitDisplayMenu />, []);
+    const openWalkThrough = React.useCallback(() => {
+        pane.openDetailsTab(createSessionScmReviewDetailsTab({ comparison: { kind: 'workingTree' }, view: 'walkthrough' }), { intent: 'pinned' });
+    }, [pane.openDetailsTab]);
+    const scopeAccessory = React.useMemo(() => (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {displayMenu}
+            <RoundButton testID="session-rightpanel-git-walkthrough" size="small" display="inverted"
+                title={t('turnChanges.card.walkThrough')} onPress={openWalkThrough}
+                leading={<Icon name="path" size={14} color={theme.colors.text.secondary} />} />
+        </View>
+    ), [displayMenu, openWalkThrough, theme.colors.text.secondary]);
     const defaultOpenDetails = useSessionRightPanelGitOpenDetails(pane);
+    // Open (or a second tap) jumps to that commit in the Commits view; the view scrolls it into place.
+    const openCommitPlan = React.useCallback((groupId?: string) => {
+        pane.openDetailsTab(createSessionScmReviewDetailsTab({ comparison: { kind: 'workingTree' }, view: 'commits' }), { intent: 'pinned' });
+        if (groupId) {
+            const previous = pane.scopeState?.details?.tabState?.['scmReview:working'];
+            pane.setDetailsTabState('scmReview:working', { ...(previous && typeof previous === 'object' ? previous : {}), commitGroupId: groupId });
+        }
+    }, [pane.openDetailsTab, pane.setDetailsTabState, pane.scopeState]);
     const openFileInDetailsSource = props.onOpenFile ?? defaultOpenDetails.openFileInDetails;
     const openFileInDetailsPinnedSource = props.onOpenFilePinned ?? defaultOpenDetails.openFileInDetailsPinned;
     const openCommitInDetailsSource = props.onOpenCommit ?? defaultOpenDetails.openCommitInDetails;
@@ -130,6 +158,9 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
 
     const session = useSessionListRenderableWithServerScope(props.serverId, props.sessionId);
     const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
+    const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
+    const agent = agentId ? getAgentCore(agentId) : null;
+    const agentName = agent ? t(agent.displayNameKey) : null;
     const scmSnapshot = useSessionProjectScmSnapshot(props.sessionId, props.serverId);
     const lastGoodScmSnapshot = useLastNonNullValue(scmSnapshot, { resetKey: props.scopeId });
     const effectiveScmSnapshot = scmSnapshot ?? lastGoodScmSnapshot;
@@ -137,6 +168,8 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const scmSnapshotError = useSessionProjectScmSnapshotError(props.sessionId, props.serverId);
     const workspaceTouchedPaths = useWorkspaceScmTouchedPathsForSession(props.sessionId, props.serverId);
     const inFlightScmOperation = useSessionProjectScmInFlightOperation(props.sessionId, props.serverId);
+    const operationLog = useSessionProjectScmOperationLog(props.sessionId, props.serverId);
+    const lastPushedAt = React.useMemo(() => effectiveScmSnapshot ? selectLastSuccessfulScmPushAt(operationLog, inferRemoteTargetFromSnapshot(effectiveScmSnapshot)) : null, [operationLog, effectiveScmSnapshot]);
     const commitSelectionPaths = useSessionProjectScmCommitSelectionPaths(props.sessionId, props.serverId);
     const commitSelectionPatches = useSessionProjectScmCommitSelectionPatches(props.sessionId, props.serverId);
     const scmCommitStrategySetting = useSetting('scmCommitStrategy');
@@ -381,6 +414,13 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     // next sync step; the body never draws a header of its own.
     const sessionPaused = isSessionInactive && !machineRpcTargetAvailable;
     const machineName = useSessionMachineName(props.sessionId, props.serverId);
+    const writeOperation = useSessionScmWriteOperation({
+        sessionId: props.sessionId,
+        serverId: props.serverId,
+        machineReachable,
+        ...(machineName ? { machine: machineName } : {}),
+        ...(effectiveScmSnapshot?.hostingProvider?.kind ? { provider: providerDisplayName(effectiveScmSnapshot.hostingProvider.kind) } : {}),
+    });
     const commitReady = commitPreflight.allowed
         && !hasGlobalOperationInFlight
         && !isLockedByOtherSession
@@ -411,8 +451,9 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             commitReady,
             // A paused session cannot reach its remote: the menu keeps every step, each unavailable.
             remoteActions: sessionPaused ? [] : remoteActions,
+            writeOperation,
         });
-    }, [canCreatePr, changedFileCount, commitReady, conflictPaths.length, effectiveScmSnapshot, isRepo, openPullRequest, pullRequestModel.kind, remoteActions, sessionPaused]);
+    }, [canCreatePr, changedFileCount, commitReady, conflictPaths.length, effectiveScmSnapshot, isRepo, openPullRequest, pullRequestModel.kind, remoteActions, sessionPaused, writeOperation]);
     const headerLineLeadingColor = theme.colors.text.secondary;
     const branchBusy = !scmWriteEnabled || scmOperationBusy || publishBusy || hasGlobalOperationInFlight || isLockedByOtherSession || sessionPaused;
     const headerBranchButton = React.useMemo(
@@ -446,15 +487,19 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 ahead: branch.ahead,
                 behind: branch.behind,
                 primaryKey: paneActions?.primary.key ?? null,
+                operation: effectiveScmSnapshot.operationState,
+                asOf: !machineReachable ? effectiveScmSnapshot.fetchedAt : null,
             });
             // The branch is the door to branches, stashes and worktrees (Git lab BR): it leads the line itself.
             const segments: PaneHeaderLineSegment[] = facts.flatMap((fact): PaneHeaderLineSegment[] => {
                 switch (fact.kind) {
                     case 'branch': return [];
+                    case 'asOf': return [t('surfaceState.asOf', { time: formatHappierAsOfTime(fact.at) })];
                     case 'changed': return [t('sessionGitPane.header.changed', { count: formatExactCount(fact.count) })];
                     case 'clean': return [t('sessionGitPane.flow.header.noChanges')];
                     case 'toPush': return [t('sessionGitPane.header.toPush', { count: formatExactCount(fact.count) })];
                     case 'toPull': return [t('sessionGitPane.header.toPull', { count: formatExactCount(fact.count) })];
+                    case 'operation': return [t('sessionGitPane.fidelity.operation', { operation: t(fact.operation === 'cherry_pick' ? 'sessionGitPane.flow.conflicts.cherryPick' : fact.operation === 'merge' ? 'sessionGitPane.flow.conflicts.merge' : fact.operation === 'rebase' ? 'sessionGitPane.flow.conflicts.rebase' : 'sessionGitPane.flow.conflicts.revert'), source: fact.sourceRef ?? '' })];
                 }
             });
             return { leading: headerBranchButton, segments };
@@ -469,15 +514,8 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             };
         }
         return null;
-    }, [changedFileCount, effectiveScmSnapshot, headerBranchButton, headerMachineGlyph, isRepo, machineName, paneActions?.primary.key, workspaceFolderName]);
+    }, [changedFileCount, effectiveScmSnapshot, headerBranchButton, headerMachineGlyph, isRepo, machineName, machineReachable, paneActions?.primary.key, workspaceFolderName]);
 
-    const writeOperation = useSessionScmWriteOperation({
-        sessionId: props.sessionId,
-        serverId: props.serverId,
-        machineReachable,
-        ...(machineName ? { machine: machineName } : {}),
-        ...(effectiveScmSnapshot?.hostingProvider?.kind ? { provider: providerDisplayName(effectiveScmSnapshot.hostingProvider.kind) } : {}),
-    });
     const runningKey: SessionGitPaneActionKey | null = writeOperation && (writeOperation.phase === 'queued' || writeOperation.phase === 'running')
         ? (writeOperation.action === 'push' || writeOperation.action === 'pull' || writeOperation.action === 'fetch'
             ? writeOperation.action
@@ -540,6 +578,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         upstream: effectiveScmSnapshot?.branch.upstream ?? null,
     }), [changedFileCount, effectiveScmSnapshot?.branch.ahead, effectiveScmSnapshot?.branch.behind, effectiveScmSnapshot?.branch.upstream, selectedForCommitCount]);
     const outcomeRecovery = React.useMemo(() => ({
+        ...(terminal.available ? { openTerminal: () => { if (!terminal.active) terminal.onPress(); } } : {}),
         ...(scmWriteEnabled && effectiveScmSnapshot?.capabilities?.writeCommitUndoLast === true && !branchBusy ? { undoCommit: undoLastCommit } : {}),
         fetch: () => { void runRemoteOperation('fetch'); },
         retry: (action: string) => {
@@ -548,6 +587,9 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         refresh: () => { void refreshScmData(); },
         publish: () => { void publishBranch(); },
         ...(effectiveScmSnapshot?.capabilities?.writeRemotePolicies === true ? {
+            pullThenPush: (policy: Readonly<{ reconcile: 'rebase' | 'merge' }>) => {
+                void runRemoteOperation('pull', { policy, pushAfterPull: true, skipConfirmation: true });
+            },
             pullWith: (policy: Readonly<{ dirtyPolicy?: 'autostash' | 'allow_git'; reconcile?: 'rebase' | 'merge' }>) => {
                 // The person just chose it: no second confirmation for the same pull.
                 void runRemoteOperation('pull', { policy, skipConfirmation: true });
@@ -555,7 +597,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         } : {}),
         preferRebase: Boolean(effectiveScmSnapshot?.branch.head)
             && effectiveScmSnapshot?.branch.head !== (effectiveScmSnapshot?.repo.defaultBranch ?? null),
-    }), [branchBusy, effectiveScmSnapshot?.branch.head, effectiveScmSnapshot?.capabilities?.writeCommitUndoLast, effectiveScmSnapshot?.capabilities?.writeRemotePolicies, effectiveScmSnapshot?.repo.defaultBranch, publishBranch, refreshScmData, runRemoteOperation, scmWriteEnabled, undoLastCommit]);
+    }), [terminal, branchBusy, effectiveScmSnapshot?.branch.head, effectiveScmSnapshot?.capabilities?.writeCommitUndoLast, effectiveScmSnapshot?.capabilities?.writeRemotePolicies, effectiveScmSnapshot?.repo.defaultBranch, publishBranch, refreshScmData, runRemoteOperation, scmWriteEnabled, undoLastCommit]);
     const landedSha = (writeOperation?.phase === 'succeeded' || writeOperation?.phase === 'effect_applied_with_warning')
         && writeOperation.action === 'commit'
         ? writeOperation.result?.sha ?? null
@@ -677,7 +719,12 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             ahead={effectiveScmSnapshot.branch.ahead}
             behind={effectiveScmSnapshot.branch.behind}
             lastCommitAt={historyEntries[0]?.timestamp ?? null}
-            onCreatePullRequest={paneActions?.primary.key === 'create-pr' ? () => onRunHeaderAction('create-pr') : null}
+            lastCommit={historyEntries[0] ?? null}
+            onOpenCommit={openCommitInDetails}
+            lastPushedAt={lastPushedAt}
+            justCompleted={writeOperation?.phase === 'succeeded' && writeOperation.action === 'push'}
+            phone={phone}
+            onCreatePullRequest={paneActions?.menu.some((action) => action.key === 'create-pr' && !action.disabled) ? () => onRunHeaderAction('create-pr') : null}
             onOpenPullRequest={openPullRequestUrl ? () => void openExternalUrl(openPullRequestUrl) : null}
             pullRequestNumber={openPullRequest?.number ?? null}
         />
@@ -714,13 +761,18 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             onGenerateCommitMessageSuggestion={onGenerateCommitMessageSuggestion}
             onOpenFilesSidebar={onOpenFilesSidebar}
             onOpenReviewAllChanges={onOpenReviewAllChanges}
+            onOpenCommitPlan={openCommitPlan}
+            onOpenWalkthrough={openWalkThrough}
             onOpenStashDetails={onOpenStashDetails}
             openFileInDetails={openFileInDetails}
             openFileInDetailsPinned={openFileInDetailsPinned}
             active={active}
             listFooter={listFooter}
+            phone={phone}
+            agentId={agentId}
+            completedOperationId={writeOperation?.phase === 'succeeded' && (writeOperation.action === 'commit' || writeOperation.action === 'push' || writeOperation.action === 'pull') ? writeOperation.id : null}
             emptyState={cleanState}
-            scopeAccessory={displayMenu}
+            scopeAccessory={scopeAccessory}
             changesLayout={changesLayout}
             machineId={project?.key.machineId ?? ownerMetadata?.machineId ?? null}
         />
@@ -747,6 +799,9 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 facts={outcomeFacts}
                 machineName={machineName ?? null}
                 machineReachable={machineReachable && machineRpcTargetAvailable}
+                machineId={project?.key.machineId ?? ownerMetadata?.machineId ?? null}
+                serverId={props.serverId}
+                authenticationCommand={effectiveScmSnapshot?.hostingProvider?.kind === 'github' ? 'gh auth login' : null}
                 recovery={outcomeRecovery}
                 haptics={Platform.OS !== 'web'}
             />
@@ -754,6 +809,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 sessionId={props.sessionId}
                 serverId={props.serverId}
                 operation={operationState}
+                agentName={agentName}
                 conflictPaths={conflictPaths}
                 busy={hasGlobalOperationInFlight}
                 onContinue={(operation) => void repositoryMutations.continueBranchOperation(operation)}

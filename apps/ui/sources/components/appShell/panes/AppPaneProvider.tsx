@@ -15,6 +15,10 @@ import {
     type PaneOverlayFocusReturnOwner,
     type PaneOverlayFocusSurface,
 } from './paneOverlayFocusReturn';
+import { createFileFindSeedHandoff, type FileFindSeedHandoff } from './fileFindSeedHandoff';
+import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
+import { listServerProfiles, resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
+import { useServerCredentialAccountScopeBindings, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 type AppPaneContextValue = Readonly<{
     state: AppPaneState;
@@ -23,6 +27,8 @@ type AppPaneContextValue = Readonly<{
     getDriver: (scopeId: PaneScopeId) => PaneDriver | null;
     driverRegistryVersion: number;
     overlayFocusReturnOwner: PaneOverlayFocusReturnOwner;
+    fileFindSeedHandoff: FileFindSeedHandoff;
+    fileFindSeedAccountBindings: ReadonlyMap<string, ServerCredentialAccountScopeBinding>;
 }>;
 
 const AppPaneContext = createContext<AppPaneContextValue | null>(null);
@@ -172,6 +178,11 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
     }));
     const stateRef = useRef(state);
     const driversRef = useRef<Map<PaneScopeId, PaneDriver>>(new Map());
+    const [fileFindSeedHandoff] = useState(createFileFindSeedHandoff);
+    const homeProfilesGeneration = useServerProfilesGeneration();
+    const fileFindSeedHomeIds = React.useMemo(() => listServerProfiles().map(resolveServerProfileScopeId), [homeProfilesGeneration]);
+    const fileFindSeedAccountBindings = useServerCredentialAccountScopeBindings(fileFindSeedHomeIds);
+    React.useEffect(() => () => fileFindSeedHandoff.dispose(), [fileFindSeedHandoff]);
     const overlayFocusReturnOwnerRef = useRef<PaneOverlayFocusReturnOwner | null>(null);
     if (overlayFocusReturnOwnerRef.current === null) {
         overlayFocusReturnOwnerRef.current = createPaneOverlayFocusReturnOwner();
@@ -248,7 +259,9 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
         getDriver,
         driverRegistryVersion,
         overlayFocusReturnOwner,
-    }), [driverRegistryVersion, dispatch, getDriver, overlayFocusReturnOwner, registerDriver, state]);
+        fileFindSeedHandoff,
+        fileFindSeedAccountBindings,
+    }), [driverRegistryVersion, dispatch, fileFindSeedHandoff, fileFindSeedAccountBindings, getDriver, overlayFocusReturnOwner, registerDriver, state]);
 
     return <AppPaneContext.Provider value={value}>{props.children}</AppPaneContext.Provider>;
 });

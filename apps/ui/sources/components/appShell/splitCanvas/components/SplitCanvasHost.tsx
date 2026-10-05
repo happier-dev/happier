@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
-import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
+import { useEntityDropDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
+import { useEntityDropTargetState } from '@/components/ui/treeDragDrop';
 import { SplitCanvasDivider, SPLIT_CANVAS_DIVIDER_SIZE_PX } from './SplitCanvasDivider';
 import { SplitCanvasDropOverlay } from './SplitCanvasDropOverlay';
 import { SplitCanvasLeafFrame } from './SplitCanvasLeafFrame';
-import { useSplitCanvasDnD } from '../hooks/useSplitCanvasDnD';
+import { useSplitCanvasDnD, splitCanvasEntityTargetId, type SplitCanvasEntityDrop } from '../hooks/useSplitCanvasDnD';
 import { useSplitCanvasInputModality } from '../hooks/useSplitCanvasInputModality';
 import { useSplitCanvasKeyboard } from '../hooks/useSplitCanvasKeyboard';
 import type {
@@ -29,6 +30,26 @@ function roundRatio(value: number): number {
 }
 
 type MinimumSize = Readonly<{ width: number; height: number }>;
+export type SplitCanvasRetainedLeafContentContext = Readonly<{
+    leafId: string;
+    isFocused: boolean;
+    isVisible: boolean;
+}>;
+export type SplitCanvasRetainedLeafContent = Readonly<{
+    id: string;
+    leafId: string;
+    isActive: boolean;
+    render: (context: SplitCanvasRetainedLeafContentContext) => React.ReactNode;
+}>;
+type RenderLeaf<TLeafPayload> = (input: Readonly<{
+    leaf: SplitCanvasLeafNode<TLeafPayload>;
+    isFocused: boolean;
+    isMaximized: boolean;
+    requestSplit: (direction: SplitCanvasDirection) => void;
+}>) => React.ReactNode;
+type SplitCanvasContentProps<TLeafPayload> =
+    | Readonly<{ renderLeaf: RenderLeaf<TLeafPayload>; renderLeafHeader?: undefined; retainedLeafContents?: undefined }>
+    | Readonly<{ renderLeaf?: undefined; renderLeafHeader: RenderLeaf<TLeafPayload>; retainedLeafContents: readonly SplitCanvasRetainedLeafContent[] }>;
 export type SplitCanvasHostControls = Readonly<{
     readSplitMeasurement: (leafId: string, direction: SplitCanvasDirection) => Readonly<{ availableSizePx: number; minimumExistingSizePx: number }> | null;
     resizeSplit: (splitId: string, ratio: number) => boolean;
@@ -74,6 +95,7 @@ const hostRootStyle = {
     flex: 1,
     minWidth: 0,
     minHeight: 0,
+    position: 'relative',
 } as const;
 
 const leafContentContainerStyle = {
@@ -86,12 +108,6 @@ const leafContentContainerStyle = {
 function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
     state: SplitCanvasState<TLeafPayload>;
     dispatch: (action: SplitCanvasAction<TLeafPayload>) => void;
-    renderLeaf: (input: Readonly<{
-        leaf: SplitCanvasLeafNode<TLeafPayload>;
-        isFocused: boolean;
-        isMaximized: boolean;
-        requestSplit: (direction: SplitCanvasDirection) => void;
-    }>) => React.ReactNode;
     renderLeafLabel?: (leaf: SplitCanvasLeafNode<TLeafPayload>) => string;
     getLeafMinimumSizePx?: (leaf: SplitCanvasLeafNode<TLeafPayload>) => MinimumSize;
     onRequestSplitLeaf?: (input: Readonly<{
@@ -100,14 +116,7 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
         availableSizePx?: number;
         minimumExistingSizePx?: number;
     }>) => void;
-    activeDropTarget?: SplitCanvasDropTarget | null;
-    onActiveDropTargetChange?: (target: SplitCanvasDropTarget | null) => void;
-    onLeafDrop?: (input: Readonly<{
-        payload: string;
-        target: SplitCanvasDropTarget;
-        availableSizePx?: number;
-        minimumExistingSizePx?: number;
-    }>) => void;
+    entityDrop?: SplitCanvasEntityDrop;
     keyboardEnabled?: boolean;
     controlsRef?: React.MutableRefObject<SplitCanvasHostControls | null>;
     /**
@@ -117,20 +126,47 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
      * rings the pane.
      */
     chrome?: 'framed' | 'flat';
-}>) {
+}> & SplitCanvasContentProps<TLeafPayload>) {
     const keyboardEnabled = props.keyboardEnabled ?? true;
     const inputModality = useSplitCanvasInputModality(keyboardEnabled);
     const leafCount = countSplitCanvasLeaves(props.state.root);
     const hasMultipleLeaves = leafCount > 1;
     const leafSizesRef = React.useRef<Map<string, MinimumSize>>(new Map());
     const hostSizeRef = React.useRef<MinimumSize | null>(null);
+    const [hostSize, setHostSize] = React.useState<MinimumSize | null>(null);
+    const [contentSlots, setContentSlots] = React.useState<Readonly<Record<string, Readonly<{ x: number; y: number }>>>>({});
+    React.useEffect(() => {
+        setContentSlots(current => {
+            const removed = Object.keys(current).filter(leafId => !findSplitCanvasLeaf(props.state.root, leafId));
+            if (removed.length === 0) return current;
+            const next = { ...current };
+            for (const leafId of removed) delete next[leafId];
+            return next;
+        });
+    }, [props.state.root]);
+    const handleContentSlotLayout = React.useCallback((leafId: string, event: LayoutChangeEvent) => {
+        const { x, y } = event.nativeEvent.layout;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        setContentSlots(current => current[leafId]?.x === x && current[leafId]?.y === y ? current : { ...current, [leafId]: { x, y } });
+    }, []);
+    const renderLeaf = props.retainedLeafContents === undefined ? props.renderLeaf : props.renderLeafHeader;
+    const [liveRatios, setLiveRatios] = React.useState<Readonly<Record<string, number>>>({});
+    const publishLiveRatio = React.useCallback((splitId: string, ratio: number | null) => {
+        setLiveRatios(current => {
+            if (ratio === null) {
+                if (!(splitId in current)) return current;
+                const next = { ...current };
+                delete next[splitId];
+                return next;
+            }
+            return current[splitId] === ratio ? current : { ...current, [splitId]: ratio };
+        });
+    }, []);
     const resizeHandlers = React.useRef(new Map<string, (ratio: number) => boolean>());
     const registerResize = React.useCallback((splitId: string, resize: (ratio: number) => boolean) => {
         resizeHandlers.current.set(splitId, resize);
         return () => { if (resizeHandlers.current.get(splitId) === resize) resizeHandlers.current.delete(splitId); };
     }, []);
-    const latestActiveDropTargetChangeRef = React.useRef(props.onActiveDropTargetChange);
-    latestActiveDropTargetChangeRef.current = props.onActiveDropTargetChange;
     const readSplitMeasurement = React.useCallback((leafId: string, direction: SplitCanvasDirection) => {
         if (!props.getLeafMinimumSizePx) return null;
         let size: MinimumSize | undefined = leafSizesRef.current.get(leafId);
@@ -169,12 +205,6 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
         props.onRequestSplitLeaf?.({ leafId, direction, ...(measurement ?? {}) });
     }, [props.onRequestSplitLeaf, readSplitMeasurement]);
 
-    const handleLeafDrop = React.useCallback((input: Readonly<{ payload: string; target: SplitCanvasDropTarget }>) => {
-        const measurement = input.target.placement === 'center'
-            ? null : readSplitMeasurement(input.target.leafId, input.target.placement);
-        props.onLeafDrop?.({ ...input, ...(measurement ?? {}) });
-    }, [props.onLeafDrop, readSplitMeasurement]);
-
     useSplitCanvasKeyboard({
         enabled: keyboardEnabled,
         state: props.state,
@@ -182,11 +212,27 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
         onSplit: props.onRequestSplitLeaf ? handleSplitRequest : undefined,
     });
 
+    // An edge is offered only where the pane can really split: the pane keeps its minimum and the
+    // new pane gets one too (every pane here sizes by the same leaf minimum). Below that the whole
+    // pane is the centre (lab C2s "Too narrow to split").
+    const isSplitOffered = React.useCallback((leafId: string, direction: SplitCanvasDirection) => {
+        const leaf = findSplitCanvasLeaf(props.state.root, leafId);
+        if (!leaf) return false;
+        if (!props.getLeafMinimumSizePx) return true;
+        const measurement = readSplitMeasurement(leafId, direction);
+        if (!measurement) return false;
+        const minimum = props.getLeafMinimumSizePx(leaf);
+        const minimumNewSizePx = direction === 'left' || direction === 'right' ? minimum.width : minimum.height;
+        return measurement.minimumExistingSizePx + minimumNewSizePx <= measurement.availableSizePx;
+    }, [props.getLeafMinimumSizePx, props.state.root, readSplitMeasurement]);
     const splitCanvasDnD = useSplitCanvasDnD({
-        enabled: typeof props.onActiveDropTargetChange === 'function' && typeof props.onLeafDrop === 'function',
-        onActiveDropTargetChange: props.onActiveDropTargetChange,
-        onLeafDrop: props.onLeafDrop ? handleLeafDrop : undefined,
+        entityDrop: props.entityDrop,
+        isLeafCurrent: leafId => Boolean(findSplitCanvasLeaf(props.state.root, leafId))
+            && (!props.state.maximizedLeafId || props.state.maximizedLeafId === leafId),
+        readSplitMeasurement,
+        isSplitOffered,
     });
+    const hostDropRef = useEntityDropDomBinding(props.entityDrop?.runtime);
 
     const handleLeafLayout = React.useCallback((leafId: string, event: LayoutChangeEvent) => {
         splitCanvasDnD.onLeafLayout(leafId, event);
@@ -205,6 +251,8 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
         const { width, height } = event.nativeEvent.layout;
         hostSizeRef.current = Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0
             ? { width, height } : null;
+        const size = hostSizeRef.current;
+        setHostSize(current => current?.width === size?.width && current?.height === size?.height ? current : size);
     }, [splitCanvasDnD.onHostLayout]);
 
     const registerLeafHost = React.useCallback((leafId: string, host: SplitCanvasLeafHostRef | null) => {
@@ -212,48 +260,38 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
         if (!host) leafSizesRef.current.delete(leafId);
     }, [splitCanvasDnD.registerLeafHost]);
 
-    React.useEffect(() => {
-        if (!splitCanvasDnD.enabled || typeof window === 'undefined') {
-            return;
-        }
-
-        const clearDropTarget = () => {
-            latestActiveDropTargetChangeRef.current?.(null);
-        };
-
-        window.addEventListener('dragend', clearDropTarget);
-        window.addEventListener('drop', clearDropTarget);
-        return () => {
-            window.removeEventListener('dragend', clearDropTarget);
-            window.removeEventListener('drop', clearDropTarget);
-        };
-    }, [splitCanvasDnD.enabled]);
-
-    const renderNode = React.useCallback((node: SplitCanvasNode<TLeafPayload>): React.ReactNode => {
-        if (node.kind === 'leaf') {
-            const target = props.activeDropTarget?.leafId === node.id ? props.activeDropTarget : null;
+    const renderLeafNode = React.useCallback((node: SplitCanvasLeafNode<TLeafPayload>): React.ReactNode => {
             const isFocused = props.state.focusedLeafId === node.id;
             const isMaximized = props.state.maximizedLeafId === node.id;
             return (
                 <SplitCanvasLeafRenderer
                     key={node.id}
                     leaf={node}
-                    target={target}
+                    entityDrop={props.entityDrop}
+                    isSplitOffered={isSplitOffered}
                     isFocused={isFocused}
                     isMaximized={isMaximized}
                     hasMultipleLeaves={hasMultipleLeaves}
                     flatChrome={props.chrome === 'flat'}
                     inputModality={inputModality}
                     dispatch={props.dispatch}
-                    renderLeaf={props.renderLeaf}
+                    renderLeaf={renderLeaf}
+                    retainedContent={props.retainedLeafContents !== undefined}
+                    onContentSlotLayout={handleContentSlotLayout}
                     renderLeafLabel={props.renderLeafLabel}
                     onLeafLayout={handleLeafLayout}
                     registerLeafHost={registerLeafHost}
                     onRequestSplit={handleSplitRequest}
                 />
             );
-        }
+    }, [
+        hasMultipleLeaves, inputModality, props.chrome, props.entityDrop, props.dispatch,
+        renderLeaf, props.retainedLeafContents, props.renderLeafLabel, props.state.focusedLeafId, props.state.maximizedLeafId,
+        handleLeafLayout, registerLeafHost, handleSplitRequest, handleContentSlotLayout, isSplitOffered,
+    ]);
 
+    const renderNode = React.useCallback((node: SplitCanvasNode<TLeafPayload>): React.ReactNode => {
+        if (node.kind === 'leaf') return <View style={{ flex: 1, minWidth: 0, minHeight: 0 }} />;
         return (
             <SplitNodeRenderer
                 key={node.id}
@@ -263,16 +301,17 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
                 renderNode={renderNode}
                 getLeafMinimumSizePx={props.getLeafMinimumSizePx}
                 registerResize={registerResize}
+                publishLiveRatio={publishLiveRatio}
             />
         );
     }, [
         hasMultipleLeaves,
         inputModality,
         props.chrome,
-        props.activeDropTarget,
+        props.entityDrop,
         props.dispatch,
         props.getLeafMinimumSizePx,
-        props.renderLeaf,
+        renderLeaf,
         props.renderLeafLabel,
         props.state.focusedLeafId,
         props.state.maximizedLeafId,
@@ -280,27 +319,91 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
         registerLeafHost,
         handleSplitRequest,
         registerResize,
+        publishLiveRatio,
     ]);
 
     if (!props.state.root) return null;
+    const leafRects = collectSplitCanvasLeafRects(props.state.root, { x: 0, y: 0, width: hostSize?.width ?? 0, height: hostSize?.height ?? 0 }, {
+        dividerSizePx: SPLIT_CANVAS_DIVIDER_SIZE_PX,
+        resolveRatio: (node, size) => resolveSplitRatio(liveRatios[node.id] ?? node.ratio, splitNodeSizing(node, size, props.getLeafMinimumSizePx)),
+    });
 
     return (
-        <WebDropTargetView
+        <View
+            ref={hostDropRef}
             testID="split-canvas-host"
             onLayout={handleHostLayout}
-            {...splitCanvasDnD.hostDropTargetProps}
             style={hostRootStyle}
         >
             {renderNode(props.state.root)}
-        </WebDropTargetView>
+            <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+                {leafRects.map(rect => {
+                    const leaf = findSplitCanvasLeaf(props.state.root, rect.leafId);
+                    if (!leaf) return null;
+                    const visible = !props.state.maximizedLeafId || props.state.maximizedLeafId === leaf.id;
+                    const maximized = props.state.maximizedLeafId === leaf.id;
+                    return <View key={leaf.id} pointerEvents={visible ? 'auto' : 'none'} style={{
+                        position: 'absolute', left: maximized ? 0 : rect.x, top: maximized ? 0 : rect.y,
+                        width: maximized ? hostSize?.width ?? 0 : rect.width,
+                        height: maximized ? hostSize?.height ?? 0 : rect.height,
+                        minWidth: 0, minHeight: 0,
+                    }}>
+                        <RetainedPanelSurface isActive={visible} mode="flow">{renderLeafNode(leaf)}</RetainedPanelSurface>
+                    </View>;
+                })}
+                {props.retainedLeafContents?.map(member => {
+                    const rect = leafRects.find(candidate => candidate.leafId === member.leafId);
+                    if (!rect) return null;
+                    const maximized = props.state.maximizedLeafId === member.leafId;
+                    const slot = contentSlots[member.leafId];
+                    const visible = Boolean(slot) && member.isActive && (!props.state.maximizedLeafId || maximized);
+                    // The shared frame has no content padding: the measured slot captures its header inset.
+                    const x = slot?.x ?? 0;
+                    const y = slot?.y ?? 0;
+                    return <View key={member.id} testID={`split-canvas-retained-content-${member.id}`}
+                        pointerEvents={visible ? 'auto' : 'none'} style={{
+                            position: 'absolute', left: (maximized ? 0 : rect.x) + x, top: (maximized ? 0 : rect.y) + y,
+                            width: Math.max(0, (maximized ? hostSize?.width ?? 0 : rect.width) - x),
+                            height: Math.max(0, (maximized ? hostSize?.height ?? 0 : rect.height) - y),
+                            minWidth: 0, minHeight: 0, overflow: 'hidden',
+                        }}>
+                        <RetainedPanelSurface isActive={visible} mode="flow">
+                            <SplitCanvasRetainedMemberRenderer id={member.id} leafId={member.leafId}
+                                isFocused={props.state.focusedLeafId === member.leafId} isVisible={visible}
+                                render={member.render} dispatch={props.dispatch} />
+                        </RetainedPanelSurface>
+                    </View>;
+                })}
+            </View>
+        </View>
     );
 }
 
 export const SplitCanvasHost = React.memo(SplitCanvasHostInner) as typeof SplitCanvasHostInner;
 
+function SplitCanvasRetainedMemberRendererInner<TLeafPayload>(props: Readonly<{
+    id: string;
+    leafId: string;
+    isFocused: boolean;
+    isVisible: boolean;
+    render: SplitCanvasRetainedLeafContent['render'];
+    dispatch: (action: SplitCanvasAction<TLeafPayload>) => void;
+}>) {
+    const focus = React.useCallback(() => {
+        if (props.isVisible) props.dispatch({ type: 'focusLeaf', leafId: props.leafId });
+    }, [props.dispatch, props.isVisible, props.leafId]);
+    return <SplitCanvasLeafFrame leafId={`member:${props.id}`} isFocused={props.isFocused} isMaximized={false}
+        quietChrome showControls={false} showFocusRing={false} onFocus={focus}
+        onClose={() => {}} onToggleMaximize={() => {}}>
+        {props.render({ leafId: props.leafId, isFocused: props.isFocused, isVisible: props.isVisible })}
+    </SplitCanvasLeafFrame>;
+}
+const SplitCanvasRetainedMemberRenderer = React.memo(SplitCanvasRetainedMemberRendererInner) as typeof SplitCanvasRetainedMemberRendererInner;
+
 function SplitCanvasLeafRendererInner<TLeafPayload>(props: Readonly<{
     leaf: SplitCanvasLeafNode<TLeafPayload>;
-    target: SplitCanvasDropTarget | null;
+    entityDrop?: SplitCanvasEntityDrop;
+    isSplitOffered: (leafId: string, direction: SplitCanvasDirection) => boolean;
     isFocused: boolean;
     isMaximized: boolean;
     hasMultipleLeaves: boolean;
@@ -314,6 +417,8 @@ function SplitCanvasLeafRendererInner<TLeafPayload>(props: Readonly<{
         requestSplit: (direction: SplitCanvasDirection) => void;
     }>) => React.ReactNode;
     renderLeafLabel?: (leaf: SplitCanvasLeafNode<TLeafPayload>) => string;
+    retainedContent: boolean;
+    onContentSlotLayout: (leafId: string, event: LayoutChangeEvent) => void;
     onLeafLayout: (leafId: string, event: LayoutChangeEvent) => void;
     registerLeafHost: (leafId: string, host: SplitCanvasLeafHostRef | null) => void;
     onRequestSplit: (leafId: string, direction: SplitCanvasDirection) => void;
@@ -341,6 +446,7 @@ function SplitCanvasLeafRendererInner<TLeafPayload>(props: Readonly<{
     const handleToggleMaximize = React.useCallback(() => {
         props.dispatch({ type: 'toggleMaximizeLeaf', leafId: props.leaf.id });
     }, [props.dispatch, props.leaf.id]);
+    const content = props.renderLeaf({ leaf: props.leaf, isFocused: props.isFocused, isMaximized: props.isMaximized, requestSplit });
 
     return (
         <SplitCanvasLeafFrame
@@ -360,17 +466,39 @@ function SplitCanvasLeafRendererInner<TLeafPayload>(props: Readonly<{
             onToggleMaximize={handleToggleMaximize}
         >
             <View style={leafContentContainerStyle}>
-                {props.renderLeaf({
-                    leaf: props.leaf,
-                    isFocused: props.isFocused,
-                    isMaximized: props.isMaximized,
-                    requestSplit,
-                })}
-                <SplitCanvasDropOverlay target={props.target} />
+                {props.retainedContent ? <View style={{ flexShrink: 0 }}>{content}</View> : content}
+                {props.retainedContent ? <View pointerEvents="none" testID={`split-canvas-content-slot-${props.leaf.id}`}
+                    style={{ flex: 1, minWidth: 0, minHeight: 0 }}
+                    onLayout={event => props.onContentSlotLayout(props.leaf.id, event)} /> : null}
+                {props.entityDrop ? <SplitCanvasEntityDropFeedback entityDrop={props.entityDrop}
+                    leafId={props.leaf.id} isSplitOffered={props.isSplitOffered} /> : null}
             </View>
         </SplitCanvasLeafFrame>
     );
 }
+
+/** One pane's zone: the admitted place under the carry, if any. Refused places light nothing. */
+function SplitCanvasEntityDropFeedback(props: Readonly<{
+    entityDrop: SplitCanvasEntityDrop;
+    leafId: string;
+    isSplitOffered: (leafId: string, direction: SplitCanvasDirection) => boolean;
+}>) {
+    const { runtime, id } = props.entityDrop;
+    const center = useEntityDropTargetState(runtime, splitCanvasEntityTargetId(id, props.leafId, 'center'));
+    const left = useEntityDropTargetState(runtime, splitCanvasEntityTargetId(id, props.leafId, 'left'));
+    const right = useEntityDropTargetState(runtime, splitCanvasEntityTargetId(id, props.leafId, 'right'));
+    const up = useEntityDropTargetState(runtime, splitCanvasEntityTargetId(id, props.leafId, 'up'));
+    const down = useEntityDropTargetState(runtime, splitCanvasEntityTargetId(id, props.leafId, 'down'));
+    const admitted = (state: typeof center) => state?.admission?.status === 'allowed'
+        && (state.phase === 'carrying' || state.phase === 'pending');
+    const placement = admitted(center) ? 'center' : admitted(left) ? 'left' : admitted(right) ? 'right'
+        : admitted(up) ? 'up' : admitted(down) ? 'down' : null;
+    // Read when the verdict changes, not per pointer frame.
+    const edgeMarks = placement === 'center'
+        ? SPLIT_CANVAS_EDGE_DIRECTIONS.filter(direction => props.isSplitOffered(props.leafId, direction)) : undefined;
+    return <SplitCanvasDropOverlay target={placement ? { leafId: props.leafId, placement } : null} edgeMarks={edgeMarks} />;
+}
+const SPLIT_CANVAS_EDGE_DIRECTIONS: readonly SplitCanvasDirection[] = ['left', 'right', 'up', 'down'];
 
 const SplitCanvasLeafRenderer = React.memo(
     SplitCanvasLeafRendererInner,
@@ -425,6 +553,7 @@ function SplitNodeRenderer<TLeafPayload>(props: Readonly<{
     renderNode: (node: SplitCanvasNode<TLeafPayload>) => React.ReactNode;
     getLeafMinimumSizePx?: (leaf: SplitCanvasLeafNode<TLeafPayload>) => MinimumSize;
     registerResize: (splitId: string, resize: (ratio: number) => boolean) => () => void;
+    publishLiveRatio: (splitId: string, ratio: number | null) => void;
 }>) {
     const [containerSize, setContainerSize] = React.useState({ width: 0, height: 0 });
     const [dragRatio, setDragRatio] = React.useState<number | null>(null);
@@ -437,6 +566,10 @@ function SplitNodeRenderer<TLeafPayload>(props: Readonly<{
     } = splitNodeSizing(props.node, containerSize, props.getLeafMinimumSizePx);
     const effectiveRatio = resolveSplitRatio(dragRatio ?? props.node.ratio, { minRatio, maxRatio });
     const inverseRatio = roundRatio(1 - effectiveRatio);
+    React.useLayoutEffect(() => {
+        props.publishLiveRatio(props.node.id, dragRatio === null ? null : effectiveRatio);
+        return () => props.publishLiveRatio(props.node.id, null);
+    }, [dragRatio, effectiveRatio, props.node.id, props.publishLiveRatio]);
 
     const handleLayout = React.useCallback((event: any) => {
         const width = event?.nativeEvent?.layout?.width;

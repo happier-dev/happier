@@ -1,4 +1,5 @@
 import { WORKSPACE_ACTION_INPUT_SCHEMAS, type WorkspaceActionId, type WorkspaceTabsListOutput, type WorkspaceClosedTabsListOutput } from '@happier-dev/protocol';
+import type { z } from 'zod';
 import type { SplitCanvasHostControls } from '../splitCanvas/components/SplitCanvasHost';
 import { createWorkspaceEmptyTab, type WorkspaceState } from './workspaceState';
 import type { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
@@ -6,6 +7,9 @@ import { createWorkspaceSplit } from './workspaceSplit';
 
 export type WorkspaceActionOutcome = Readonly<{ ok: true }> | WorkspaceTabsListOutput | WorkspaceClosedTabsListOutput
     | Readonly<{ ok: false; errorCode: string; error: string }>;
+type ParsedWorkspaceRequest = {
+    [Id in WorkspaceActionId]: Readonly<{ actionId: Id; data: z.output<(typeof WORKSPACE_ACTION_INPUT_SCHEMAS)[Id]> }>;
+}[WorkspaceActionId];
 
 export function workspaceActionFailure(errorCode: string): WorkspaceActionOutcome {
     return { ok: false, errorCode, error: errorCode };
@@ -36,17 +40,26 @@ export function createWorkspaceActionAdapter(input: Readonly<{
     navigation: ReturnType<typeof createWorkspaceNavigationAdapter>;
     readCanvas: () => SplitCanvasHostControls | null;
     createId: () => string;
+    phone?: boolean;
 }>) {
     return (actionId: WorkspaceActionId, parameters: unknown): WorkspaceActionOutcome => {
         const parsed = WORKSPACE_ACTION_INPUT_SCHEMAS[actionId].safeParse(parameters);
         if (!parsed.success) return workspaceActionFailure('invalid_parameters');
-        const data = parsed.data;
+        // The indexed schema validated exactly this action's input; preserve that correlation for narrowing.
+        const request = { actionId, data: parsed.data } as ParsedWorkspaceRequest;
+        const { actionId: parsedActionId, data } = request;
+        if (input.phone && (parsedActionId === 'workspace.tabs.move' || parsedActionId.startsWith('workspace.groups.')
+            || parsedActionId === 'workspace.split' || parsedActionId === 'workspace.resize'
+            || (parsedActionId === 'workspace.tabs.open' && (!('href' in data) || !data.href
+                || ('mode' in data && data.mode?.startsWith('split')))))) {
+            return workspaceActionFailure('workspace_operation_unavailable');
+        }
         const state = input.getState();
-        if (actionId === 'workspace.tabs.closed.list') return { ok: true, tabs: state.recentlyClosed.map(entry => ({
+        if (parsedActionId === 'workspace.tabs.closed.list') return { ok: true, tabs: state.recentlyClosed.map(entry => ({
             id: entry.tab.id, target: { kind: entry.tab.target.kind, params: { ...entry.tab.target.params } }, pinned: entry.tab.pinned,
             ...(entry.fallbackTitle === undefined ? {} : { title: entry.fallbackTitle }),
         })) };
-        if (actionId === 'workspace.tabs.reopen') return input.navigation.reopenTab('tabId' in data ? data.tabId : undefined)
+        if (parsedActionId === 'workspace.tabs.reopen') return input.navigation.reopenTab('tabId' in data ? data.tabId : undefined)
             ? { ok: true } : workspaceActionFailure('workspace_closed_tab_not_found');
         const requestedGroupId = 'groupId' in data && data.groupId ? data.groupId : undefined;
         const tabId = 'tabId' in data ? data.tabId : undefined;
@@ -54,19 +67,33 @@ export function createWorkspaceActionAdapter(input: Readonly<{
         const groupId = requestedGroupId ?? source?.id ?? state.focusedGroupId;
         if (tabId && !source) return workspaceActionFailure('workspace_tab_not_found');
         if ('groupId' in data && data.groupId && !state.groups[data.groupId]) return workspaceActionFailure('workspace_group_not_found');
-        if (actionId === 'workspace.split' && tabId && requestedGroupId && source?.id !== requestedGroupId) return workspaceActionFailure('workspace_group_mismatch');
-        switch (actionId) {
+        if (parsedActionId === 'workspace.split' && tabId && requestedGroupId && source?.id !== requestedGroupId) return workspaceActionFailure('workspace_group_mismatch');
+        switch (parsedActionId) {
             case 'workspace.tabs.list': return projectWorkspaceTabsList(state);
             case 'workspace.tabs.open':
                 if ('href' in data && data.href) {
+                    const mode = 'mode' in data && data.mode ? data.mode : 'newTab';
+                    const reuseExisting = 'reuseExisting' in data ? data.reuseExisting ?? true : true;
+                    const direction = mode === 'splitLeft' ? 'left' : mode === 'splitRight' ? 'right'
+                        : mode === 'splitUp' ? 'up' : mode === 'splitDown' ? 'down' : null;
+                    const alreadyOpen = reuseExisting ? input.navigation.findOpenHref(data.href) : null;
+                    const measurement = direction && !alreadyOpen
+                        ? input.readCanvas()?.readSplitMeasurement(groupId, direction) : null;
+                    if (direction && !measurement && !alreadyOpen) {
+                        return workspaceActionFailure('workspace_layout_unmeasured');
+                    }
                     if (!input.navigation.openHref(data.href, {
                         ...(tabId ? { tabId } : {}),
                         ...('groupId' in data && data.groupId ? { groupId: data.groupId } : {}),
-                        ...('mode' in data && data.mode ? { mode: data.mode } : {}),
+                        ...('beforeTabId' in data ? { beforeTabId: data.beforeTabId } : {}),
+                        mode, reuseExisting,
+                        ...(measurement ? { availableSizePx: measurement.availableSizePx, minimumFirstSizePx: measurement.minimumExistingSizePx } : {}),
                     })) return workspaceActionFailure('workspace_destination_unavailable');
                 } else {
                     if (tabId) return workspaceActionFailure('invalid_parameters');
-                    input.navigation.dispatch({ type: 'openTab', groupId, tab: createWorkspaceEmptyTab(input.createId()) });
+                    input.navigation.dispatch({ type: 'openTab', groupId, tab: createWorkspaceEmptyTab(input.createId()),
+                        ...('beforeTabId' in data ? { beforeTabId: data.beforeTabId } : {}),
+                    });
                 }
                 break;
             case 'workspace.tabs.activate':
@@ -82,12 +109,18 @@ export function createWorkspaceActionAdapter(input: Readonly<{
                 break;
             case 'workspace.tabs.move':
                 if (!tabId || !source || !('targetGroupId' in data) || !state.groups[data.targetGroupId]) return workspaceActionFailure('workspace_group_not_found');
-                input.navigation.dispatch({ type: 'moveTab', tabId, sourceGroupId: source.id, targetGroupId: data.targetGroupId });
+                input.navigation.dispatch({ type: 'moveTab', tabId, sourceGroupId: source.id, targetGroupId: data.targetGroupId,
+                    ...('beforeTabId' in data ? { beforeTabId: data.beforeTabId } : {}),
+                });
                 break;
             case 'workspace.tabs.reorder':
-                if (!tabId || !source || !('index' in data)) return workspaceActionFailure('workspace_tab_not_found');
-                if (data.index >= source.tabIds.length) return workspaceActionFailure('workspace_tab_index_out_of_range');
-                input.navigation.dispatch({ type: 'reorderTab', groupId: source.id, tabId, index: data.index });
+                if (!tabId || !source) return workspaceActionFailure('workspace_tab_not_found');
+                if ('index' in data) {
+                    if (data.index >= source.tabIds.length) return workspaceActionFailure('workspace_tab_index_out_of_range');
+                    input.navigation.dispatch({ type: 'reorderTab', groupId: source.id, tabId, index: data.index });
+                } else if ('beforeTabId' in data) {
+                    input.navigation.dispatch({ type: 'reorderTab', groupId: source.id, tabId, beforeTabId: data.beforeTabId });
+                }
                 break;
             case 'workspace.groups.focus': input.navigation.dispatch({ type: 'focusGroup', groupId }); break;
             case 'workspace.groups.maximize':

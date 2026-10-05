@@ -4,13 +4,11 @@ import { View, useWindowDimensions, Platform } from 'react-native';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { ResizableDockedPane, type ResizableDockedPaneCommitMeta } from '@/components/ui/panels/ResizableDockedPane';
 import { resolveScaledPaneWidthPx } from '@/components/appShell/panes/layout/paneSizing';
-import { StyleSheet } from 'react-native-unistyles';
 import { resolveSidebarDockMaxWidthPx, SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
 import { AppRail } from './appRail/AppRail';
 import { AppShellColumn } from './appRail/AppShellColumn';
 import { AppShellTitleStrip } from './appRail/AppShellTitleStrip';
 import { AppShellPeekLayer, AppShellPeekProvider } from './appRail/AppShellPeek';
-import { appShellColumnSurface } from './appRail/appShellColumnSurface';
 import { APP_RAIL_WIDTH_PX } from './appRail/appRailMetrics';
 import {
     resolveAppRailEntryColumn,
@@ -23,74 +21,17 @@ import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/deskt
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { resolvePaneFocusModeRouteScopeId } from '@/components/appShell/panes/focusMode/resolvePaneFocusModeRouteScopeId';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
-import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
+import { AppShellMaterialFrame } from './AppShellMaterialFrame';
 import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
 import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { useWorkspaceShellEnabled } from '@/components/appShell/workspace/useWorkspaceShellEnabled';
 import { WorkspaceShell } from '@/components/appShell/workspace/WorkspaceShell';
 import { createWorkspaceBarGeometry, WorkspaceBarGeometryContext } from '@/components/appShell/workspace/titleBar/workspaceBarGeometry';
 import { registerShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
+import { VoiceTopBarPresenceMount } from '@/components/voice/presence/VoiceTopBarPresence';
 
-/**
- * The sheet that holds the column and the page lies on the window's canvas, inset from the window's
- * right and bottom edges with rounded corners, the rail and title strip around it (lab `xrail-R1`).
- */
-const CONTENT_SHEET_RADIUS_PX = 12;
-const CONTENT_SHEET_WINDOW_INSET_PX = 8;
-
-const stylesheet = StyleSheet.create((theme) => ({
-    root: {
-        flexDirection: 'column',
-        minWidth: 0,
-        minHeight: 0,
-        flex: 1,
-        position: 'relative',
-    },
-    body: {
-        flexDirection: 'row',
-        minWidth: 0,
-        minHeight: 0,
-        flex: 1,
-        position: 'relative',
-    },
-    canvas: {
-        // The plane the content sheet lies on. Painted here so the sheet's rounded
-        // sidebar-facing corners reveal the canvas rather than whatever is behind the app.
-        backgroundColor: theme.colors.background.canvas,
-    },
-    content: {
-        flex: 1,
-        minWidth: 0,
-        minHeight: 0,
-    },
-    contentSheet: {
-        flexDirection: 'row',
-        marginRight: CONTENT_SHEET_WINDOW_INSET_PX,
-        marginBottom: CONTENT_SHEET_WINDOW_INSET_PX,
-        borderRadius: CONTENT_SHEET_RADIUS_PX,
-        overflow: 'hidden',
-        backgroundColor: theme.colors.surface.base,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.border.default,
-    },
-    /**
-     * The seam shadow. An inert overlay tracing the content sheet's exact footprint — same left
-     * corners, transparent fill — whose only job is to cast the sheet's lift shadow leftward onto
-     * the sidebar.
-     *
-     * It stays separate from the clipped content sheet so the shadow reaches the sidebar.
-     * Its rounded shape keeps the cast aligned with the sheet's corners.
-     */
-    contentSheetSeamShadow: {
-        position: 'absolute',
-        top: 0,
-        bottom: CONTENT_SHEET_WINDOW_INSET_PX,
-        right: CONTENT_SHEET_WINDOW_INSET_PX,
-        borderRadius: CONTENT_SHEET_RADIUS_PX,
-        zIndex: 2,
-        boxShadow: theme.colors.shadowSeamCastBoxShadow,
-    },
-}));
+/** The title strip's trailing Voice node (Top bar mode); one element, so the strip's memo holds. */
+const VOICE_TOP_BAR_TRAILING = <VoiceTopBarPresenceMount />;
 
 // Like the docked column, a peeked one keeps its wheel and touch scrolling from document scroll locks.
 const stopPeekScrollPropagation = (event: { stopPropagation?: () => void }) => event.stopPropagation?.();
@@ -104,7 +45,6 @@ const renderPeekColumn = (column: AppShellColumnModel) => (
 );
 
 export const SidebarNavigator = React.memo(() => {
-    const styles = stylesheet;
     const pathname = usePathname();
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const workspace = useOptionalWorkspaceNavigation();
@@ -270,55 +210,29 @@ export const SidebarNavigator = React.memo(() => {
         <WorkspaceBarGeometryContext.Provider value={showSidebar ? workspaceBarGeometry : null}>
         <AppShellPeekProvider enabled={showSidebar} currentId={column.kind === 'none' ? null : location.railEntryId} columnShown={columnShown}>
         <InboxSummaryProvider>
-        <DesktopMainContentDragSurface
-            enabled={showSidebar && Platform.OS === 'web' && isDesktopHost()}
+        <AppShellMaterialFrame
+            showChrome={showSidebar}
+            dragEnabled={showSidebar && Platform.OS === 'web' && isDesktopHost()}
             leftOffsetPx={shellLeftPx}
-            style={[styles.root, showSidebar && styles.canvas]}
-        >
-            {showSidebar ? (
-                <AppShellTitleStrip
-                    key="title-strip"
-                    columnVisible={columnShown}
-                    columnToggleAvailable={column.kind !== 'none'}
-                    onToggleColumn={handleToggleColumn}
+            sidebarWidth={sidebarWidth}
+            titleStrip={showSidebar ? (
+                <AppShellTitleStrip key="title-strip" columnVisible={columnShown}
+                    columnToggleAvailable={column.kind !== 'none'} onToggleColumn={handleToggleColumn}
                     navigation={workspace?.active ? workspace : undefined}
                     workspaceCatalog={workspace?.active ? catalog : undefined}
-                />
+                    trailing={VOICE_TOP_BAR_TRAILING} />
             ) : null}
-            <View key="shell-body" style={styles.body}>
-                {showSidebar ? <AppRail key="rail" /> : null}
-                {/* The sheet holds the destination's column and the page (lab `xrail-R1`); the rail and
-                    title strip sit on the window's canvas around it. */}
-                <View key="sheet" style={[styles.content, showSidebar && styles.contentSheet]}>
-                    {columnShown ? (
-                        <View key="column" testID="navigation-sidebar" style={[appShellColumnSurface.column, { width: sidebarWidth }]}>
-                            {columnContent}
-                        </View>
-                    ) : null}
-                    <View key="route-content" style={styles.content}>
-                        <View style={[styles.content, workspace?.active && { display: 'none' }]}>
-                            <Stack screenOptions={stackNavigationOptions} />
-                        </View>
-                        {workspace?.active ? <WorkspaceShell catalog={catalog} /> : null}
-                    </View>
-                    {/* A destination's column peeked from the rail, in the column's own place and width. */}
-                    {showSidebar ? (
-                        <AppShellPeekLayer
-                            key="column-peek"
-                            widthPx={columnShown ? sidebarWidth : effectiveSidebarWidthPx}
-                            resolveColumn={resolvePeekColumn}
-                            renderColumn={renderPeekColumn}
-                        />
-                    ) : null}
-                </View>
-                {Platform.OS === 'web' && showSidebar ? (
-                    <View
-                        pointerEvents="none"
-                        style={[styles.contentSheetSeamShadow, { left: APP_RAIL_WIDTH_PX }]}
-                    />
-                ) : null}
+            rail={showSidebar ? <AppRail key="rail" /> : null}
+            column={columnShown ? columnContent : null}
+            peek={showSidebar ? <AppShellPeekLayer key="column-peek"
+                widthPx={columnShown ? sidebarWidth : effectiveSidebarWidthPx}
+                resolveColumn={resolvePeekColumn} renderColumn={renderPeekColumn} /> : null}
+        >
+            <View style={[{ flex: 1, minWidth: 0, minHeight: 0 }, workspace?.active && { display: 'none' }]}>
+                <Stack screenOptions={stackNavigationOptions} />
             </View>
-        </DesktopMainContentDragSurface>
+            {workspace?.active ? <WorkspaceShell catalog={catalog} /> : null}
+        </AppShellMaterialFrame>
         </InboxSummaryProvider>
         </AppShellPeekProvider>
         </WorkspaceBarGeometryContext.Provider>

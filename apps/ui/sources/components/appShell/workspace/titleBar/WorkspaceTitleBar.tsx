@@ -14,11 +14,11 @@ import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } 
 import { createWorkspaceSplit } from '../workspaceSplit';
 import { WorkspaceGroupTabs } from './WorkspaceGroupTabs';
 import {
-    resolveWorkspaceTopRowGroupIds, useWorkspaceBarFrames, WorkspaceBarGeometryContext, type WorkspaceBarGeometry,
+    resolveWorkspaceTopRowGroupIds, resolveWorkspaceBarSegmentFrame, WORKSPACE_BAR_CONTROL_GAP_PX,
+    useWorkspaceBarFrames, WorkspaceBarGeometryContext, type WorkspaceBarGeometry,
 } from './workspaceBarGeometry';
 
 /** With the column hidden, the first pane's tabs start this far after the strip's own controls (lab T). */
-const CLUSTER_GAP_PX = 12;
 const SEGMENT_END_PADDING_PX = 6;
 
 /**
@@ -31,6 +31,8 @@ export function WorkspaceTitleBar(props: Readonly<{
     /** Where the strip's own controls end, in the strip's coordinates. */
     clusterEndPx: number;
     stripHeightPx: number;
+    /** Start of the measured trailing accessory reservation, in strip coordinates. */
+    trailingStartPx?: number;
 }>) {
     const workspace = useOptionalWorkspaceNavigation();
     const geometry = React.useContext(WorkspaceBarGeometryContext);
@@ -44,6 +46,7 @@ function WorkspaceTitleBarSegments(props: Readonly<{
     catalog: readonly CompactAppDestination[];
     clusterEndPx: number;
     stripHeightPx: number;
+    trailingStartPx?: number;
 }>) {
     const styles = stylesheet;
     const { workspace } = props;
@@ -61,11 +64,13 @@ function WorkspaceTitleBarSegments(props: Readonly<{
         const group = workspace.state.groups[groupId];
         const frame = frames.get(groupId);
         if (!group || !frame) return [];
-        const paneLeft = frame.x - originX;
-        const left = index === 0 ? Math.max(paneLeft, props.clusterEndPx + CLUSTER_GAP_PX) : paneLeft;
-        const width = paneLeft + frame.width - left;
-        if (width <= 0) return [];
-        return [{ group, left, width, paneLeft, last: index === topRow.length - 1 }];
+        const segment = resolveWorkspaceBarSegmentFrame({
+            frame, originX,
+            leadingEndPx: index === 0 ? props.clusterEndPx + WORKSPACE_BAR_CONTROL_GAP_PX : 0,
+            trailingStartPx: props.trailingStartPx,
+        });
+        if (!segment) return [];
+        return [{ group, ...segment, last: index === topRow.length - 1 }];
     });
     return (
         <View ref={layerRef} onLayout={onLayerLayout} pointerEvents="box-none" style={styles.layer} testID="workspace-title-bar">

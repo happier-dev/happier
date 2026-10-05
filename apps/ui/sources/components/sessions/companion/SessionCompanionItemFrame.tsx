@@ -1,22 +1,20 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
-import { Gesture } from 'react-native-gesture-handler';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
-import { scheduleOnRN } from 'react-native-worklets';
 
-import {
-    resolveSessionBoardAnchoredPointerDrop,
-    resolveSessionBoardDragMove,
-    resolveSessionBoardDragOffset,
-    SessionBoardItemMoveHandle,
-    type SessionBoardAnchoredMove,
-    type SessionBoardItemRect,
-} from '@/components/sessions/board/SessionBoardItemMoveHandle';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { SessionSurfaceEntityDragHandle, SessionSurfaceEntityTargetFeedback, useSessionSurfaceEntityDrag, type SessionSurfaceEntityBinding } from '@/components/sessions/board/SessionSurfaceEntityDrag';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
-import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
+import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
+import { buildWidgetInstanceActions } from '@/components/widgets/frame/widgetFrameMenu';
+import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
+import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
+import { useWidgetInstanceDescriptor } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
+import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
+import type { WidgetInputBindingsV1, WidgetInstanceV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -30,29 +28,48 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 /**
- * Everything the frame needs to offer direct manipulation for one item.
- *
- * The Companion is one vertical column, so only that axis is resisted at the
- * ends. Ordering is semantic — the frame reports a target index and never a
- * pixel position — and both the pointer drop and the staged keyboard position
- * are resolved by the Board's existing pure owners.
+ * A direct personal widget copy's own controls (lab `dashboards` dbind E/X): Edit inputs… and Rename
+ * in its ⋯, and the card's repair line. They change this copy alone, through the Companion's owner.
  */
-export type SessionCompanionItemMove = Readonly<{
-    itemKey: string;
-    orderedKeys: readonly string[];
-    rects: ReadonlyMap<string, SessionBoardItemRect>;
-    moveToIndex: (index: number) => void;
+export type SessionCompanionInstanceControls = Readonly<{
+    instance: WidgetInstanceV1;
+    scope: WidgetSurfaceRefV1 | null;
+    context: WidgetSurfaceContext;
+    setInputs: (bindings: WidgetInputBindingsV1) => Promise<WidgetSetupSubmitResult>;
+    /** `null` goes back to the widget's own name. */
+    rename: (displayName: string | null) => void;
 }>;
 
-function resolveIndexForAnchor(
-    move: SessionCompanionItemMove,
-    anchor: SessionBoardAnchoredMove,
-): number | null {
-    const withoutDragged = move.orderedKeys.filter((key) => key !== move.itemKey);
-    const anchorIndex = withoutDragged.indexOf(anchor.itemId);
-    if (anchorIndex < 0) return null;
-    return anchorIndex + (anchor.side === 'after' ? 1 : 0);
-}
+/** What the copy's body draws for those controls: the rename field in its title, and the repair line. */
+export type SessionCompanionInstanceView = Readonly<{
+    titleEditor: React.ReactElement | null;
+    onRepairInputs?: () => void;
+}>;
+
+type SessionCompanionItemFrameProps = Readonly<{
+    /** The item's own accessible name, from its canonical presentation owner. */
+    label: string;
+    actions: readonly ItemAction[];
+    /**
+     * The item body. It receives this placement's controls (reorder handle and
+     * item menu) and draws them at the end of its own header line, so the item
+     * keeps one header and the frame adds no second title row.
+     */
+    children: (headerAccessory: React.ReactNode, instanceView?: SessionCompanionInstanceView) => React.ReactNode;
+    /** Every item after the first sits under a hairline. */
+    separated?: boolean;
+    /**
+     * The item draws itself in the widget frame (Plan, Board widgets, glances), which owns its own
+     * hairline (plain) or card and its insets; this frame then adds no padding or hairline of its own.
+     */
+    flush?: 'plain' | 'card';
+    testID: string;
+    onLayout?: (event: LayoutChangeEvent) => void;
+    /** Absent while measuring or without a current qualified Companion owner. */
+    entityDrag?: SessionSurfaceEntityBinding;
+    /** A direct personal widget copy (never a Board reference); absent while measuring. */
+    instanceControls?: SessionCompanionInstanceControls;
+}>;
 
 /**
  * The Companion's local frame around one item.
@@ -67,189 +84,62 @@ function resolveIndexForAnchor(
  * handle (pointer drag plus its keyboard staging and announcements) and the
  * overflow menu keeps the explicit Move Up/Down/First/Last entries beside it.
  */
-export const SessionCompanionItemFrame = React.memo(function SessionCompanionItemFrame(props: Readonly<{
-    /** The item's own accessible name, from its canonical presentation owner. */
-    label: string;
-    actions: readonly ItemAction[];
-    /**
-     * The item body. It receives this placement's controls (reorder handle and
-     * item menu) and draws them at the end of its own header line, so the item
-     * keeps one header and the frame adds no second title row.
-     */
-    children: (headerAccessory: React.ReactNode) => React.ReactNode;
-    /** Every item after the first sits under a hairline. */
-    separated?: boolean;
-    /**
-     * The item draws itself in the widget frame (Plan, Board widgets, glances), which owns its own
-     * hairline (plain) or card and its insets; this frame then adds no padding or hairline of its own.
-     */
-    flush?: 'plain' | 'card';
-    testID: string;
-    onLayout?: (event: LayoutChangeEvent) => void;
-    /** Absent while measuring, on a read-only Companion or for a single item. */
-    move?: SessionCompanionItemMove;
+export const SessionCompanionItemFrame = React.memo(function SessionCompanionItemFrame(props: SessionCompanionItemFrameProps) {
+    // An item's kind never changes under its key, so this picks one frame for its lifetime.
+    return props.instanceControls
+        ? <InstanceItemFrame {...props} controls={props.instanceControls} />
+        : <ItemFrameBody {...props} />;
+});
+
+function InstanceItemFrame(props: SessionCompanionItemFrameProps & Readonly<{ controls: SessionCompanionInstanceControls }>) {
+    const { instance, scope, context, setInputs, rename } = props.controls;
+    const projection = useAppShellPluginUiProjection().pluginUiProjection;
+    const installed = React.useMemo(() => readWidgetDescriptor(projection, instance.definition), [instance.definition, projection]);
+    const candidate = useWidgetInstanceDescriptor(scope, instance, installed);
+    const inputs = useWidgetInputsEditor({ instance, candidate, scope, context, audience: 'personal', setInputs, testID: props.testID });
+    const title = instance.displayName ?? candidate?.title ?? props.label;
+    // Rename stays optional (lab dbind N1): an empty name, or the widget's own, goes back to it.
+    const renaming = useWidgetFrameRename({
+        title,
+        testID: props.testID,
+        onRename: (next) => {
+            const displayName = next.length > 0 && next !== candidate?.title ? next : null;
+            if (displayName !== (instance.displayName ?? null)) rename(displayName);
+        },
+    });
+    const editInputs = inputs.editInputs;
+    const beginRename = renaming.begin;
+    const definition = useWidgetDefinitionFlows({ instance, scope, anchorRef: inputs.anchorRef, editInputs, testID: props.testID });
+    const actions = React.useMemo<readonly ItemAction[]>(() => [
+        ...buildWidgetInstanceActions({ editInputs, onRename: beginRename, onAbout: definition.about }),
+        ...props.actions,
+    ], [beginRename, definition.about, editInputs, props.actions]);
+    const view = React.useMemo<SessionCompanionInstanceView>(() => ({
+        titleEditor: renaming.field,
+        ...(inputs.onRepairInputs ? { onRepairInputs: inputs.onRepairInputs } : {}),
+    }), [inputs.onRepairInputs, renaming.field]);
+    const children = props.children;
+    return (
+        <>
+            <ItemFrameBody {...props} label={title} actions={actions} controlsRef={inputs.anchorRef}>
+                {(accessory) => children(accessory, view)}
+            </ItemFrameBody>
+            {inputs.popover}
+            {definition.panel}
+        </>
+    );
+}
+
+function ItemFrameBody(props: SessionCompanionItemFrameProps & Readonly<{
+    /** Edit inputs anchors at the ⋯. */
+    controlsRef?: React.RefObject<View | null>;
 }>) {
     const styles = stylesheet;
     const actions = React.useMemo(() => [...props.actions], [props.actions]);
-    const move = props.move;
-    const moveRef = React.useRef(move);
-    moveRef.current = move;
-
-    const reduceMotion = useReducedMotionPreference();
-    const liftDurationMs = reduceMotion ? motionTokens.durationMs.instant : motionTokens.durationMs.fast;
-    const dragY = useSharedValue(0);
-    const dragging = useSharedValue(0);
-    const dragCancelled = useSharedValue(0);
-    const pointerDragActive = React.useRef(false);
-    const pointerDragCancelled = React.useRef(false);
-
-    const position = move ? move.orderedKeys.indexOf(move.itemKey) : -1;
-    const canMoveBefore = position > 0;
-    const canMoveAfter = position >= 0 && position < (move?.orderedKeys.length ?? 0) - 1;
-
-    const applyIndex = React.useCallback((index: number | null) => {
-        const current = moveRef.current;
-        if (!current || index === null) return;
-        const currentIndex = current.orderedKeys.indexOf(current.itemKey);
-        if (currentIndex < 0 || index === currentIndex) return;
-        current.moveToIndex(index);
-    }, []);
-
-    const moveAnchored = React.useCallback((anchor: SessionBoardAnchoredMove) => {
-        const current = moveRef.current;
-        if (!current) return;
-        applyIndex(resolveIndexForAnchor(current, anchor));
-    }, [applyIndex]);
-
-    const moveByDirection = React.useCallback((direction: 'before' | 'after') => {
-        const current = moveRef.current;
-        if (!current) return;
-        const currentIndex = current.orderedKeys.indexOf(current.itemKey);
-        if (currentIndex < 0) return;
-        applyIndex(currentIndex + (direction === 'before' ? -1 : 1));
-    }, [applyIndex]);
-
-    const beginPointerDrag = React.useCallback(() => {
-        pointerDragActive.current = true;
-        pointerDragCancelled.current = false;
-        dragCancelled.value = 0;
-    }, [dragCancelled]);
-
-    const cancelPointerDrag = React.useCallback(() => {
-        if (!pointerDragActive.current) return false;
-        pointerDragActive.current = false;
-        pointerDragCancelled.current = true;
-        dragCancelled.value = 1;
-        dragging.value = withTiming(0, { duration: liftDurationMs });
-        dragY.value = withTiming(0, { duration: liftDurationMs });
-        return true;
-    }, [dragCancelled, dragY, dragging, liftDurationMs]);
-
-    // `succeeded` separates "the person dropped it here" from "the system took
-    // the pointer away"; gesture handler reports both through one callback.
-    const commitDrag = React.useCallback((translationY: number, succeeded: boolean) => {
-        const cancelled = pointerDragCancelled.current;
-        pointerDragActive.current = false;
-        pointerDragCancelled.current = false;
-        const current = moveRef.current;
-        if (!succeeded || cancelled || !current) return;
-        const anchor = resolveSessionBoardAnchoredPointerDrop({
-            draggedId: current.itemKey,
-            orderedIds: current.orderedKeys,
-            itemRects: current.rects,
-            translationX: 0,
-            translationY,
-            droppedInside: true,
-        });
-        if (anchor) {
-            moveAnchored(anchor);
-            return;
-        }
-        // No card under the drop point (the gap between two cards, or past the
-        // last one): fall back to the shared one-step threshold rather than
-        // silently discarding a deliberate drag.
-        const direction = resolveSessionBoardDragMove({
-            translationX: 0,
-            translationY,
-            canMoveBefore,
-            canMoveAfter,
-            succeeded: true,
-        });
-        if (direction) moveByDirection(direction);
-    }, [canMoveAfter, canMoveBefore, moveAnchored, moveByDirection]);
-
-    const moveGesture = React.useMemo(() => Gesture.Pan()
-        .minDistance(6)
-        .onStart(() => {
-            'worklet';
-            dragging.value = withTiming(1, { duration: liftDurationMs });
-            scheduleOnRN(beginPointerDrag);
-        })
-        .onUpdate((event) => {
-            'worklet';
-            if (dragCancelled.value > 0) return;
-            dragY.value = resolveSessionBoardDragOffset({
-                translation: event.translationY,
-                canMoveBefore,
-                canMoveAfter,
-            });
-        })
-        .onEnd((event, success) => {
-            'worklet';
-            const shouldCommit = success && dragCancelled.value === 0;
-            scheduleOnRN(commitDrag, event.translationY, shouldCommit);
-        })
-        .onFinalize(() => {
-            'worklet';
-            dragCancelled.value = 0;
-            dragging.value = withTiming(0, { duration: liftDurationMs });
-            if (liftDurationMs === 0) {
-                dragY.value = 0;
-                return;
-            }
-            dragY.value = withSpring(0);
-        }), [
-        beginPointerDrag,
-        canMoveAfter,
-        canMoveBefore,
-        commitDrag,
-        dragCancelled,
-        dragY,
-        dragging,
-        liftDurationMs,
-    ]);
-
-    const dragStyle = useAnimatedStyle(() => ({
-        position: 'relative',
-        zIndex: dragging.value > 0 ? 20 : 0,
-        opacity: 1 - (dragging.value * 0.14),
-        transform: [
-            { translateY: dragY.value },
-            { scale: 1 + (dragging.value * 0.015) },
-        ],
-    }));
-
-    const reorderable = move !== undefined && move.orderedKeys.length > 1 && position >= 0;
-
-    const accessory = reorderable || actions.length > 0 ? (
-        <View style={styles.controls}>
-            {reorderable && move ? (
-                <SessionBoardItemMoveHandle
-                    testID={`${props.testID}-move-handle`}
-                    gesture={moveGesture}
-                    onMove={moveByDirection}
-                    onMoveAnchored={moveAnchored}
-                    itemId={move.itemKey}
-                    orderedItemIds={move.orderedKeys}
-                    canMoveBefore={canMoveBefore}
-                    canMoveAfter={canMoveAfter}
-                    accessibilityLabel={t('sessionBoard.item.reorderA11y', { title: props.label })}
-                    itemTitle={props.label}
-                    position={position + 1}
-                    total={move.orderedKeys.length}
-                    onCancelPointerDrag={cancelPointerDrag}
-                />
-            ) : null}
+    const drag = useSessionSurfaceEntityDrag(props.entityDrag ?? null);
+    const accessory = props.entityDrag || actions.length > 0 ? (
+        <View style={styles.controls} ref={props.controlsRef} collapsable={false}>
+            {props.entityDrag ? <SessionSurfaceEntityDragHandle drag={drag} title={props.label} testID={`${props.testID}-move-handle`} /> : null}
             {actions.length > 0 ? (
                 <ItemRowActions
                     title={props.label}
@@ -268,17 +158,14 @@ export const SessionCompanionItemFrame = React.memo(function SessionCompanionIte
         </View>
     ) : null;
 
-    // One node carries the frame, its measured rect and the drag transform. A
-    // separate animated wrapper would make `onLayout` report a position relative
-    // to itself — always the origin — and the shared pointer-drop resolver
-    // anchors against the item's place in the scrolled column.
     return (
-        <Animated.View
-            style={[props.flush ? (props.flush === 'card' ? styles.cardGap : null) : styles.root, !props.flush && props.separated ? styles.separated : null, dragStyle]}
+        <View ref={drag.ref} collapsable={false}
+            style={[props.flush ? (props.flush === 'card' ? styles.cardGap : null) : styles.root, !props.flush && props.separated ? styles.separated : null]}
             testID={props.testID}
-            onLayout={props.onLayout}
+            onLayout={event => { props.onLayout?.(event); drag.onLayout(event); }}
         >
             {props.children(accessory)}
-        </Animated.View>
+            <SessionSurfaceEntityTargetFeedback drag={drag} testID={props.testID} />
+        </View>
     );
-});
+}

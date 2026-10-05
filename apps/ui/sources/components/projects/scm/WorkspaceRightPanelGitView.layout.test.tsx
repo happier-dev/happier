@@ -39,6 +39,12 @@ vi.mock('@expo/vector-icons', async () => {
 // Markdown: throwing if invoked keeps this unrelated dependency from bypassing the tested path.
 const splitStreamingRevealTextParts = vi.hoisted(() => vi.fn(() => { throw new Error('Unexpected streaming Markdown in Git'); }));
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts }));
+// Unrelated encryption HTTP API is unavailable in the moving checkout. Git does not call it.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unexpected = () => { throw new Error('Unexpected session key-envelope HTTP request in Git'); };
+    return { createSessionDataKeyEnvelopeClient: unexpected, readSessionDataKeyEnvelopeCollectionPage: unexpected,
+        prepareSessionDataKeyEnvelopesForScope: unexpected, prepareSessionDataKeyEnvelopesDetached: unexpected };
+});
 // The native list runtime needs a viewport; render its slots at the framework boundary.
 vi.mock('@legendapp/list/react-native', () => ({
     LegendList: (props: Readonly<{ ListHeaderComponent?: React.ReactNode; ListFooterComponent?: React.ReactNode; ListEmptyComponent?: React.ReactNode }>) => (
@@ -49,6 +55,11 @@ vi.mock('@legendapp/list/react-native', () => ({
 vi.mock('@/sync/ops/scm/machineScm', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/sync/ops/scm/machineScm')>(),
     machineScmStatusSnapshot: vi.fn(async () => ({ success: false, error: 'offline' })),
+    machineScmBranchMerge: vi.fn(),
+    machineScmBranchRebase: vi.fn(),
+    machineScmBranchOperationSkip: vi.fn(),
+    machineScmRemoteAdd: vi.fn(),
+    machineScmCommitUndoLast: vi.fn(),
     machineScmLogList: vi.fn(async () => ({
         success: true,
         entries: [{ sha: 'abc123', shortSha: 'abc123', subject: 'Saved project change', body: '', authorName: 'Ada', authorEmail: '', timestamp: 1 }],
@@ -58,20 +69,34 @@ vi.mock('@/sync/ops/scm/machineScm', async (importOriginal) => ({
 vi.mock('@/sync/ops', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/sync/ops')>(),
     sessionScmLogList: vi.fn(),
+    sessionScmBranchCheckout: vi.fn(),
+}));
+vi.mock('@/sync/ops/sessionScm', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/ops/sessionScm')>(),
+    sessionScmStatusSnapshot: vi.fn(),
 }));
 
 const scope = { serverId: 's1', machineId: 'm1', rootPath: '/repo' };
-const snapshot: ScmWorkingSnapshot = {
+const snapshot = {
     projectKey: 'project-layout', fetchedAt: 1,
     repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
-    capabilities: { ...EMPTY_SCM_CAPABILITIES, readLog: true, writeCommit: true },
+    capabilities: { ...EMPTY_SCM_CAPABILITIES, capabilityScope: 'local-backend', readLog: true, writeCommit: true },
     branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
     hasConflicts: false, entries: [],
     totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
-};
+} satisfies ScmWorkingSnapshot;
 
 describe('project Git presentation', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { machineScmStatusSnapshot, machineScmRemoteAdd, machineScmBranchMerge, machineScmBranchRebase, machineScmBranchOperationSkip, machineScmCommitUndoLast } = await import('@/sync/ops/scm/machineScm');
+        vi.mocked(machineScmStatusSnapshot).mockReset().mockResolvedValue({ success: false, error: 'offline' });
+        vi.mocked(machineScmRemoteAdd).mockReset();
+        vi.mocked(machineScmCommitUndoLast).mockReset();
+        vi.mocked(machineScmBranchMerge).mockReset();
+        vi.mocked(machineScmBranchRebase).mockReset();
+        vi.mocked(machineScmBranchOperationSkip).mockReset();
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.alert).mockClear();
         storage.setState({ settings: {
             ...storage.getState().settings,
             scmGitPaneLayout: 'unified', experiments: true,
@@ -79,6 +104,119 @@ describe('project Git presentation', () => {
         } });
         storage.getState().updateWorkspaceScmSnapshot(scope, snapshot);
         storage.getState().updateWorkspaceScmSnapshotError(scope, null);
+    });
+
+    it('reconciles an unknown branch switch through the real branch consumer', async () => {
+        projectManager.clear();
+        storage.getState().applySessions([createSessionFixture({ id: 'branch-session', active: true,
+            metadata: { path: '/repo', host: 'localhost', machineId: 'm1' } })]);
+        const before = { ...snapshot, capabilities: { ...snapshot.capabilities, writeBranchCheckout: true } };
+        storage.getState().updateSessionProjectScmSnapshot('branch-session', before);
+        const { sessionScmBranchCheckout } = await import('@/sync/ops');
+        const { sessionScmStatusSnapshot } = await import('@/sync/ops/sessionScm');
+        vi.mocked(sessionScmBranchCheckout).mockReset().mockImplementationOnce(async () => {
+            vi.mocked(sessionScmStatusSnapshot).mockResolvedValue({ success: true, snapshot: {
+                ...before, branch: { ...before.branch, head: 'feature' },
+            } });
+            return { success: false, outcome: { v: 1, kind: 'outcome_unknown', errorCode: 'COMMAND_OUTCOME_UNKNOWN',
+                reconciliation: { kind: 'repository_status', cwd: '/repo' }, nextActions: [{ kind: 'refresh' }] } };
+        });
+        const { GitBranchButton } = await import('@/components/sessions/panes/git/branches/GitBranchButton');
+        const { WorkspaceScmBranchPopover } = await import('@/components/workspaces/scm/branches/WorkspaceScmBranchPopover');
+        const screen = await renderScreen(<GitBranchButton sessionId="branch-session" snapshot={before} />);
+        // Activate the real menu's published item callback; no branch service or mutation logic is mocked.
+        await act(async () => { await screen.findByType(WorkspaceScmBranchPopover).props.onSelectItem('branch:feature'); });
+        expect(storage.getState().getSessionProjectScmSnapshot('branch-session')?.branch.head).toBe('feature');
+        expect(storage.getState().getSessionProjectScmOperationLog('branch-session')[0]?.outcome?.kind).toBe('outcome_unknown');
+        expect(sessionScmBranchCheckout).toHaveBeenCalledOnce();
+    });
+
+    it('reconciles an unknown Undo without repeating the write or losing its outcome', async () => {
+        projectManager.clear();
+        const expectedHeadOid = 'a'.repeat(40);
+        const currentHeadOid = 'b'.repeat(40);
+        const before = { ...snapshot, capabilities: { ...snapshot.capabilities, writeCommitUndoLast: true },
+            branch: { ...snapshot.branch, headOid: expectedHeadOid } };
+        storage.getState().updateWorkspaceScmSnapshot(scope, before);
+        const { machineScmStatusSnapshot, machineScmCommitUndoLast } = await import('@/sync/ops/scm/machineScm');
+        vi.mocked(machineScmCommitUndoLast).mockImplementationOnce(async () => {
+            vi.mocked(machineScmStatusSnapshot).mockResolvedValue({ success: true, snapshot: {
+                ...before, branch: { ...before.branch, headOid: currentHeadOid },
+            } });
+            return { success: false, outcome: { v: 1, kind: 'outcome_unknown', errorCode: 'COMMAND_OUTCOME_UNKNOWN',
+                reconciliation: { kind: 'repository_status', cwd: '/repo' }, nextActions: [{ kind: 'refresh' }] } };
+        });
+        const { WorkspaceRightPanelGitView } = await import('./WorkspaceRightPanelGitView');
+        const screen = await renderScreen(<WorkspaceRightPanelGitView {...scope} onOpenFile={() => {}} />);
+        await screen.pressByTestIdAsync('project-git-tools');
+        await screen.pressByTestIdAsync('workspace-scm-undo-last-commit');
+        expect(storage.getState().getWorkspaceScmSnapshot(scope)?.branch.headOid).toBe(currentHeadOid);
+        expect(screen.findHostByTestId('session-git-outcome-outcome_unknown')).not.toBeNull();
+        await screen.pressByTestIdAsync('session-git-outcome-outcome_unknown.action');
+        expect(machineScmCommitUndoLast).toHaveBeenCalledOnce();
+        expect(machineScmCommitUndoLast).toHaveBeenCalledWith('m1', { cwd: '/repo', expectedHeadOid }, { serverId: 's1' });
+    });
+
+    it('reconciles a rebase conflict and exposes its recovery without a duplicate failure dialog', async () => {
+        projectManager.clear();
+        const before = { ...snapshot, capabilities: { ...snapshot.capabilities, writeBranchRebase: true,
+            writeBranchOperationControl: true, writeBranchOperationSkip: true } };
+        storage.getState().updateWorkspaceScmSnapshot(scope, before);
+        const { machineScmStatusSnapshot, machineScmBranchRebase, machineScmBranchOperationSkip } = await import('@/sync/ops/scm/machineScm');
+        const { Modal } = await import('@/modal');
+        const operation = { kind: 'rebase' as const, canContinue: false, canSkip: true, canAbort: true, unresolvedCount: 1 };
+        vi.mocked(machineScmBranchRebase).mockImplementationOnce(async () => {
+            vi.mocked(machineScmStatusSnapshot).mockResolvedValue({ success: true, snapshot: {
+                ...before, hasConflicts: true, operationState: operation,
+            } });
+            return { success: false, outcome: { v: 1, kind: 'conflicted', errorCode: 'CONFLICTING_WORKTREE',
+                repositoryState: { hasConflicts: true, operation }, nextActions: [{ kind: 'resolve_conflicts' }, { kind: 'skip' }, { kind: 'abort' }] } };
+        });
+        vi.mocked(machineScmBranchOperationSkip).mockResolvedValue({ success: true });
+        const { WorkspaceRightPanelGitView } = await import('./WorkspaceRightPanelGitView');
+        const openReview = vi.fn();
+        const screen = await renderScreen(<WorkspaceRightPanelGitView {...scope} onOpenFile={() => {}} onOpenReviewAllChanges={openReview} />);
+        await screen.pressByTestIdAsync('project-git-tools');
+        await act(async () => { screen.changeTextByTestId('scm-update-branch-source-picker', 'feature'); });
+        await screen.pressByTestIdAsync('scm-update-branch-rebase');
+        expect(storage.getState().getWorkspaceScmSnapshot(scope)?.hasConflicts).toBe(true);
+        expect(screen.findHostByTestId('scm-update-branch-operation-abort')).not.toBeNull();
+        expect(screen.findHostByTestId('scm-update-branch-operation-skip')).not.toBeNull();
+        expect(screen.findHostByTestId('session-git-outcome-conflicted')).not.toBeNull();
+        expect(Modal.alert).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('session-git-outcome-conflicted.action');
+        expect(openReview).toHaveBeenCalledOnce();
+        await screen.pressByTestIdAsync('scm-update-branch-operation-skip');
+        expect(machineScmBranchOperationSkip).toHaveBeenCalledWith('m1', { cwd: '/repo', operation: 'rebase' }, { serverId: 's1' });
+    });
+
+    it('reconciles an unknown remote edit, preserves its draft and offers a read instead of replaying the write', async () => {
+        projectManager.clear();
+        const before = { ...snapshot, capabilities: { ...snapshot.capabilities, writeRemoteAdd: true } };
+        storage.getState().updateWorkspaceScmSnapshot(scope, before);
+        const { machineScmStatusSnapshot, machineScmRemoteAdd } = await import('@/sync/ops/scm/machineScm');
+        const { Modal } = await import('@/modal');
+        vi.mocked(machineScmRemoteAdd).mockImplementationOnce(async () => {
+            vi.mocked(machineScmStatusSnapshot).mockResolvedValue({ success: true, snapshot: {
+                ...before, repo: { ...before.repo, remotes: [{ name: 'backup', fetchUrl: 'https://example.com/repo.git' }] },
+            } });
+            return { success: false, outcome: { v: 1, kind: 'outcome_unknown', errorCode: 'COMMAND_OUTCOME_UNKNOWN',
+                reconciliation: { kind: 'repository_status', cwd: '/repo' }, nextActions: [{ kind: 'refresh' }] } };
+        });
+        const { WorkspaceRightPanelGitView } = await import('./WorkspaceRightPanelGitView');
+        const screen = await renderScreen(<WorkspaceRightPanelGitView {...scope} onOpenFile={() => {}} />);
+        await screen.pressByTestIdAsync('project-git-tools');
+        await act(async () => {
+            screen.changeTextByTestId('scm-remote-editor-name', 'backup');
+            screen.changeTextByTestId('scm-remote-editor-fetch-url', 'https://example.com/repo.git');
+        });
+        await screen.pressByTestIdAsync('scm-remote-editor-save');
+        expect(storage.getState().getWorkspaceScmSnapshot(scope)?.repo.remotes?.[0]?.name).toBe('backup');
+        expect(screen.findHostByTestId('scm-remote-editor-name')?.props.value).toBe('backup');
+        expect(screen.findHostByTestId('session-git-outcome-outcome_unknown')).not.toBeNull();
+        expect(Modal.alert).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('session-git-outcome-outcome_unknown.action');
+        expect(machineScmRemoteAdd).toHaveBeenCalledOnce();
     });
 
     it('shows history with changes in Unified and preserves the changes surface when switching layouts', async () => {

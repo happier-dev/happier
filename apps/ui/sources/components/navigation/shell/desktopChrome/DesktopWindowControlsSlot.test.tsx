@@ -9,7 +9,7 @@ import { installNavigationShellCommonModuleMocks } from '../navigationShellTestH
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const desktopWindowBridgeState = vi.hoisted(() => ({
-    invoke: vi.fn(async () => true),
+    invoke: vi.fn(async (_command: string) => true),
 }));
 
 installNavigationShellCommonModuleMocks({
@@ -54,7 +54,7 @@ vi.mock('@/utils/platform/desktopHost', () => ({
 }));
 
 describe('DesktopWindowControlsSlot', () => {
-    it('starts dragging when the drag region receives the primary pointer', async () => {
+    it('starts dragging when the drag region receives the primary mouse down', async () => {
         const { DesktopWindowControlsSlot } = await import('./DesktopWindowControlsSlot');
         desktopWindowBridgeState.invoke.mockClear();
         const screen = await renderScreen(
@@ -66,7 +66,7 @@ describe('DesktopWindowControlsSlot', () => {
         }
 
         await act(async () => {
-            dragRegion.props.onPointerDown?.({ buttons: 1, target: { closest: () => null } });
+            dragRegion.props.onMouseDown?.({ buttons: 1, detail: 1, target: { closest: () => null } });
         });
 
         expect(desktopWindowBridgeState.invoke).toHaveBeenCalledWith('desktop_start_window_dragging');
@@ -81,14 +81,17 @@ describe('DesktopWindowControlsSlot', () => {
         }
 
         expect(dragRegion.props.onPressIn).toBeUndefined();
+        expect(dragRegion.props.onMouseDown).toBeUndefined();
     });
 
     it('double-clicks the reserved traffic-light gap through the same maximize owner as the title strip', async () => {
         const { DesktopWindowControlsSlot } = await import('./DesktopWindowControlsSlot');
         desktopWindowBridgeState.invoke.mockClear();
         const screen = await renderScreen(<DesktopWindowControlsSlot enableDragging />);
+        const dragRegion = screen.findByTestId('desktop-window-drag-region');
+        if (!dragRegion) throw new Error('drag region should be present');
         await act(async () => {
-            screen.findByTestId('desktop-window-drag-region').props.onMouseDown?.({
+            dragRegion.props.onMouseDown?.({
                 button: 0, buttons: 1, detail: 2,
                 target: { closest: () => null },
             });

@@ -5,6 +5,8 @@ import type { useUnistyles } from 'react-native-unistyles';
 
 import { FilesystemBrowser } from '@/components/ui/filesystemBrowser/FilesystemBrowser';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { FilesystemBrowserRow, type FilesystemBrowserRowActionsControl } from '@/components/ui/filesystemBrowser/FilesystemBrowserRow';
 import type { FilesystemBrowserRowRenderInput } from '@/components/ui/filesystemBrowser/filesystemBrowserTypes';
 import { FileIcon } from '@/components/ui/media/FileIcon';
@@ -18,7 +20,7 @@ import { useScmTreeBadgeIndex } from '@/components/workspaces/files/repositoryTr
 import { buildScmTreeBadgeSignature } from '@/components/workspaces/files/repositoryTree/scmTreeBadges';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
-import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
+import type { RepositoryFileDropTarget } from '@/components/workspaces/files/repositoryTree/repositoryFileDropTarget';
 import type { LazyDirectoryTreeNode } from '@/hooks/ui/filesystem/lazyDirectoryTreeTypes';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
@@ -35,11 +37,7 @@ import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
 import { ScmChangeMark } from '@/components/workspaces/scm/changes/ScmChangeMark';
 import { resolveScmChangePathTag } from '@/scm/scmChangePathTag';
 
-export type WorkspaceRepositoryTreeWebDropTarget = Readonly<{
-    destinationDir: string;
-    hoverPath: string | null;
-    autoExpandDirectoryPath: string | null;
-}>;
+export type WorkspaceRepositoryTreeWebDropTarget = RepositoryFileDropTarget;
 
 type WorkspaceRepositoryTreeNode = LazyDirectoryTreeNode;
 
@@ -69,6 +67,7 @@ export type WorkspaceRepositoryTreeRowSelection = Readonly<{
     onToggle: (node: WorkspaceRepositoryTreeNode) => void;
     accessibilityLabel: (node: WorkspaceRepositoryTreeNode) => string;
     isDisabled?: (node: WorkspaceRepositoryTreeNode) => boolean;
+    isSelectable?: (node: WorkspaceRepositoryTreeNode) => boolean;
 }>;
 
 type AppTheme = ReturnType<typeof useUnistyles>['theme'];
@@ -85,7 +84,7 @@ type WorkspaceRepositoryTreeListProps = Readonly<{
     onGitIgnoreAvailableChange?: (available: boolean | undefined) => void;
     onRequestRefresh?: (() => void) | null;
     onRequestDownload?: ((params: Readonly<{ path: string; asZip: boolean }>) => Promise<{ ok: true } | { ok: false; error: string }>) | null;
-    onWebDropTargetChange?: ((target: WorkspaceRepositoryTreeWebDropTarget) => void) | null;
+    webFileDropEnabled?: boolean;
     webDropHoverPath?: string | null;
     expandedPaths: readonly string[];
     onExpandedPathsChange: (paths: string[]) => void;
@@ -95,6 +94,8 @@ type WorkspaceRepositoryTreeListProps = Readonly<{
     scmSnapshot?: ScmWorkingSnapshot | null;
     /** Trailing per-row actions; the row reveals them (hover/focus/selected; long press on touch). */
     renderRowActions?: ((node: WorkspaceRepositoryTreeNode, control: FilesystemBrowserRowActionsControl) => React.ReactNode) | null;
+    /** Permanent trailing metadata, visible without hover or opening the row's actions. */
+    renderRowMetadata?: ((node: WorkspaceRepositoryTreeNode) => React.ReactNode) | null;
     showInlineLoadingHeader?: boolean;
     onRootLoadingChange?: (loading: boolean) => void;
     /**
@@ -102,6 +103,7 @@ type WorkspaceRepositoryTreeListProps = Readonly<{
      * (`selectScmChangedFiles`), folders open, single-child folder chains as one row.
      */
     changedOnly?: boolean;
+    preferredChangedPaths?: ReadonlySet<string>;
     /** Changed only has nothing to show: the one way back to every file. */
     onShowAllFiles?: (() => void) | null;
     /** The file open in Details: its row stays selected (lab F1). */
@@ -202,6 +204,7 @@ function renderEntryIcon(node: WorkspaceRepositoryTreeNode, theme: AppTheme) {
 
 export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListProps): React.ReactElement {
     const { theme, expandedPaths, onExpandedPathsChange, onOpenFile } = props;
+    const accountScope = useActiveServerAccountScope();
     const detailsMode = props.detailsMode === true;
 
     const preservedPaths = React.useMemo(() => [
@@ -225,8 +228,8 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     const changedFiles = changedOnly && scmRepo ? selectScmChangedFiles(scmRepo) : NO_CHANGED_FILES;
     const [closedChangedPaths, setClosedChangedPaths] = React.useState<ReadonlySet<string>>(() => props.initialClosedChangedPaths ?? NO_CLOSED_PATHS);
     const changedNodes = React.useMemo(
-        () => (changedOnly ? buildChangedOnlyTreeNodes(changedFiles, closedChangedPaths) : []),
-        [changedFiles, changedOnly, closedChangedPaths],
+        () => (changedOnly ? buildChangedOnlyTreeNodes(changedFiles, closedChangedPaths, props.preferredChangedPaths) : []),
+        [changedFiles, changedOnly, closedChangedPaths, props.preferredChangedPaths],
     );
     const toggleChangedDirectory = React.useCallback(async (path: string) => {
         setClosedChangedPaths((current) => {
@@ -263,6 +266,8 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     const badgeSignature = buildScmTreeBadgeSignature(props.scmSnapshot ?? null);
     const selectedPath = props.selectedPath ?? null;
     const rowRenderState = React.useMemo(() => ({
+        accountScope,
+        workspaceScope: props.scope,
         treeKeyboard,
         badgeIndex,
         changedOnly,
@@ -271,8 +276,9 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         onOpenFile,
         fileHref: props.fileHref,
         onOpenFilePinned: props.onOpenFilePinned,
-        onWebDropTargetChange: props.onWebDropTargetChange,
+        webFileDropEnabled: props.webFileDropEnabled,
         renderRowActions: props.renderRowActions,
+        renderRowMetadata: props.renderRowMetadata,
         rowSelection: props.rowSelection ?? null,
         rowProposal: props.rowProposal ?? null,
         changeRows: changedOnly && props.rowStyle === 'changes',
@@ -282,6 +288,10 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         toggleDirectory,
         webDropHoverPath: props.webDropHoverPath,
     }), [
+        accountScope,
+        props.scope.serverId,
+        props.scope.machineId,
+        props.scope.rootPath,
         treeKeyboard,
         badgeIndex,
         changedOnly,
@@ -290,8 +300,9 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         onOpenFile,
         props.fileHref,
         props.onOpenFilePinned,
-        props.onWebDropTargetChange,
+        props.webFileDropEnabled,
         props.renderRowActions,
+        props.renderRowMetadata,
         props.rowSelection,
         props.rowProposal,
         props.rowStyle,
@@ -304,6 +315,11 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     const rowRenderStateRef = React.useRef(rowRenderState);
     rowRenderStateRef.current = rowRenderState;
     const rowVisualSignature = React.useMemo(() => [
+        props.scope.serverId,
+        props.scope.machineId,
+        props.scope.rootPath,
+        accountScope?.serverId,
+        accountScope?.accountId,
         treeKeyboard.activePath,
         badgeSignature,
         // The web badge index lands a tick after the snapshot (useScmTreeBadgeIndex): mounted rows must
@@ -316,7 +332,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         props.rowSelection ? `select:${props.rowSelection.revision}` : 'no-select',
         props.rowProposal ? `proposal:${props.rowProposal.revision}` : 'no-proposal',
         props.rowStyle === 'changes' ? 'change-rows' : 'file-rows',
-        props.onWebDropTargetChange ? 'drop' : 'no-drop',
+        props.webFileDropEnabled ? 'drop' : 'no-drop',
         props.webDropHoverPath ?? '',
         theme.colors.text?.secondary,
         theme.colors.text?.link,
@@ -325,13 +341,18 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         theme.colors.state?.success?.foreground,
         theme.colors.state?.danger?.foreground,
     ].join('|'), [
+        props.scope.serverId,
+        props.scope.machineId,
+        props.scope.rootPath,
+        accountScope?.serverId,
+        accountScope?.accountId,
         treeKeyboard.activePath,
         badgeSignature,
         badgeIndex,
         changedOnly,
         selectedPath,
         detailsMode,
-        props.onWebDropTargetChange,
+        props.webFileDropEnabled,
         props.renderRowActions,
         props.rowSelection,
         props.rowProposal,
@@ -346,8 +367,9 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     ]);
     const rowVisualExtraData = React.useMemo(() => ({
         href: props.fileHref,
+        metadata: props.renderRowMetadata,
         visual: rowVisualSignature,
-    }), [props.fileHref, rowVisualSignature]);
+    }), [props.fileHref, props.renderRowMetadata, rowVisualSignature]);
 
     const renderRow = React.useCallback(({ node, showDivider }: FilesystemBrowserRowRenderInput) => {
         const rowState = rowRenderStateRef.current;
@@ -380,9 +402,11 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                 ? new Date(node.modifiedMs).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
                 : '';
 
-        const shouldShowRight = showDetailsInline || Boolean(badge) || (isDirectoryNode(node) && node.isLoadingChildren);
+        const metadata = rowState.renderRowMetadata?.(node);
+        const shouldShowRight = showDetailsInline || metadata != null || Boolean(badge) || (isDirectoryNode(node) && node.isLoadingChildren);
         const right = shouldShowRight ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                {metadata}
                 {showDetailsInline ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                         <Text
@@ -478,7 +502,13 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
             ? proposalEmphasisOf(rowState.rowProposal, node)
             : null;
         return (
-            <WorkspaceDestinationRow existingMenu={Boolean(rowActions)} href={node.type === 'file' ? rowState.fileHref?.(node.path) ?? null : null}>
+            <WorkspaceDestinationRow existingMenu={Boolean(rowActions)} href={node.type === 'file' ? rowState.fileHref?.(node.path) ?? null : null}
+                dragSource={rowState.accountScope?.serverId === rowState.workspaceScope.serverId}
+                entityItem={node.type === 'file' && rowState.accountScope?.serverId === rowState.workspaceScope.serverId ? {
+                    kind: 'repository-file', scope: rowState.accountScope,
+                    machineId: rowState.workspaceScope.machineId,
+                    path: resolveMachineAbsolutePath({ rootPath: rowState.workspaceScope.rootPath, requestPath: node.path }),
+                } : null}>
             <View style={proposalEmphasis === 'in'
                 ? { backgroundColor: rowState.theme.colors.state.active.background }
                 : proposalEmphasis === 'out' ? { opacity: 0.42 } : null}>
@@ -505,7 +535,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                     : renderEntryIcon(node, rowState.theme)}
                 disclosure
                 rowActions={rowActions}
-                selection={rowState.rowSelection && (node.type === 'file' || node.type === 'directory')
+                selection={rowState.rowSelection && rowState.rowSelection.isSelectable?.(node) !== false && (node.type === 'file' || node.type === 'directory')
                     ? {
                         state: rowState.rowSelection.getState(node),
                         onToggle: () => rowState.rowSelection?.onToggle(node),
@@ -552,19 +582,11 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                         ? ({ content }) => {
                             const shouldWrapDropTarget =
                                 (node.type === 'directory' || node.type === 'file')
-                                && Boolean(rowState.onWebDropTargetChange);
+                                && rowState.webFileDropEnabled === true;
                             const wrappedContent = shouldWrapDropTarget
                                 ? (
                                     <WebDropTargetView
-                                        onDragEnter={(event) => {
-                                            if (!isWebFileDragEvent(event)) return;
-                                            rowState.onWebDropTargetChange?.(buildWebDropTarget(node));
-                                        }}
-                                        onDragOver={(event) => {
-                                            if (!isWebFileDragEvent(event)) return;
-                                            event.preventDefault?.();
-                                            rowState.onWebDropTargetChange?.(buildWebDropTarget(node));
-                                        }}
+                                        repositoryFileDropTarget={buildWebDropTarget(node)}
                                     >
                                         {content}
                                     </WebDropTargetView>

@@ -15,7 +15,7 @@ import {
     closeGitPullRequestForm,
     moveGitPullRequestForm,
     readGitPullRequestFormState,
-} from './gitPullRequestForm';
+} from './gitPullRequestFormState';
 
 /**
  * The "New pull request" Details destination (Git lab PRD): the same form as the sidebar with room to write,

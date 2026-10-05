@@ -5,10 +5,13 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Fonts from 'expo-font';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Slot, Stack, usePathname, useRouter } from 'expo-router';
+import { ctx } from 'expo-router/_ctx';
+import { registerWorkspaceRouteContext } from '@/components/appShell/workspace/workspaceRouteContext';
 import {
     PUSH_NOTIFICATION_BUNDLED_SOUND_FILES, PUSH_NOTIFICATION_ACTION_IDS, PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS, resolveAndroidNotificationSoundName, } from '@happier-dev/protocol';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { AuthProvider } from '@/auth/context/AuthContext';
+import { AuthProvider, ConcurrentSessionCacheRuntime } from '@/auth/context/AuthContext';
+import { WebServerOverrideGate } from '@/components/navigation/root/RootLayoutRedirectGate';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
@@ -18,6 +21,7 @@ import sodium from '@/encryption/libsodium.lib';
 import { View, Platform } from 'react-native';
 import { AppPaneModalProvider } from '@/components/appShell/providers/AppPaneModalProvider';
 import { CurrentUiContextProvider } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { CurrentUiContextActionHost } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { PostHogProvider } from 'posthog-react-native';
 import * as Sentry from '@sentry/react-native';
 import { tracking } from '@/track/tracking';
@@ -47,7 +51,8 @@ import { configureBugReportUserActionTrail } from '@/utils/system/bugReportActio
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/system/lock';
 import { useWebUiFontScale } from '@/components/ui/text/useWebUiFontScale';
-import { useWebBackdropBlurPreference } from '@/components/ui/overlays/useWebBackdropBlurPreference';
+import { GlassMaterialRuntime } from '@/components/ui/glass/GlassMaterialRuntime';
+import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 import { usePierreDiffWorkerPoolWarmup } from '@/components/ui/code/diff/pierre/usePierreDiffWorkerPoolWarmup';
 import { initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
 import { t } from '@/text';
@@ -83,6 +88,11 @@ import { EmbedSessionRuntimeProvider } from '@/embed/runtime/EmbedSessionRuntime
 import { EmbedBridgeRuntime } from '@/embed/bridge/EmbedBridgeRuntime';
 
 const embedWindowContext = isEmbedWindowContext();
+
+// Expo evaluates this root before rendering any workspace route. Publishing
+// its exact context here keeps optional workspace graphs free of the app tree
+// and preserves Router's existing entry and React Fast Refresh boundary.
+registerWorkspaceRouteContext(ctx);
 
 if (!embedWindowContext) {
     initializeSentryOnce();
@@ -686,10 +696,9 @@ function FullAppRootLayout() {
     const { theme } = useUnistyles();
     const isDesktopOverlayWindow = isDesktopOverlayWindowContext();
     useWebUiFontScale();
-    useWebBackdropBlurPreference();
     usePierreDiffWorkerPoolWarmup();
     const navigationTheme = React.useMemo(() => {
-        const background = isDesktopOverlayWindow ? 'transparent' : theme.colors.background.canvas;
+        const background = isDesktopOverlayWindow ? 'transparent' : glassSurfaceBackgroundColor(theme.colors.background.canvas, 'chrome', true);
         if (theme.dark) {
             return {
                 ...DarkTheme,
@@ -725,6 +734,7 @@ function FullAppRootLayout() {
 
     return (
         <AppPresentationPlatformProvider>
+            <GlassMaterialRuntime>
             <WebCryptoStartupGate>
                 <AppCrashRecoveryBoundary
                     onRestart={onRestart}
@@ -741,6 +751,7 @@ function FullAppRootLayout() {
                     />
                 </AppCrashRecoveryBoundary>
             </WebCryptoStartupGate>
+            </GlassMaterialRuntime>
         </AppPresentationPlatformProvider>
     );
 }
@@ -888,6 +899,7 @@ function AppBoot(props: {
             <HorizontalSafeAreaWrapper>
                 <MainAppTabStateProvider>
                     <CurrentUiContextProvider>
+                        <CurrentUiContextActionHost />
                         {appShellWithRootDesktopDragSurface}
                     </CurrentUiContextProvider>
                 </MainAppTabStateProvider>
@@ -914,11 +926,15 @@ function AppBoot(props: {
                         <ThemeProvider value={props.navigationTheme}>
                             <StatusBarProvider />
                             <AppPaneModalProvider>
+                                <WebServerOverrideGate>
+                                <ConcurrentSessionCacheRuntime>
                                 <WorkspaceAppShellProvider>
                                 <CommandPaletteProvider>
                                     {appContent}
                                 </CommandPaletteProvider>
                                 </WorkspaceAppShellProvider>
+                                </ConcurrentSessionCacheRuntime>
+                                </WebServerOverrideGate>
                             </AppPaneModalProvider>
                         </ThemeProvider>
                     </AuthProvider>

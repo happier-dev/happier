@@ -12,6 +12,12 @@ import { WorkspaceTitleBar } from './WorkspaceTitleBar';
 import { createWorkspaceBarGeometry, WorkspaceBarGeometryContext } from './workspaceBarGeometry';
 
 installPanelCommonModuleMocks();
+// Recipient-envelope HTTP/process APIs are outside this deterministic workspace owner harness.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unavailable = () => { throw new Error('Unexpected recipient-envelope API in workspace owner test'); };
+    return { createSessionDataKeyEnvelopeClient: unavailable, readSessionDataKeyEnvelopeCollectionPage: unavailable,
+        prepareSessionDataKeyEnvelopesForScope: unavailable, prepareSessionDataKeyEnvelopesDetached: unavailable };
+});
 vi.mock('@expo/vector-icons', async () => {
     const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
     return createExpoVectorIconsMock();
@@ -38,13 +44,16 @@ function tab(id: string, overrides: Partial<WorkspaceTab> = {}): WorkspaceTab {
     return { id, target: { kind: `removed:${id}`, params: {} }, pinned: false, preview: false, ...overrides };
 }
 
-function Harness(props: Readonly<{ initial: WorkspaceState; clusterEndPx: number }>) {
+function Harness(props: Readonly<{ initial: WorkspaceState; clusterEndPx: number; trailingStartPx?: number }>) {
     const [state, dispatch] = React.useReducer(reduceWorkspaceState, props.initial);
     const canvasControlsRef = React.useRef<SplitCanvasHostControls | null>(null);
     const [geometry] = React.useState(createWorkspaceBarGeometry);
     const value: WorkspaceNavigationContextValue = {
         active: true, state, dispatch, canvasControlsRef,
         closeTab: (groupId, tabId) => dispatch({ type: 'closeTab', groupId, tabId, newTab: tab('empty', { target: { kind: 'newTab', params: {} } }) }),
+        closeTabs: (groupId, tabIds) => {
+            for (const tabId of tabIds) if (!state.tabs[tabId]?.pinned) dispatch({ type: 'closeTab', groupId, tabId, newTab: tab('empty', { target: { kind: 'newTab', params: {} } }) });
+        },
         activateTab: (groupId, tabId) => dispatch({ type: 'activateTab', groupId, tabId }),
         canGoBack: false, canGoForward: false, openHref: () => false,
         navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
@@ -53,7 +62,7 @@ function Harness(props: Readonly<{ initial: WorkspaceState; clusterEndPx: number
     return <WorkspaceNavigationContext.Provider value={value}>
         <WorkspaceBarGeometryContext.Provider value={geometry}>
             {React.createElement('WorkspaceStateProbe', { state })}
-            <WorkspaceTitleBar catalog={[]} clusterEndPx={props.clusterEndPx} stripHeightPx={40} />
+            <WorkspaceTitleBar catalog={[]} clusterEndPx={props.clusterEndPx} stripHeightPx={40} trailingStartPx={props.trailingStartPx} />
             <WorkspaceShell catalog={[]} />
         </WorkspaceBarGeometryContext.Provider>
     </WorkspaceNavigationContext.Provider>;
@@ -80,6 +89,20 @@ function threePanes(): WorkspaceState {
 }
 
 describe('WorkspaceTitleBar', () => {
+    it('reserves the measured trailing control span, including a resize that hides a covered pane', async () => {
+        const frames = windowMeasurement({
+            'workspace-title-bar': { x: 0, width: 1440 },
+            'workspace-group-group_1': { x: 300, width: 560 },
+            'workspace-group-group_2': { x: 870, width: 560 },
+        });
+        const screen = await renderScreen(<Harness initial={threePanes()} clusterEndPx={200} trailingStartPx={1200} />, { createNodeMock: frames });
+        expect(screen.findByTestId('workspace-bar-segment-group:2')?.props.style)
+            .toEqual(expect.arrayContaining([expect.objectContaining({ left: 870, width: 330 })]));
+        await act(async () => { screen.tree.update(<Harness initial={threePanes()} clusterEndPx={200} trailingStartPx={850} />); });
+        expect(screen.findByTestId('workspace-bar-segment-group:2')).toBeNull();
+        expect(screen.findByTestId('workspace-bar-segment-group:1')?.props.style)
+            .toEqual(expect.arrayContaining([expect.objectContaining({ left: 300, width: 550 })]));
+    });
     it('offers recently closed tabs even when all open tabs fit and reopens the chosen tab', async () => {
         let state = createWorkspaceState(tab('a'));
         state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab('b'), fallbackTitle: 'Closed document' });

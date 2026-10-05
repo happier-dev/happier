@@ -25,7 +25,6 @@ import {
 import { useSessionCompanionPlacement } from './layout/useSessionCompanionPlacement';
 import { buildSessionCompanionMenuActions } from './sessionCompanionMenu';
 import { useSessionCompanionBoardAdd } from './picker/useSessionCompanionBoardAdd';
-import { registerSessionCompanionDropTarget } from './drop/sessionCompanionDropStore';
 import { useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
 import { useSessionCompanionController } from './state/useSessionCompanionController';
 import type { SessionSummaryDestinationHandlers } from './summary/SessionSummaryCard';
@@ -129,32 +128,6 @@ export const SessionCompanionHost = React.memo(function SessionCompanionHost(
         noticeKeyPrefix,
         ...input,
     }), [controller, noticeKeyPrefix]);
-    // The rail is the drop target for a Board card dragged beside the chat (lab CM).
-    // Registered only while the rail itself is shown; the drop reuses the one add path.
-    const railRef = React.useRef<View | null>(null);
-    const railShown = controller.availability === 'ready' && placement.kind === 'reserved_rail';
-    React.useEffect(() => {
-        if (!railShown) return undefined;
-        return registerSessionCompanionDropTarget(props.session.id, {
-            measure: () => new Promise((resolve) => {
-                const node = railRef.current;
-                if (!node) {
-                    resolve(null);
-                    return;
-                }
-                node.measureInWindow((x, y, width, height) => {
-                    resolve(width > 0 && height > 0 ? { x, y, width, height } : null);
-                });
-            }),
-            accept: (widgetId) => {
-                mutateCompanion({
-                    kind: 'companion.item.add',
-                    message: t('sessionBoard.companion.notices.added'),
-                    apply: (companion) => companion.addItem({ kind: 'widget', widgetId }),
-                });
-            },
-        });
-    }, [mutateCompanion, props.session.id, railShown]);
     const publishCardBounds = React.useCallback((bounds: Readonly<{ widthPx: number; heightPx: number }>) => {
         publishSessionCompanionCardBounds({
             sessionId: props.session.id,
@@ -253,7 +226,6 @@ export const SessionCompanionHost = React.memo(function SessionCompanionHost(
         : styles.railAtLeadingEdge;
     return (
         <View
-            ref={railRef}
             style={[styles.rail, borderStyle, { width: placement.widthPx }]}
             testID="session-companion-reserved-rail"
             accessibilityLabel={t('sessionBoard.companion.title')}

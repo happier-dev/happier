@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { WorkspaceOpenOptions } from './workspaceNavigationAdapter';
+import type { WorkspaceOpenOptions, WorkspaceOpenDestination } from './workspaceNavigationAdapter';
 import type { WorkspaceAction, WorkspaceState } from './workspaceState';
 import type { DestinationNavigation } from './DestinationInstanceHost';
 import type { SplitCanvasHostControls } from '../splitCanvas/components/SplitCanvasHost';
@@ -10,7 +10,7 @@ import type { CompactAppDestination } from '../destinations/compactAppDestinatio
 
 /**
  * The phone's controls over the same owner. The phone keeps its own stack navigation: these move the
- * stack and record intent in the workspace, but the workspace never projects a URL on a phone.
+ * stack and record intent in the workspace, without writing browser History on a phone.
  */
 export type WorkspacePhoneControls = Readonly<{
     /** The destination catalog the tabs resolve against (titles, icons, hrefs). */
@@ -28,6 +28,7 @@ export type WorkspaceNavigationContextValue = Readonly<{
     /** Present only on a phone, where the workspace owns the tab set but not navigation. */
     phone?: WorkspacePhoneControls | null;
     state: WorkspaceState;
+    catalog?: readonly CompactAppDestination[];
     sharedTabs?: SharedWorkspaceTabs | null;
     tabSyncStatus?: WorkspaceTabSyncStatus;
     handoffSource?: WorkspaceTabsHandoffSource | null;
@@ -35,8 +36,10 @@ export type WorkspaceNavigationContextValue = Readonly<{
     canGoBack: boolean;
     canGoForward: boolean;
     openHref: (href: string, options?: WorkspaceOpenOptions) => boolean;
+    findOpenHref?: (href: string) => WorkspaceOpenDestination | null;
     activateTab: (groupId: string, tabId: string) => void;
     closeTab: (groupId: string, tabId: string) => void;
+    closeTabs: (groupId: string, tabIds: readonly string[]) => void;
     dispatch: (action: WorkspaceAction) => void;
     navigationForTab: (tabId: string) => DestinationNavigation;
     registerBackStep: (tabId: string, consume: () => boolean) => () => void;

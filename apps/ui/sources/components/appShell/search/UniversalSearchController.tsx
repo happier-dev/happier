@@ -1,5 +1,6 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol';
 import * as React from 'react';
+import { openChatWithFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
@@ -14,6 +15,7 @@ import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugi
 import type { Command } from '@/components/appShell/commandPalette/types';
 import { Modal } from '@/modal';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
 import type { ResolvedSettingsPageNode } from '@/components/settings/catalog/types';
 import { buildSettingsSearchRows, indexSettingsSearchPages } from '@/components/settings/shell/settingsSearchRows';
@@ -55,6 +57,12 @@ import {
     readMemorySearchSessionForServerScope,
 } from '@/sync/domains/memory/hydrateMemorySearchSessionTargets';
 import { searchWorkspaceFiles } from '@/sync/domains/workspaces/files/workspaceFileSearch';
+import { searchWorkspaceFileContents } from '@/sync/domains/workspaces/files/workspaceFileContentSearch';
+import { parseSearchFileTarget } from '@/utils/url/sessionFileDeepLink';
+import { isAbsoluteLocalPath, resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { Text } from '@/components/ui/text/Text';
 import { searchWorkspaceCommits } from '@/scm/search/searchWorkspaceCommits';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
@@ -79,12 +87,14 @@ import { useTerminalJumpScopeChrome } from '@/components/sessions/terminal/jump/
 import { activateUniversalSearchResult } from './activateUniversalSearchResult';
 import {
     buildUniversalSearchSections,
+    EXTERNAL_CONVERSATION_SEARCH_OPTION_ID,
     findCommandForOptionId,
     type UniversalSearchProjectEntity,
     type UniversalSearchSessionEntity,
     type UniversalSearchSettingsPageEntity,
     type UniversalSearchSource,
 } from './buildUniversalSearchSections';
+import { ExternalConversationSearchResults, type ExternalConversationSearchResultsProps } from './ExternalConversationSearchResults';
 import { buildPluginSearchProviderSections, type PluginSearchActivationOutcome } from './pluginSearchProviderSections';
 import {
     buildUniversalSearchScopeKey,
@@ -188,6 +198,7 @@ function memoryHitResult(hit: MemorySearchHitV1, serverId: string, accountId: st
 export type UniversalSearchControllerProps = Readonly<{
     commands: readonly Command[];
     initialQuery?: string;
+    initialSource?: 'fileContent';
     activeSessionId?: string | null;
     initialScope?: UniversalSearchScopeSeed;
     /** Open in the Terminals scope of this session pane (Jump to a terminal, terminal lab B4). */
@@ -211,9 +222,13 @@ function resolveInitialScope(props: Pick<UniversalSearchControllerProps, 'active
 export function UniversalSearchController(props: UniversalSearchControllerProps): React.ReactElement {
     const { theme } = useUnistyles();
     const [scope, setScope] = React.useState<UniversalSearchScopeSeed>(() => resolveInitialScope(props));
-    const [query, setQuery] = React.useState(() => props.initialQuery?.trim() ?? '');
+    const [query, setQuery] = React.useState(() => props.initialQuery ?? '');
+    const [source, setSource] = React.useState<'fileContent' | undefined>(props.initialSource);
+    const [matchCase, setMatchCase] = React.useState(false);
+    const [regex, setRegex] = React.useState(false);
     const [selectedOptionId, setSelectedOptionId] = React.useState<string | null>(null);
     const [sessionInventoryStatus, setSessionInventoryStatus] = React.useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+    const [externalConversationSearch, setExternalConversationSearch] = React.useState<Pick<ExternalConversationSearchResultsProps, 'target' | 'query' | 'machineLabel' | 'accountLifetime'> | null>(null);
     // The Terminals scope (Jump): one session's terminals until the person drops the scope with ⌫
     // on an empty field or the chip's ×, then the ordinary search over everything.
     const [terminalScope, setTerminalScope] = React.useState<TerminalJumpTarget | null>(() => props.terminalJump ?? null);
@@ -228,6 +243,11 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         : null;
     const selectedCredentialIsCurrent = selectedCredentialBinding?.isCurrent() === true
         && selectedCredentialBinding.accountId === scope.accountId;
+    React.useEffect(() => {
+        if (!externalConversationSearch) return;
+        const retirement = externalConversationSearch.accountLifetime.onRetire(() => setExternalConversationSearch(null));
+        return () => retirement.dispose();
+    }, [externalConversationSearch]);
     React.useEffect(() => {
         if (!scope.serverId || !selectedCredentialBinding || scope.accountId === selectedCredentialBinding.accountId) return;
         setScope((current) => current.serverId === scope.serverId
@@ -246,6 +266,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         pluginAccount.revision,
     );
     const navigateToSession = useNavigateToSession();
+    const paneContext = useOptionalAppPaneContext();
     const router = useRouter();
     const openProject = useOpenProject();
     const settingsCatalog = useResolvedSettingsPageCatalog();
@@ -565,30 +586,67 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
             status: 'ready',
             resolverKey: workspaceResolverKey,
             resolve: async (value, signal) => {
-                const page = await searchWorkspaceFiles({
+                const parsedTarget = parseSearchFileTarget(value);
+                if (parsedTarget && ((parsedTarget.serverId && !areServerProfileIdentifiersEquivalent(parsedTarget.serverId, workspaceScope.serverId)) || (parsedTarget.sessionId && parsedTarget.sessionId !== activeSession?.id) || (parsedTarget.workspaceRefId && parsedTarget.workspaceRefId !== workspaceRef?.id))) return { results: [], emptyHint: t('universalSearch.content.unavailable') };
+                const parsedPath = parsedTarget ? (isAbsoluteLocalPath(parsedTarget.path.replace(/\\/g, '/')) ? resolvePathRelativeToRoot({ path: parsedTarget.path, root: workspaceScope.rootPath }) : parsedTarget.path.replace(/\\/g, '/')) : null;
+                if (parsedTarget && parsedPath === null) return { results: [], emptyHint: t('universalSearch.content.unavailable') };
+                const searchFilePage = (query: string) => searchWorkspaceFiles({
                     scope: workspaceScope,
-                    query: value,
+                    query,
                     limit: 20,
                     resultType: 'file',
                     accountLifetime: selectedCredentialBinding,
                     signal,
                     includeCoverage: true,
                 });
+                const [page, literalPage] = await Promise.all([
+                    searchFilePage(parsedPath ?? value),
+                    parsedTarget && !parsedTarget.sessionId && !parsedTarget.workspaceRefId && parsedPath !== value ? searchFilePage(value) : Promise.resolve(null),
+                ]);
+                const fileItems = [...page.items, ...(literalPage?.items ?? []).filter((candidate) => !page.items.some((item) => item.fullPath === candidate.fullPath))];
                 return {
                     results: buildUniversalSearchWorkspaceFileResults({
-                        files: page.items,
+                        files: fileItems,
                         accountId: selectedCredentialBinding.accountId,
                         scope: workspaceScope,
                         workspaceRefId: workspaceRef?.id ?? null,
                         sessionId: activeSession?.id ?? null,
+                    }).map((result) => {
+                        if (!parsedTarget?.anchor || !parsedPath || result.target.kind !== 'workspaceFile') return result;
+                        const actualPath = resolvePathRelativeToRoot({ path: `${workspaceScope.rootPath}/${result.target.path}`, root: workspaceScope.rootPath });
+                        const targetPath = resolvePathRelativeToRoot({ path: `${workspaceScope.rootPath}/${parsedPath}`, root: workspaceScope.rootPath });
+                        const exactPath = actualPath !== null && targetPath !== null ? actualPath === targetPath : result.target.path === parsedPath;
+                        return exactPath ? { ...result, target: { ...result.target, anchor: parsedTarget.anchor, ...(parsedTarget.anchorSource ? { anchorSource: parsedTarget.anchorSource } : {}) } } : result;
                     }),
-                    ...(page.truncated
+                    ...(page.hasMore || literalPage?.hasMore
                         ? { resultHint: t('universalSearch.moreResultsAvailable') }
                         : {}),
                 };
             },
         };
     }, [activeSession?.id, selectedCredentialBinding, workspaceRef?.id, workspaceResolverKey, workspaceScope, workspaceScopeReachable, workspaceSearchAvailable, workspaceUnavailableHint]);
+    const fileContent = React.useMemo<UniversalSearchSource>(() => {
+        if (!workspaceScope || !workspaceSearchAvailable || !selectedCredentialBinding) return source === 'fileContent' ? { status: 'unavailable', resolverKey: `${workspaceResolverKey}|missing`, hint: t('universalSearch.content.unavailable') } : { status: 'absent' };
+        if (!workspaceScopeReachable) return { status: 'unavailable', resolverKey: `${workspaceResolverKey}|offline`, hint: workspaceUnavailableHint };
+        return {
+            status: 'ready', resolverKey: `${workspaceResolverKey}|${matchCase}|${regex}`,
+            resolve: async (value, signal) => {
+                const page = await searchWorkspaceFileContents({ scope: workspaceScope, accountLifetime: selectedCredentialBinding, query: value, matchCase, regex, signal });
+                if (signal.aborted || !selectedCredentialBinding.isCurrent()) throw Object.assign(new Error('Search cancelled'), { name: 'AbortError' });
+                if (page.error) {
+                    const hint = page.error === 'update_required' ? t('universalSearch.content.updateRequired') : page.error === 'invalid_pattern' ? t('universalSearch.content.invalidPattern') : t('universalSearch.content.unavailable');
+                    return { results: [], emptyHint: hint, resultHint: hint };
+                }
+                const scopeKey = buildUniversalSearchScopeKey([selectedCredentialBinding.accountId, workspaceScope.serverId, workspaceScope.machineId, workspaceScope.rootPath]);
+                const results: UniversalSearchResult[] = page.items.flatMap((file) => file.matches.map((match) => {
+                    const anchor = { kind: 'fileLine' as const, startLine: match.line };
+                    return { id: `${file.path}:${match.line}:${match.column16}`, sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.fileContent, scopeKey, kind: 'workspaceFile', title: file.path, subtitle: `${file.path}:${match.line}`, fileContent: { path: file.path, ...match }, target: { kind: 'workspaceFile' as const, scope: workspaceScope, path: file.path, anchor, find: { query: value, options: { matchCase, regex }, target: { kind: 'file' as const, path: file.path, anchor } }, workspaceRefId: workspaceRef?.id ?? null, sessionId: activeSession?.id ?? null, serverId: workspaceScope.serverId, accountId: selectedCredentialBinding.accountId } };
+                }));
+                return { results, hasMore: page.hasMore,
+                    ...(page.coverage === 'partial' ? { resultHint: t('universalSearch.content.partial') } : {}) };
+            },
+        };
+    }, [activeSession?.id, matchCase, regex, selectedCredentialBinding, source, workspaceRef?.id, workspaceResolverKey, workspaceScope, workspaceScopeReachable, workspaceSearchAvailable, workspaceUnavailableHint]);
     const commits = React.useMemo<UniversalSearchSource>(() => {
         if (!workspaceScope || !workspaceSearchAvailable || !selectedCredentialBinding) return { status: 'absent' };
         if (!workspaceScopeReachable) {
@@ -693,6 +751,20 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         testID: 'universal-search:scope',
     }] : undefined, [currentScopeLabel, hasScopeChoice, scopeChoices, scopeKey, theme.colors.text.secondary]);
 
+    const conversationMachineId = scope.machineId ?? workspaceScope?.machineId ?? null;
+    const beginExternalConversationSearch = React.useCallback((value: string) => {
+        if (!conversationMachineId || !canonicalScopeServerId || !scope.accountId
+            || !selectedCredentialBinding?.isCurrent() || selectedCredentialBinding.accountId !== scope.accountId) return;
+        const activeScope = pluginAccount.lifetime?.scope;
+        const machineLabel = activeScope?.accountId === scope.accountId
+            && areServerProfileIdentifiersEquivalent(activeScope.serverId, canonicalScopeServerId)
+            ? machineNameById.get(conversationMachineId) ?? conversationMachineId
+            : conversationMachineId;
+        setExternalConversationSearch({
+            target: { machineId: conversationMachineId, serverId: canonicalScopeServerId, accountId: scope.accountId },
+            query: value, machineLabel, accountLifetime: selectedCredentialBinding,
+        });
+    }, [canonicalScopeServerId, conversationMachineId, machineNameById, pluginAccount.lifetime, scope.accountId, selectedCredentialBinding]);
     const sections = React.useMemo(() => buildUniversalSearchSections({
         query,
         commands: props.commands,
@@ -702,10 +774,20 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         searchSettingsPages,
         transcript,
         files,
+        fileContent,
+        source,
         commits,
         pluginSections,
+        ...(conversationMachineId && canonicalScopeServerId && selectedCredentialIsCurrent ? {
+            externalConversationSearch: {
+                machineLabel: pluginAccount.lifetime?.scope.accountId === scope.accountId
+                    && areServerProfileIdentifiersEquivalent(pluginAccount.lifetime.scope.serverId, canonicalScopeServerId)
+                    ? machineNameById.get(conversationMachineId) ?? conversationMachineId : conversationMachineId,
+                onSearch: beginExternalConversationSearch,
+            },
+        } : {}),
         onCommitResult: (result) => { committedResultRef.current = result; },
-    }), [commits, files, pluginSections, projects, props.commands, query, searchSettingsPages, sessionEntities, sessionInventoryStatus, transcript]);
+    }), [beginExternalConversationSearch, canonicalScopeServerId, commits, conversationMachineId, fileContent, files, machineNameById, pluginAccount.lifetime, pluginSections, projects, props.commands, query, scope.accountId, searchSettingsPages, selectedCredentialIsCurrent, sessionEntities, sessionInventoryStatus, source, transcript]);
     const rootStep = React.useMemo<SelectionListStep>(() => ({
         id: 'universal-search',
         inputPlaceholder: t('commandPalette.placeholder'),
@@ -740,8 +822,9 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     const isBuiltInTargetCurrent = React.useCallback((target: UniversalSearchResult['target']) => {
         const targetServerId = 'serverId' in target ? target.serverId : null;
         const targetAccountId = 'accountId' in target ? target.accountId : null;
+        const activationBindings = paneContext?.fileFindSeedAccountBindings ?? credentialBindings;
         const targetBinding = targetServerId
-            ? credentialBindings.get(resolveServerProfileScopeIdForIdentifier(targetServerId)) ?? null
+            ? activationBindings.get(resolveServerProfileScopeIdForIdentifier(targetServerId)) ?? null
             : null;
         return isUniversalSearchTargetCurrent({
             target,
@@ -761,7 +844,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
             resolveSessionWorkspaceTarget: resolveWorkspaceTargetForSession,
             isWorkspaceScopeReachable,
         });
-    }, [credentialBindings, profiles, settingsById, workspaceRefs]);
+    }, [credentialBindings, paneContext, profiles, settingsById, workspaceRefs]);
 
     const readExactSessionForActivation = React.useCallback(async (target: Readonly<{
         serverId: string;
@@ -811,15 +894,28 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     }, [credentialBindings]);
 
     const handleSelect = React.useCallback((optionId: string, _option: SelectionListOption) => {
+        if (optionId === EXTERNAL_CONVERSATION_SEARCH_OPTION_ID) {
+            committedResultRef.current = null;
+            committedPluginActivationRef.current = null;
+            setSelectedOptionId(null);
+            return;
+        }
         const result = committedResultRef.current;
         const pluginActivation = committedPluginActivationRef.current;
         const command = result || pluginActivation ? null : findCommandForOptionId(props.commands, optionId);
         committedResultRef.current = null;
         committedPluginActivationRef.current = null;
         setSelectedOptionId(optionId);
+        const sourceAccountIsCurrent = () => {
+            if (!result || !('accountId' in result.target)) return true;
+            const target = result.target;
+            const serverId = 'scope' in target ? target.scope.serverId : target.serverId;
+            const binding = credentialBindings.get(resolveServerProfileScopeIdForIdentifier(serverId));
+            return binding?.isCurrent() === true && binding.accountId === target.accountId;
+        };
         void runUniversalSearchActivation({
             prepare: () => result
-                ? prepareUniversalSearchResult(result.target, {
+                ? sourceAccountIsCurrent() && prepareUniversalSearchResult(result.target, {
                     isTargetCurrent: isBuiltInTargetCurrent,
                     readExactSession: readExactSessionForActivation,
                 })
@@ -833,6 +929,16 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
                         navigateToSession,
                         push: (path) => { router.push(path as never); },
                         openProject,
+                        stageFileFindSeed: (target, seed) => {
+                            const binding = paneContext?.fileFindSeedAccountBindings.get(resolveServerProfileScopeIdForIdentifier(target.scope.serverId));
+                            if (!paneContext || !binding?.isCurrent() || binding.accountId !== target.accountId) return null;
+                            const id = target.workspaceRefId ?? target.sessionId;
+                            if (!id) return null;
+                            return paneContext.fileFindSeedHandoff.stage({
+                                host: target.workspaceRefId ? 'project' : 'session', id,
+                                accountId: target.accountId, scope: target.scope, path: target.path,
+                            }, seed, binding);
+                        },
                         isTargetCurrent: isBuiltInTargetCurrent,
                     });
                     return outcome.ok;
@@ -849,18 +955,40 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
             },
             presentFailure: () => { Modal.alert(t('common.error'), t('errors.searchFailed')); },
         });
-    }, [isBuiltInTargetCurrent, navigateToSession, openProject, pluginScopeIsCurrent, props.commands, props.onRequestClose, readExactSessionForActivation, router]);
+    }, [credentialBindings, isBuiltInTargetCurrent, navigateToSession, openProject, paneContext, pluginScopeIsCurrent, props.commands, props.onRequestClose, readExactSessionForActivation, router]);
 
     const activeRootStep = terminalJump?.step ?? rootStep;
-    const activeFilters = terminalJump ? terminalScopeChrome.filters : scopeFilters;
+    const sourceFilters = React.useMemo<readonly SelectionListFilter[]>(() => workspaceScope || source ? [{ id: 'source', label: t('tools.names.search'), valueLabel: source ? t('universalSearch.content.textInFiles') : t('universalSearch.content.everything'), options: [{ id: 'everything', label: t('universalSearch.content.everything') }, { id: 'fileContent', label: t('universalSearch.content.textInFiles') }], selectedId: source ?? 'everything', onChange: (next) => { setSelectedOptionId(null); setSource(next === 'fileContent' ? 'fileContent' : undefined); if (next !== 'fileContent') { setMatchCase(false); setRegex(false); } }, testID: 'universal-search:source' }] : [], [source, workspaceScope]);
+    const combinedFilters = React.useMemo(() => [...(scopeFilters ?? []), ...sourceFilters], [scopeFilters, sourceFilters]);
+    const activeFilters = terminalJump ? terminalScopeChrome.filters : combinedFilters;
+    const inputSuffix = source === 'fileContent' && !terminalJump ? <View style={{ flexDirection: 'row', gap: 16 }}>
+        <IconButton testID="universal-search:match-case" icon={<Text>Aa</Text>} minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)} interactiveTargetGapPx={16} accessibilityRole="switch" accessibilityLabel={t('universalSearch.content.matchCase')} tooltip={t('universalSearch.content.matchCase')} checked={matchCase} selected={matchCase} onPress={() => setMatchCase((value) => !value)} />
+        <IconButton testID="universal-search:regex" icon={<Text>.*</Text>} minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)} interactiveTargetGapPx={16} accessibilityRole="switch" accessibilityLabel={t('universalSearch.content.regex')} tooltip={t('universalSearch.content.regex')} checked={regex} selected={regex} onPress={() => setRegex((value) => !value)} />
+    </View> : null;
     const activeSelect = terminalJump ? handleTerminalJumpSelect : handleSelect;
     const listAccessibilityLabel = terminalJump ? t('terminalWorkspace.jump.title') : t('tools.names.search');
+    if (externalConversationSearch?.accountLifetime.isCurrent()) {
+        return <ExternalConversationSearchResults {...externalConversationSearch}
+            onBack={() => setExternalConversationSearch(null)}
+            onRequestClose={props.onRequestClose}
+            onOpenSession={async (sessionId, target, find) => {
+                const authority = externalConversationSearch.accountLifetime;
+                await openChatWithFindSeed({
+                    handoff: paneContext?.fileFindSeedHandoff,
+                    destination: { sessionId, serverId: target.serverId ?? '' }, seed: find, authority,
+                    open: () => navigateToSession(sessionId, {
+                        ...(target.serverId ? { serverId: target.serverId } : {}),
+                    }),
+                });
+            }}
+        />;
+    }
     if (Platform.OS !== 'web' && props.presentation === 'route') {
-        return <UniversalSearchNativeHost rootStep={activeRootStep} query={query} onChangeQuery={setQuery} onSelect={activeSelect} onCommandSelect={terminalJump ? handleTerminalJumpDetails : undefined} onRequestClose={props.onRequestClose} selectedOptionId={selectedOptionId} listAccessibilityLabel={listAccessibilityLabel} filters={activeFilters} dynamicSectionCache={dynamicSectionCache} />;
+        return <UniversalSearchNativeHost rootStep={activeRootStep} query={query} onChangeQuery={setQuery} onSelect={activeSelect} onCommandSelect={terminalJump ? handleTerminalJumpDetails : undefined} onRequestClose={props.onRequestClose} selectedOptionId={selectedOptionId} listAccessibilityLabel={listAccessibilityLabel} filters={activeFilters} inputSuffix={inputSuffix} dynamicSectionCache={dynamicSectionCache} />;
     }
     return (
         <View style={styles.root} testID="universal-search-host">
-            <SelectionList rootStep={activeRootStep} selectionMark="enter" inputValue={query} onChangeInputValue={setQuery} onSelect={activeSelect} onCommandSelect={terminalJump ? handleTerminalJumpDetails : undefined} onRequestClose={props.onRequestClose} selectedOptionId={selectedOptionId} listAccessibilityLabel={listAccessibilityLabel} filters={activeFilters} inputBehavior={terminalScopeChrome.inputBehavior} autoFocusInputOnWeb fillAvailableSpace dynamicSectionCache={dynamicSectionCache} />
+            <SelectionList rootStep={activeRootStep} selectionMark="enter" inputValue={query} onChangeInputValue={setQuery} onSelect={activeSelect} onCommandSelect={terminalJump ? handleTerminalJumpDetails : undefined} onRequestClose={props.onRequestClose} selectedOptionId={selectedOptionId} listAccessibilityLabel={listAccessibilityLabel} filters={activeFilters} inputSuffix={inputSuffix} inputBehavior={terminalScopeChrome.inputBehavior} autoFocusInputOnWeb fillAvailableSpace dynamicSectionCache={dynamicSectionCache} />
         </View>
     );
 }

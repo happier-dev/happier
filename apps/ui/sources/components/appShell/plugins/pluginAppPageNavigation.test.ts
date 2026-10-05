@@ -8,6 +8,7 @@ import {
 } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
+import type { PluginUiContributionOriginV1 } from '@/sync/domains/plugins/ui/projectionUnion';
 
 import { resolvePluginAppPages } from './pluginAppPages';
 import {
@@ -16,6 +17,18 @@ import {
     resolvePluginAppPageLaunchAuthorities,
     type PluginAppPageLaunchOpen,
 } from './pluginAppPageNavigation';
+
+// Launch custody/navigation contracts never access the Session-envelope HTTP API.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Session-envelope HTTP API is outside this navigation test'); };
+    return { createSessionDataKeyEnvelopeClient: unused, readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused, prepareSessionDataKeyEnvelopesDetached: unused };
+});
+
+// No Markdown is rendered here; preserve the external SDK boundary if reached.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Markdown SDK is outside this navigation test'); },
+}));
 
 const NOTES_PLUGIN_ID = 'acme.notes';
 const JOURNAL_PLUGIN_ID = 'acme.journal';
@@ -45,15 +58,20 @@ function createPagePlacement(
 ): PluginUiSurfacePlacementProjection {
     const pluginId = overrides.pluginId ?? NOTES_PLUGIN_ID;
     const descriptorId = overrides.descriptorId ?? 'notes';
-    const placement = {
+    const binding = overrides.binding ?? pageBinding(pluginId, descriptorId);
+    return {
         id: overrides.id ?? `surfacePlacement:${pluginId}:${descriptorId}`,
         pluginId,
+        // The daemon stamps the serving plugin-slot occurrence on every UI row.
+        occurrenceId: `${pluginId}:9`,
         contributionKind: 'surfacePlacement',
         descriptorId,
-        target: { kind: 'app' },
+        binding,
+        target: binding.target,
         renderer: { kind: 'reactNative', contributionId: 'notes-renderer' },
         display: { developerFallback: 'Notes' },
         availability: { state: 'available', reason: 'available', diagnostics: [] },
+        headerActions: [],
         hostOrigin: pageHostOrigin({
             pluginId,
             machineId: 'machine-1',
@@ -61,13 +79,7 @@ function createPagePlacement(
             generation: 9,
         }),
         ...overrides,
-    };
-    const binding = placement.binding ?? pageBinding(placement.pluginId, placement.descriptorId);
-    return {
-        ...placement,
-        binding,
-        target: binding.target,
-    } as PluginUiSurfacePlacementProjection;
+    } satisfies PluginUiSurfacePlacementProjection;
 }
 
 function pageExecutionOrigin(input: Readonly<{
@@ -90,7 +102,7 @@ function pageHostOrigin(input: Readonly<{
     machineId: string;
     materializationId: string;
     generation: number;
-}>): Readonly<Record<string, unknown>> {
+}>): PluginUiContributionOriginV1 {
     return {
         machineId: input.machineId,
         serverId: 'server-1',
@@ -115,6 +127,7 @@ const pages = resolvePluginAppPages({
             id: `surfacePlacement:${JOURNAL_PLUGIN_ID}:journal`,
             pluginId: JOURNAL_PLUGIN_ID,
             descriptorId: 'journal',
+            occurrenceId: `${JOURNAL_PLUGIN_ID}:10`,
         }),
     ],
 });
@@ -358,6 +371,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
                     id: `surfacePlacement:${NOTES_PLUGIN_ID}:notes`,
                     pluginId: NOTES_PLUGIN_ID,
                     descriptorId: 'notes',
+                    occurrenceId: `${NOTES_PLUGIN_ID}:73`,
                     hostOrigin: pageHostOrigin({
                         pluginId: NOTES_PLUGIN_ID,
                         machineId: 'machine-a',
@@ -369,6 +383,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
                     id: `surfacePlacement:${JOURNAL_PLUGIN_ID}:journal`,
                     pluginId: JOURNAL_PLUGIN_ID,
                     descriptorId: 'journal',
+                    occurrenceId: `${JOURNAL_PLUGIN_ID}:74`,
                     hostOrigin: pageHostOrigin({
                         pluginId: JOURNAL_PLUGIN_ID,
                         machineId: 'machine-b',
@@ -387,7 +402,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
         expect(authorities.get(NOTES_PAGE_ID)).toMatchObject({
             machineId: 'machine-a',
             serverId: 'server-1',
-            generation: 11,
+            occurrenceId: `${NOTES_PLUGIN_ID}:73`,
             executionOrigin: pageExecutionOrigin({
                 pluginId: NOTES_PLUGIN_ID,
                 machineId: 'machine-a',
@@ -397,7 +412,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
         expect(authorities.get(JOURNAL_PAGE_ID)).toMatchObject({
             machineId: 'machine-b',
             serverId: 'server-1',
-            generation: 12,
+            occurrenceId: `${JOURNAL_PLUGIN_ID}:74`,
             executionOrigin: pageExecutionOrigin({
                 pluginId: JOURNAL_PLUGIN_ID,
                 machineId: 'machine-b',
@@ -422,7 +437,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
 
         const query = { pageId: NOTES_PAGE_ID, subPath: '' } as const;
         expect(store.peek({ ...query, authority })?.input).toEqual({ noteId: 'a' });
-        // A replaced generation, another server/account and another contributing
+        // A replaced occurrence, another server/account and another contributing
         // machine are each a different producer of the same qualified page.
         expect(store.peek({ ...query, authority: nextOccurrence })).toBeNull();
         expect(store.peek({ ...query, authority: otherServer })).toBeNull();
@@ -438,7 +453,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
             input: { noteId: 'old-install' },
         });
 
-        // Machine/server/generation alone are insufficient after a plugin is
+        // Machine/server/occurrence alone are insufficient after a plugin is
         // re-materialized. The replacement must not receive bounded input from
         // the selected predecessor.
         expect(store.peek({
@@ -523,7 +538,7 @@ describe('plugin app page launch-input handoff (EU-5b)', () => {
         store.retire(nextOccurrence);
 
         // Not merely undeliverable: the bounded JSON is dropped, so it cannot
-        // outlive the account/generation that produced it inside one process.
+        // outlive the account/occurrence that produced it inside one process.
         expect(store.peek({ authority, pageId: NOTES_PAGE_ID, subPath: '' })).toBeNull();
     });
 

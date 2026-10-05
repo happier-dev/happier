@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import type { SessionWidgetHostProps } from '@/components/sessions/board/SessionWidgetHost';
 import { createSessionSurfaceNoteDocumentV1, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
 import {
     readPresentationNotice,
@@ -94,12 +95,13 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => ({
 }));
 
 const widgetHostProps = vi.fn();
-vi.mock('@/components/sessions/board/SessionWidgetHost', () => ({
-    SessionWidgetHost: (props: Record<string, unknown>) => {
+vi.mock('@/components/sessions/board/SessionWidgetHost', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/sessions/board/SessionWidgetHost')>();
+    return { ...actual, SessionWidgetHost: (props: SessionWidgetHostProps) => {
         widgetHostProps(props);
-        return null;
-    },
-}));
+        return <actual.SessionWidgetHost {...props} />;
+    } };
+});
 
 import {
     projectSessionBoard,
@@ -210,12 +212,7 @@ describe('SessionCompanionScreen (mounted, mobile Cockpit)', () => {
         const headerText = renderer.getTextContent();
         expect(headerText).toContain('sessionBoard.companion.pane.besideChat');
         expect(headerText).toContain('sessionBoard.companion.pane.itemCount');
-        // Full-height content stretches to the Cockpit width. Publishing that
-        // laid-out width as rail evidence would make the placement owner treat
-        // a presentation constraint as the card's intrinsic rail width.
-        expect(renderer.findByTestId(
-            'session-companion-content-item-builtin:session_summary',
-        )?.props.onLayout).toBeUndefined();
+        expect(renderer.findByTestId('session-companion-content-item-builtin:session_summary')).not.toBeNull();
     });
 
     it('invites an empty Companion with the summary and says it is personal (lab STp)', async () => {
@@ -239,7 +236,7 @@ describe('SessionCompanionScreen (mounted, mobile Cockpit)', () => {
         expect(headerText).toContain('sessionBoard.companion.pane.justForYou');
     });
 
-    it('routes installed-widget recovery and Board removal through the mounted Board controller', async () => {
+    it('manages a shared widget through Board while removing only its personal Companion reference', async () => {
         boardSnapshot.mockReturnValue({
             ...readySnapshot(),
             snapshot: projectSessionBoard({
@@ -254,8 +251,8 @@ describe('SessionCompanionScreen (mounted, mobile Cockpit)', () => {
                             frame: 'card',
                             height: { mode: 'auto', fallback: 'regular' },
                             source: {
-                                kind: 'installedSurface',
-                                surface: { pluginId: 'acme.review', localId: 'review-status' },
+                                kind: 'widget',
+                                instance: { v: 1, id: 'w1', definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'review-status' } }, bindings: {} },
                             },
                         },
                     },
@@ -276,13 +273,18 @@ describe('SessionCompanionScreen (mounted, mobile Cockpit)', () => {
             items: [{ kind: 'widget', widgetId: 'w1' }],
         };
 
-        await renderScreen(<SessionCompanionScreen {...shellProps} />);
+        const renderer = await renderScreen(<SessionCompanionScreen {...shellProps} />);
         const mounted = widgetHostProps.mock.calls.at(-1)?.[0] as Record<string, unknown>;
-        (mounted.onManagePlugin as (() => void) | undefined)?.();
-        (mounted.onRemove as (() => void) | undefined)?.();
-
-        expect(boardControllerRun).toHaveBeenNthCalledWith(1, { kind: 'item.managePlugin', itemId: 'w1' });
-        expect(boardControllerRun).toHaveBeenNthCalledWith(2, { kind: 'item.remove', itemId: 'w1' });
+        expect(mounted).not.toHaveProperty('onRemove');
+        const [menu] = renderer.findAll((node) => Array.isArray(node.props?.actions)
+            && node.props?.overflowTriggerTestID === 'session-companion-content-item-widget:w1-actions');
+        const actions = menu?.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>;
+        await act(async () => { actions.find((action) => action.id === 'manage-plugin')?.onPress?.(); });
+        expect(boardControllerRun).toHaveBeenCalledWith({ kind: 'item.managePlugin', itemId: 'w1' });
+        await act(async () => { actions.find((action) => action.id === 'remove')?.onPress?.(); });
+        expect(storedPreference.value).toMatchObject({ items: [], visible: false });
+        expect(boardControllerRun.mock.calls.some(([command]) => command.kind === 'item.remove')).toBe(false);
+        expect(boardSnapshot().snapshot.itemsById.has('w1')).toBe(true);
     });
 
     it('preserves the Session Summary when the exact Home cannot provide Board', async () => {

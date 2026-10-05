@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
+import type { ScmMutationResponse } from '@/scm/operations/runSessionScmMutation';
 import type { ScmOperationState, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -15,22 +16,17 @@ import {
     type SourceControlUpdateTheme,
 } from './SourceControlUpdateControls';
 
-type ScmUiOperationResponse = Readonly<{
-    success: boolean;
-    error?: string;
-}>;
-
 export function SourceControlBranchIntegrationSection(props: Readonly<{
     theme: SourceControlUpdateTheme;
     snapshot: ScmWorkingSnapshot | null;
     rootPath: string | null;
     disabled?: boolean;
     writeEnabled?: boolean;
-    onMerge: (sourceRef: string) => Promise<ScmUiOperationResponse>;
-    onRebase: (sourceRef: string) => Promise<ScmUiOperationResponse>;
-    onContinue: (operation: ScmOperationState['kind']) => Promise<ScmUiOperationResponse>;
-    onAbort: (operation: ScmOperationState['kind']) => Promise<ScmUiOperationResponse>;
-    onRefresh: () => Promise<void>;
+    onMerge: (sourceRef: string) => Promise<ScmMutationResponse>;
+    onRebase: (sourceRef: string) => Promise<ScmMutationResponse>;
+    onContinue: (operation: ScmOperationState['kind']) => Promise<ScmMutationResponse>;
+    onAbort: (operation: ScmOperationState['kind']) => Promise<ScmMutationResponse>;
+    onSkip?: (operation: ScmOperationState['kind']) => Promise<ScmMutationResponse>;
 }>) {
     const [sourceRef, setSourceRef] = React.useState('');
     const [busy, setBusy] = React.useState(false);
@@ -80,9 +76,13 @@ export function SourceControlBranchIntegrationSection(props: Readonly<{
     const canMerge = !baseDisabled && capabilities?.writeBranchMerge === true && hasSourceRef && mergePreflight.allowed;
     const canRebase = !baseDisabled && capabilities?.writeBranchRebase === true && hasSourceRef && rebasePreflight.allowed;
     const canControl = !baseDisabled && capabilities?.writeBranchOperationControl === true && operationState != null;
+    const canSkip = !baseDisabled && capabilities?.writeBranchOperationSkip === true
+        && operationState?.canSkip === true && Boolean(props.onSkip);
 
-    const showFailure = React.useCallback((fallback: string, response: ScmUiOperationResponse) => {
-        if (response.success) return;
+    const showFailure = React.useCallback((fallback: string, response: ScmMutationResponse) => {
+        // The shared mutation owner reconciles and publishes rich results to the pane's one outcome line.
+        // An unstarted operation (for example a held lock) has no log result and still needs feedback here.
+        if (response.outcome || response.success) return;
         Modal.alert(t('common.error'), response.error || fallback);
     }, []);
 
@@ -98,23 +98,19 @@ export function SourceControlBranchIntegrationSection(props: Readonly<{
                 const response = kind === 'merge'
                     ? await props.onMerge(trimmedSourceRef)
                     : await props.onRebase(trimmedSourceRef);
-                if (!response.success) {
-                    showFailure(
-                        kind === 'merge'
-                            ? t('files.sourceControlOperations.update.branchIntegration.errors.mergeFailed')
-                            : t('files.sourceControlOperations.update.branchIntegration.errors.rebaseFailed'),
-                        response,
-                    );
-                    return;
-                }
-                await props.onRefresh();
+                showFailure(
+                    kind === 'merge'
+                        ? t('files.sourceControlOperations.update.branchIntegration.errors.mergeFailed')
+                        : t('files.sourceControlOperations.update.branchIntegration.errors.rebaseFailed'),
+                    response,
+                );
             } finally {
                 setBusy(false);
             }
         })();
     }, [props, showFailure]);
 
-    const runControl = React.useCallback((kind: 'continue' | 'abort') => {
+    const runControl = React.useCallback((kind: 'continue' | 'abort' | 'skip') => {
         void (async () => {
             if (!operationState) return;
             if (kind === 'abort') {
@@ -151,19 +147,17 @@ export function SourceControlBranchIntegrationSection(props: Readonly<{
             try {
                 const currentOperationState = latestSnapshotRef.current?.operationState ?? operationState;
                 if (!currentOperationState) return;
-                const response = kind === 'continue'
-                    ? await props.onContinue(currentOperationState.kind)
-                    : await props.onAbort(currentOperationState.kind);
-                if (!response.success) {
-                    showFailure(
-                        kind === 'continue'
-                            ? t('files.sourceControlOperations.update.branchIntegration.errors.continueFailed')
-                            : t('files.sourceControlOperations.update.branchIntegration.errors.abortFailed'),
-                        response,
-                    );
-                    return;
-                }
-                await props.onRefresh();
+                if (kind === 'skip' && (currentOperationState.canSkip !== true
+                    || latestSnapshotRef.current?.capabilities?.writeBranchOperationSkip !== true || !props.onSkip)) return;
+                const control = kind === 'continue' ? props.onContinue : kind === 'abort' ? props.onAbort : props.onSkip;
+                if (!control) return;
+                const response = await control(currentOperationState.kind);
+                showFailure(
+                    kind !== 'abort'
+                        ? t('files.sourceControlOperations.update.branchIntegration.errors.continueFailed')
+                        : t('files.sourceControlOperations.update.branchIntegration.errors.abortFailed'),
+                    response,
+                );
             } finally {
                 setBusy(false);
             }
@@ -182,8 +176,10 @@ export function SourceControlBranchIntegrationSection(props: Readonly<{
                     operationState={operationState}
                     continueDisabled={!canControl || !continuePreflight.allowed}
                     abortDisabled={!canControl || !abortPreflight.allowed}
+                    skipDisabled={!canSkip}
                     onContinue={() => runControl('continue')}
                     onAbort={() => runControl('abort')}
+                    onSkip={operationState.canSkip && capabilities?.writeBranchOperationSkip && props.onSkip ? () => runControl('skip') : undefined}
                 />
             ) : null}
             <SourceControlUpdateInput
@@ -220,8 +216,10 @@ function BranchOperationBanner(props: Readonly<{
     operationState: ScmOperationState;
     continueDisabled: boolean;
     abortDisabled: boolean;
+    skipDisabled: boolean;
     onContinue: () => void;
     onAbort: () => void;
+    onSkip?: () => void;
 }>) {
     return (
         <View
@@ -241,6 +239,15 @@ function BranchOperationBanner(props: Readonly<{
                 })}
             </Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
+                {props.onSkip ? (
+                    <SourceControlUpdateButton
+                        theme={props.theme}
+                        testID="scm-update-branch-operation-skip"
+                        label={t('sessionGitPane.flow.conflicts.skip')}
+                        disabled={props.skipDisabled}
+                        onPress={props.onSkip}
+                    />
+                ) : null}
                 {props.operationState.canContinue ? (
                     <SourceControlUpdateButton
                         theme={props.theme}

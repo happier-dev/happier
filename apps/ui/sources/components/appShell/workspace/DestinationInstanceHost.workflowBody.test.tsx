@@ -11,8 +11,9 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 // The client starts signed out: no private Run is exposed or fetched before an Account owns it.
 // The real Run body, route parsing, state cards and workflow hooks remain in this test.
 vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
+        storage: createStorageStoreMock({ workflowRunInvocationsByRunId: {} }),
         useActiveServerAccountScope: () => null,
         useWorkflowRun: () => null,
         useMachine: () => null,

@@ -411,8 +411,9 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             sessionId={props.sessionId}
             serverId={pluginRuntime.serverId}
             openDetailsTab={openDetailsTab}
+            onBrowseFiles={() => pane.openRight({ tabId: 'files' })}
         />
-    ), [openDetailsTab, pluginRuntime.serverId, props.sessionId]);
+    ), [openDetailsTab, pane.openRight, pluginRuntime.serverId, props.sessionId]);
 
     const renderOverlay = React.useCallback((overlay: NonNullable<typeof pane.scopeState>['details']['overlay']) => {
         if (!overlay) return null;

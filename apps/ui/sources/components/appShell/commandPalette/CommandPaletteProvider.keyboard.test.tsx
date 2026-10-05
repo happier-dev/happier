@@ -84,6 +84,7 @@ vi.mock('@/sync/store/settingsWriters', () => ({
 
 vi.mock('@/utils/platform/desktopHost', () => ({
     isDesktopHost: () => false,
+    desktopHostKind: () => null,
 }));
 
 vi.mock('@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge', () => ({
@@ -162,6 +163,15 @@ describe('CommandPaletteProvider keyboard shortcuts', () => {
                 draftOrigin: 'ordinary',
             },
         });
+    });
+
+    it('opens the same Search surface in text-in-files scope through its keyboard command', async () => {
+        const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
+        await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
+        testState.keyboardHandlers?.['search.textInFiles']?.();
+        expect(testState.modalShow).toHaveBeenCalledWith(expect.objectContaining({
+            props: expect.objectContaining({ initialSource: 'fileContent' }),
+        }));
     });
 
     it('keeps Search available when only its keyboard shortcut is disabled', async () => {

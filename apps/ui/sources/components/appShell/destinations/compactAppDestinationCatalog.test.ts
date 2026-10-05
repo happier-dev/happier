@@ -13,17 +13,96 @@ import {
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import { createSessionScmPullRequestDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
+import { resolveHref } from 'expo-router/build/link/href';
+import { parseQueryParams } from 'expo-router/build/fork/getStateFromPath-forks';
+import { readPluginSettingsPageRouteParams } from '@/components/settings/catalog/runtime/pluginSettingsPageCatalog';
 
 import {
     resolveCompactAppDestinations,
     resolveCurrentAppDestination,
     resolveDestinationRefFromHref,
     hrefForDestinationRef,
+    readDestinationInstanceTitle,
     useActivateAppDestination,
     useCompactAppDestinations,
 } from './compactAppDestinationCatalog';
 
+// Catalog/navigation contracts never access the Session-envelope HTTP API.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unused = () => { throw new Error('Session-envelope HTTP API is outside this catalog test'); };
+    return { createSessionDataKeyEnvelopeClient: unused, readSessionDataKeyEnvelopeCollectionPage: unused,
+        prepareSessionDataKeyEnvelopesForScope: unused, prepareSessionDataKeyEnvelopesDetached: unused };
+});
+
+// No Markdown is rendered here; preserve the external SDK boundary if reached.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Markdown SDK is outside this catalog test'); },
+}));
+
 describe('workspace route identity round trips', () => {
+    it('names hidden Personalize tabs at every visited step while unknown destinations remain unavailable', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const personalize = catalog.find(destination => destination.id === 'personalize')!;
+        expect(personalize.visibility).toBe('hidden');
+        const visits: readonly Readonly<Record<string, string>>[] = [{}, { page: 'conversation' }, { page: 'notifications', anchor: 'privacy' }];
+        for (const params of visits) {
+            expect(readDestinationInstanceTitle(catalog, { kind: 'personalize', params })).toBe(personalize.title);
+        }
+        expect(readDestinationInstanceTitle(catalog, { kind: 'missing-destination', params: {} })).toBeNull();
+    });
+    it('admits and round trips Personalize visits without adding a launcher', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        for (const href of ['/personalize', '/personalize?page=style', '/personalize?page=conversation']) {
+            const target = resolveDestinationRefFromHref(catalog, href);
+            expect(target, href).toEqual({ kind: 'personalize', params: href.includes('?') ? { page: href.split('=')[1] } : {} });
+            expect(target && hrefForDestinationRef(catalog, target), href).toBe(href);
+        }
+        expect(catalog.find(destination => destination.id === 'personalize')).toMatchObject({ visibility: 'hidden' });
+        expect(resolveDestinationRefFromHref(catalog, '/personalize/no-such-page')).toBeNull();
+        expect(resolveDestinationRefFromHref(catalog, '/personalize?page=style&page=tools')).toBeNull();
+    });
+    it('leaves repeated plugin locations to Expo without choosing one value', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const href = '/settings/plugins/acme.review/policy?subPath=bindings%2F1&subPath=bindings%2F2';
+        const route = { name: 'settings/plugins/[pluginId]/[pageId]', params: { pluginId: 'acme.review', pageId: 'policy' } };
+        const query = parseQueryParams(href, route);
+        expect(readPluginSettingsPageRouteParams({ ...query, ...route.params })?.subPath).toBeNull();
+        expect(resolveDestinationRefFromHref(catalog, href)).toBeNull();
+        const single = resolveDestinationRefFromHref(catalog, href.split('&')[0]!);
+        expect(single).not.toBeNull();
+        expect(readPluginSettingsPageRouteParams(single!.params)?.subPath).toBe('bindings/1');
+    });
+
+    it('admits only Settings locations with a hosted route body', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        expect(resolveDestinationRefFromHref(catalog, '/settings/no-such-page')).toBeNull();
+        for (const href of ['/settings/embeds', '/settings/embeds/new', '/settings/embeds/token-a',
+            '/settings/account/api-tokens/token-a', '/settings/voice/service']) {
+            const target = resolveDestinationRefFromHref(catalog, href);
+            expect(target, href).not.toBeNull();
+            expect(target && hrefForDestinationRef(catalog, target), href).toBe(href);
+        }
+        expect(resolveDestinationRefFromHref(catalog, '/settings/account/api-tokens/token-a')?.params.tokenId).toBe('token-a');
+    });
+    it('admits the real group-qualified account href and preserves its qualified identity', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
+        const href = resolveHref(buildConnectedAccountSettingsRoute(service, { kind: 'account', accountId: 'account-a' }));
+        const target = resolveDestinationRefFromHref(catalog, href);
+        expect(target).toEqual({ kind: 'settings', params: { ...service, accountId: 'account-a', pageId: 'connected-services/account' } });
+        expect(target && hrefForDestinationRef(catalog, target)).toBe('/settings/connected-services/account?pluginId=happier.agent.claude&localId=anthropic&accountId=account-a');
+    });
     it('preserves nested dynamic and static route locations with canonical leaf params', () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: true, workflows: true, friends: true,
@@ -176,6 +255,7 @@ describe('resolveCompactAppDestinations', () => {
             ['browseExistingSessions', { kind: 'column', column: 'sessions' }],
             ['plugins', { kind: 'rail', region: 'plugins' }],
             ['settings', { kind: 'rail', region: 'account' }],
+            ['personalize', { kind: 'rail', region: 'account' }],
         ]);
         expect(destinations.find((destination) => destination.id === 'search')).toMatchObject({ activation: 'overlay' });
         expect(destinations.find((destination) => destination.id === 'sessions')).toMatchObject({ column: 'sessions', activation: 'navigate' });
@@ -185,7 +265,7 @@ describe('resolveCompactAppDestinations', () => {
         expect(destinations.find((destination) => destination.id === 'artifacts')).not.toHaveProperty('column');
         // Built-ins the viewer cannot open are not listed at all.
         expect(ids(resolveCompactAppDestinations({ builtins: CORE_BUILTINS, pages: [] })))
-            .toEqual(['sessions', 'search', 'projects', 'boards', 'artifacts', 'plugins', 'settings']);
+            .toEqual(['sessions', 'search', 'projects', 'boards', 'artifacts', 'plugins', 'settings', 'personalize']);
     });
 
     it('places a plugin page on the rail or in a named column, and falls back to the rail for a column this host lacks', () => {
@@ -300,7 +380,7 @@ describe('resolveCompactAppDestinations', () => {
             'sessions', 'search', 'inbox', 'projects', 'workflows', 'boards', 'artifacts',
             'plugin:acme.prompts:prompts', 'browseExistingSessions',
             'plugin:acme.notes:notes', 'plugins', 'plugin:acme.review:review',
-            'settings',
+            'settings', 'personalize',
         ]);
         expect(destinations.find((destination) => destination.id === 'plugin:acme.review:review')).toMatchObject({
             visibility: 'hidden',

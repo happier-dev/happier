@@ -11,7 +11,8 @@ import { OnboardingShowcaseAutoShowMount } from '@/onboarding/showcase';
 import { CompanionNoDragRegionProvider } from '@/components/companion/interaction/CompanionNoDragRegion';
 import { DesktopPetOverlayRuntimeMount } from '@/components/pets/runtime/DesktopPetOverlayRuntimeMount';
 import { PetAppShellCompanionMount } from '@/components/pets/runtime/PetAppShellCompanionMount';
-import { VoiceOrbAppShellMount } from '@/components/voice/orb/VoiceOrbAppShellMount';
+import { VoicePresenceAppShellMount } from '@/components/voice/presence/VoicePresenceAppShellMount';
+import { VoiceKeyboardRuntime } from '@/components/voice/attempt/VoiceKeyboardRuntime';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { DesktopBrowserRecordingReverseCaptureRuntime } from '@/sync/domains/browser/recording/DesktopBrowserRecordingReverseCaptureRuntime';
@@ -20,6 +21,7 @@ import { storage, useAllMachines } from '@/sync/domains/state/storage';
 import { CurrentSessionPresentationRuntime } from '@/components/sessions/presentation/CurrentSessionPresentationRuntime';
 import { ActionOperationRuntime } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { UpdateFactsBackgroundRuntime } from '@/updates/UpdateFactsBackgroundRuntime';
+import { EntityDragRealmPreview } from './EntityDragRealmPreview';
 
 type ActivitySurfacesRuntimeComponent = React.ComponentType;
 
@@ -97,6 +99,8 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
             <UpdateFactsBackgroundRuntime enabled={props.isAuthenticated} />
             {props.isAuthenticated ? <PushNotificationPermissionPrimingRuntime /> : null}
             {props.isAuthenticated ? <CurrentSessionPresentationRuntime /> : null}
+            {props.isAuthenticated ? <VoiceKeyboardRuntime /> : null}
+            {props.isAuthenticated ? <EntityDragRealmPreview /> : null}
             <DesktopPetOverlayRuntimeMount />
             {/*
               * One no-drag registry for every floating companion in the app shell. The pet and the
@@ -105,7 +109,7 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
               */}
             <CompanionNoDragRegionProvider>
                 <PetAppShellCompanionMount />
-                <VoiceOrbAppShellMount />
+                <VoicePresenceAppShellMount />
             </CompanionNoDragRegionProvider>
             {props.isAuthenticated ? <ReleaseNotesAutoShowMount /> : null}
             {props.isAuthenticated && props.isDesktopShell ? (

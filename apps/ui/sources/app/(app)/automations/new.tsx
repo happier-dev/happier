@@ -11,12 +11,17 @@ import { Redirect, useLocalSearchParams } from '@/components/appShell/workspace/
  * - anything else opens the Workflows destination.
  */
 export function RetiredAutomationCreateRoute(): React.ReactElement {
-    const params = useLocalSearchParams<{ sourceSessionId?: string; sourceServerId?: string; newSessionDraftSeedId?: string }>();
+    const params = useLocalSearchParams<{ sourceSessionId?: string; sourceTurnId?: string; sourceServerId?: string;
+        sessionLifecycleEvents?: string; newSessionDraftSeedId?: string }>();
     if (typeof params.sourceSessionId === 'string' && params.sourceSessionId.length > 0) {
         return <Redirect href={{
             pathname: '/session/[id]/triggers',
             params: {
                 id: params.sourceSessionId,
+                sourceSessionId: params.sourceSessionId,
+                ...(typeof params.sourceTurnId === 'string' ? { sourceTurnId: params.sourceTurnId } : {}),
+                ...(typeof params.sourceServerId === 'string' ? { sourceServerId: params.sourceServerId } : {}),
+                ...(typeof params.sessionLifecycleEvents === 'string' ? { sessionLifecycleEvents: params.sessionLifecycleEvents } : {}),
                 ...(typeof params.sourceServerId === 'string' && params.sourceServerId.length > 0 ? { serverId: params.sourceServerId } : {}),
             },
         } as never} />;

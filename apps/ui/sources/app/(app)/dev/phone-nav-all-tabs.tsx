@@ -9,7 +9,7 @@ import { SessionHeaderPullHint } from '@/components/sessions/shell/SessionHeader
 import { SessionAllTabsOverviewBody, SessionAllTabsPageView } from '@/components/sessions/shell/SessionAllTabsOverview';
 import { buildSessionAllTabsSections } from '@/components/sessions/shell/useSessionAllTabsOpener';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
-import { resolveSessionHeaderPullFrame, SESSION_HEADER_PULL_ARM_PX, SESSION_HEADER_PULL_OPEN_PX } from '@/components/sessions/shell/sessionHeaderPull';
+import { resolveSessionHeaderPullFrame, SESSION_HEADER_PULL_ARM_PX, SESSION_HEADER_PULL_OPEN_PX } from '@/components/sessions/shell/sessionHeaderPullGesture';
 import { buildServerScopedSessionKey } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 
 /**

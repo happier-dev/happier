@@ -157,8 +157,8 @@ describe('GitChangesTree', () => {
     it('puts the Git letter in the icon slot after the checkbox', async () => {
         const { screen } = await render();
         // The row primitive hands its leading slot (disclosure · checkbox · mark) to the list row as `icon`.
-        const row = screen.findAll((node) => node.props?.testID === rowId('AGENTS.md') && node.props.icon !== undefined && node.props.node === undefined)[0];
-        const leading = await renderScreen(<>{row?.props.icon}</>);
+        const row = screen.findAll((node) => node.props?.testID === rowId('AGENTS.md') && node.props.leftElement !== undefined && node.props.node === undefined)[0];
+        const leading = await renderScreen(<>{row?.props.leftElement}</>);
         expect(textOf(leading.findHostByTestId(`${rowId('AGENTS.md')}-change`))).toBe('M');
     });
 
@@ -178,5 +178,13 @@ describe('GitChangesTree', () => {
             screen.pressByTestId(rowId('AGENTS.md'));
         });
         expect(handlers.onOpenFile).toHaveBeenCalledWith('AGENTS.md');
+    });
+
+    it('keeps conflicted files out of both row and folder commit selection', async () => {
+        const snapshot = { ...SNAPSHOT, hasConflicts: true, entries: [entry('src/a.ts', 'conflicted'), entry('src/b.ts', 'modified')] };
+        const { screen, handlers } = await render({ snapshot, files: selectScmChangedFiles(snapshot) });
+        expect(screen.findAllByTestId(`${rowId('src/a.ts')}-select`)).toHaveLength(0);
+        await screen.pressByTestIdAsync(`${rowId('src')}-select`);
+        expect(handlers.onToggleFolder).toHaveBeenCalledWith(['src/b.ts'], true);
     });
 });

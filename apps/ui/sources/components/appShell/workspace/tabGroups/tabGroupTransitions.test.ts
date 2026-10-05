@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { moveGroupTab } from './tabGroupTransitions';
+import { insertGroupTab, moveGroupTab, reorderGroupTab } from './tabGroupTransitions';
 
 describe('tab group transitions', () => {
+    it('inserts and reorders against current semantic anchors without dropping intervening members', () => {
+        const group = { id: 'group', tabIds: ['a', 'late', 'b'], activeTabId: 'a', mru: ['a', 'b', 'late'] };
+        expect(insertGroupTab(group, 'new', 'b')).toMatchObject({ tabIds: ['a', 'late', 'new', 'b'], activeTabId: 'new' });
+        const reordered = reorderGroupTab(group, 'a', 'b');
+        expect(reordered).toMatchObject({ tabIds: ['late', 'a', 'b'], activeTabId: 'a', mru: group.mru });
+        expect(reorderGroupTab(group, 'a', 'deleted').tabIds).toEqual(['late', 'b', 'a']);
+        expect(reorderGroupTab(group, 'a', 'a')).toBe(group);
+        expect(reorderGroupTab(group, 'missing', 'b')).toBe(group);
+    });
+
     it('moves a preview between groups and replaces only the destination preview', () => {
         const source = { id: 'source', tabIds: ['keep', 'moving'], activeTabId: 'moving', mru: ['moving', 'keep'] };
         const target = { id: 'target', tabIds: ['pinned', 'old-preview'], activeTabId: 'old-preview', mru: ['old-preview', 'pinned'] };

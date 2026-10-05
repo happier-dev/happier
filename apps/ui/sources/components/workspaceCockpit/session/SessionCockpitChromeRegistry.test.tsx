@@ -8,6 +8,8 @@ import {
     SessionCockpitChromeRegistryProvider,
     useSessionCockpitBottomChromeHeight,
     useSessionCockpitBottomChromeHeightSetter,
+    useSessionCockpitComposerBottomChromeHeight,
+    useReportSessionCockpitFloatingBottomChromeHeight,
     useSessionCockpitChromeRegister,
     useSessionCockpitChromeRegistration,
     type SessionCockpitChromeRegistration,
@@ -18,6 +20,16 @@ function RegistrationProbe() {
     const registration = useSessionCockpitChromeRegistration();
 
     return React.createElement('RegistrationProbe', { registration });
+}
+
+function FloatingBandProbe(props: Readonly<{ measuredHeight: number; visible: boolean; heights: number[] }>) {
+    const report = useReportSessionCockpitFloatingBottomChromeHeight(props.visible);
+    const setBarHeight = useSessionCockpitBottomChromeHeightSetter();
+    const height = useSessionCockpitComposerBottomChromeHeight();
+    props.heights.push(height);
+    React.useEffect(() => { setBarHeight(62); }, [setBarHeight]);
+    React.useEffect(() => { report(props.measuredHeight); }, [props.measuredHeight, report]);
+    return null;
 }
 
 function RegisteringBridge(props: Readonly<{
@@ -127,6 +139,22 @@ function readRegistration(screen: Awaited<ReturnType<typeof renderScreen>>): Ses
 describe('SessionCockpitChromeRegistry', () => {
     afterEach(() => {
         standardCleanup();
+    });
+
+    it('lifts composers by the measured floating band above the bar and releases it when hidden', async () => {
+        const heights: number[] = [];
+        const scene = (measuredHeight: number, visible: boolean) => (
+            <SessionCockpitChromeRegistryProvider>
+                <FloatingBandProbe measuredHeight={measuredHeight} visible={visible} heights={heights} />
+            </SessionCockpitChromeRegistryProvider>
+        );
+        const screen = await renderScreen(scene(70, true));
+        expect(heights.at(-1)).toBe(132);
+        await screen.update(scene(94, true));
+        expect(heights.at(-1)).toBe(156);
+        await screen.update(scene(94, false));
+        expect(heights.at(-1)).toBe(62);
+        await screen.unmount();
     });
 
     it('projects and updates the Home identity when the same session id moves between Homes', async () => {

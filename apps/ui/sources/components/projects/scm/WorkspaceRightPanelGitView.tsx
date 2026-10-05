@@ -17,7 +17,7 @@ import { normalizeScmRemoteConfirmPolicy } from '@/scm/settings/remoteConfirmati
 import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
 import { resolveForceWithLeaseTarget } from '@/scm/operations/remoteTarget';
 import { trackBlockedScmOperation } from '@/scm/operations/reporting';
-import { runWorkspaceScmMutation } from '@/scm/operations/runSessionScmMutation';
+import { runWorkspaceScmMutation, type ScmMutationResponse } from '@/scm/operations/runSessionScmMutation';
 import { NotSourceControlRepositoryState, SourceControlStaleSnapshotNotice, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import type { GitSubTabId } from '@/components/workspaces/scm/WorkspaceScmSubTabsBar';
 import { GitPaneLayout, resolveGitPaneActiveSubTab } from '@/components/workspaces/scm/GitPaneLayout';
@@ -38,6 +38,7 @@ import {
     machineScmBranchMerge,
     machineScmBranchOperationAbort,
     machineScmBranchOperationContinue,
+    machineScmBranchOperationSkip,
     machineScmBranchRebase,
     machineScmHostingRepositoryDescribePublishTargets,
     machineScmHostingRepositoryPublish,
@@ -48,7 +49,6 @@ import {
     machineScmRemoteSetUrl,
     machineScmRepositoryInit,
 } from '@/sync/ops/scm/machineScm';
-import type { ScmOperationErrorCode } from '@happier-dev/protocol';
 import type { ScmProjectOperationKind } from '@/sync/runtime/orchestration/projectManager';
 import { executeWorkspaceScmRemoteOperation } from './executeWorkspaceScmRemoteOperation';
 import { executeWorkspaceScmCommitUndoLast } from './executeWorkspaceScmCommit';
@@ -60,12 +60,6 @@ export type WorkspaceRightPanelGitViewProps = WorkspaceSourceControlViewProps & 
     onOpenCommit?: (sha: string) => void;
     activeSubTabId?: GitSubTabId;
     onActiveSubTabChange?: (tabId: GitSubTabId) => void;
-}>;
-
-type ScmUpdateMutationResponse = Readonly<{
-    success: boolean;
-    error?: string;
-    errorCode?: ScmOperationErrorCode;
 }>;
 
 export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanelGitViewProps) => {
@@ -264,7 +258,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     const loadMoreHistory = React.useCallback(() => {
         void loadCommitHistory();
     }, [loadCommitHistory]);
-    const runWorkspaceUpdateMutation = React.useCallback(async <T extends ScmUpdateMutationResponse>(input: {
+    const runWorkspaceUpdateMutation = React.useCallback(async <T extends ScmMutationResponse>(input: {
         operation: ScmProjectOperationKind;
         fallbackError: string;
         run: () => Promise<T>;
@@ -272,6 +266,11 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         const lockResult = await runWorkspaceScmMutation({
             state: storage.getState(), scope, cwd: scope.rootPath, ...input,
             setScmOperationBusy, setScmOperationStatus,
+            refreshAfterMutation: async () => {
+                await refresh();
+                const error = storage.getState().getWorkspaceScmSnapshotError(scope);
+                if (error) throw new Error(error.message);
+            },
         });
         if (!lockResult.started) {
             trackBlockedScmOperation({
@@ -287,7 +286,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
             };
         }
         return lockResult.response === 'cancelled' ? { success: false } : lockResult.response;
-    }, [scope]);
+    }, [refresh, scope]);
     const addRemote = React.useCallback(
         (request: { name: string; fetchUrl: string; pushUrl?: string }) => runWorkspaceUpdateMutation({
             operation: 'remote_add',
@@ -347,6 +346,14 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
             operation: 'branch_operation_abort',
             fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.abortFailed'),
             run: () => machineScmBranchOperationAbort(scope.machineId, { cwd: scope.rootPath, operation }, scmCallOptions),
+        }),
+        [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath, scmCallOptions],
+    );
+    const skipBranchOperation = React.useCallback(
+        (operation: ScmOperationState['kind']) => runWorkspaceUpdateMutation({
+            operation: 'branch_operation_skip',
+            fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.continueFailed'),
+            run: () => machineScmBranchOperationSkip(scope.machineId, { cwd: scope.rootPath, operation }, scmCallOptions),
         }),
         [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath, scmCallOptions],
     );
@@ -505,7 +512,6 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
                 onAddRemote={addRemote}
                 onSetRemoteUrl={setRemoteUrl}
                 onRemoveRemote={removeRemote}
-                onRefresh={refresh}
             />
             <SourceControlBranchIntegrationSection
                 theme={theme}
@@ -517,7 +523,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
                 onRebase={rebaseBranch}
                 onContinue={continueBranchOperation}
                 onAbort={abortBranchOperation}
-                onRefresh={refresh}
+                onSkip={skipBranchOperation}
             />
             {scmWriteEnabled && snapshot?.capabilities?.writeRemoteForceWithLease === true ? (
                 <Item
@@ -579,6 +585,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
                 writeEnabled={scmWriteEnabled}
                 onRefresh={refresh}
                 onFetch={remoteActions.find((action) => action.key === 'fetch')?.onPress}
+                onShowConflicts={props.onOpenReviewAllChanges}
             />
             {scmOperationStatus ? (
                 <Text style={{ paddingHorizontal: 12, color: theme.colors.text.secondary, ...Typography.default() }}>

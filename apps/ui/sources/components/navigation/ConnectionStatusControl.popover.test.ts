@@ -999,13 +999,12 @@ describe('ConnectionStatusControl (native popover config)', () => {
         await act(async () => screen.tree?.unmount());
     });
 
-    it('offers "Add a Home", which closes the popover and opens the one sheet returning focus to its trigger', async () => {
+    it('offers "Add a Home", which closes the popover and opens the Homes collection draft', async () => {
         const ConnectionStatusControl = await importConnectionStatusControl();
         const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
         const trigger = screen.findByProps({ accessibilityRole: 'button' });
 
         await act(async () => pressTestInstanceAsync(trigger));
-        const focusReturnRef = capture.popoverProps?.focusReturnRef;
         const addHome = findAction('add-home-or-sign-in');
         expect(addHome?.label).toBe('accountPopover.addHome');
 
@@ -1015,11 +1014,8 @@ describe('ConnectionStatusControl (native popover config)', () => {
         });
 
         expect(capture.popoverProps).toBeNull();
-        expect(modalMocks.show).toHaveBeenCalledOnce();
-        expect(modalMocks.show.mock.calls[0]![0]).toMatchObject({
-            chrome: { testID: 'add-home-sheet' },
-            focusReturnRef,
-        });
+        const { HOMES_ADD_ROUTE } = await import('@/components/settings/server/collection/homeCollectionModel');
+        expect(routerMocks.push).toHaveBeenCalledWith(HOMES_ADD_ROUTE);
         await act(async () => screen.tree?.unmount());
     });
 
@@ -1784,7 +1780,9 @@ describe('ConnectionStatusControl (native popover config)', () => {
         }
     });
 
-    it('offers All Homes first once there are two Homes, and choosing it shows every Home together', async () => {
+    it('offers All Homes first once there are two usable Homes, and choosing it shows every Home together', async () => {
+        // Prior profile-fixture resets clear subscriptions; rebuild the real credential-backed projection too.
+        vi.resetModules();
         const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         const scope = `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
@@ -1812,7 +1810,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const selection = await import('@/sync/domains/server/selection/homeViewSelectionState');
             const { ALL_HOMES_SELECTION_TARGET_ID } = await import('@/sync/domains/server/selection/allHomesSelectionTarget');
             const local = await profiles.upsertServerProfile({ serverUrl: 'https://local.example.test', name: 'Local' });
-            await profiles.upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
+            const company = await profiles.upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
             await profiles.setActiveServerId(local.id, { scope: 'device' });
             connectionMocks.appliedServerId = local.id;
             settingsState.serverSelectionActiveTargetKind = 'server';
@@ -1825,6 +1823,8 @@ describe('ConnectionStatusControl (native popover config)', () => {
                 activeTargetId: local.id,
             }));
             const ConnectionStatusControl = await importConnectionStatusControl();
+            const { readUsableHomeServerIds } = await import('@/sync/domains/scope/usableHomeServerIds');
+            await vi.waitFor(() => expect(readUsableHomeServerIds()).toEqual(expect.arrayContaining([local.id, company.id])));
 
             const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
             const trigger = screen.findByProps({ accessibilityRole: 'button' });
@@ -2058,7 +2058,8 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
         routerMocks.push.mockClear();
         await act(async () => pressTestInstanceAsync(screen.findByTestId('connection-popover-machine-guidance-action')));
-        expect(routerMocks.push).toHaveBeenCalledWith(expect.stringContaining('setup'));
+        const { buildMachineAddHref } = await import('@/components/settings/machines/collection/machineCollectionModel');
+        expect(routerMocks.push).toHaveBeenCalledWith(buildMachineAddHref({ path: 'thisComputer' }));
 
         await act(async () => screen.tree?.unmount());
     });

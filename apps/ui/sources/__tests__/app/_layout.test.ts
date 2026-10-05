@@ -152,7 +152,8 @@ vi.mock('@/onboarding/showcase', () => ({
     }),
 }));
 
-vi.mock('@/constants/Typography', () => {
+vi.mock('@/constants/Typography', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/constants/Typography')>();
     return {
         FontWeights: {
             regular: '400',

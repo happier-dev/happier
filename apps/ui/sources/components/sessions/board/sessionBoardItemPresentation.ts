@@ -1,10 +1,10 @@
 import { readSessionSurfaceNoteTextV1, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
+import { readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets';
 
 import type { SessionBoardItemState } from '@/sync/domains/session/board';
 import type { SessionBoardMountMode } from '@/sync/domains/session/board';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
-import { resolveInstalledWidgetMount } from '@/components/widgets/installedWidgetMount';
-import { canRenderPluginUiProjectionEntry, type PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
+import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import type { SurfaceStateKind } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
@@ -49,60 +49,17 @@ const NO_HTML_RENDERER: SessionBoardSourceAvailability = Object.freeze({
     kind: 'unavailable' as const,
     reason: 'hosted_html_renderer_unavailable' as const,
 });
-const PLUGIN_UNAVAILABLE: SessionBoardSourceAvailability = Object.freeze({
-    kind: 'unavailable' as const,
-    reason: 'plugin_unavailable' as const,
-});
-
-/**
- * The ONE owner of "can this device render this item's source right now".
- *
- * Declarative documents render through the incumbent host renderer, so they are
- * available everywhere. An installed surface is resolved against the EXACT current
- * Session plugin projection — never assumed available because a protocol
- * declaration exists, and never assumed unavailable because this build was
- * compiled before a producer landed. Hosted HTML is available only when the
- * Session host supplies PEP's caller runtime; otherwise it says so explicitly
- * rather than showing an empty frame.
- *
- * Passing `runtime: null` means the host has no plugin projection at all, which is
- * itself a truthful unavailable answer for an installed surface.
- */
+/** Renderer presence only. The configured body admits its own exact bound target. */
 export function createSessionBoardSourceAvailabilityResolver(
-    runtime: SessionPluginRuntimeState | null | undefined,
-    options?: Readonly<{
-        hostedHtmlRendererAvailable?: boolean;
-        policyContext?: PluginUiPolicyEvaluationContext;
-    }>,
+    _runtime: SessionPluginRuntimeState | null | undefined,
+    options?: Readonly<{ hostedHtmlRendererAvailable?: boolean; policyContext?: PluginUiPolicyEvaluationContext }>,
 ): SessionBoardSourceAvailabilityResolver {
-    return (source, context) => {
+    return (source) => {
         if (source.kind === 'declarative' || source.kind === 'walkthrough') return AVAILABLE;
-        if (source.kind === 'hostedHtml') {
-            return options?.hostedHtmlRendererAvailable === true ? AVAILABLE : NO_HTML_RENDERER;
-        }
-        if (!runtime) return NO_WIDGET_CONTRIBUTION;
-        const resolved = resolveInstalledWidgetMount({
-            source,
-            target: 'session',
-            presentation: context?.presentation ?? 'content',
-            runtime,
-        });
-        if (resolved.placement
-            && resolved.placement.availability.state === 'available'
-            && canRenderPluginUiProjectionEntry(resolved.placement, options?.policyContext)) {
-            return AVAILABLE;
-        }
-        // Establishing is an unfinished current-projection read, not evidence
-        // that the installed package or contribution disappeared. Let the
-        // installed adapter project its canonical loading state inside the
-        // retained widget shell instead of converting it to "Manage plugins".
-        if (resolved.unresolved?.state === 'loading') return AVAILABLE;
-        // Disabled/uninstalled and "the plugin no longer declares this surface"
-        // need different recoveries: the first is fixed in Manage plugins, the
-        // second cannot be. The installed-package row is the incumbent owner's
-        // own fact, so this reads it rather than deciding availability again.
-        const installed = runtime.pluginUiProjection?.installedPackagesById[source.surface.pluginId];
-        return installed ? NO_WIDGET_CONTRIBUTION : PLUGIN_UNAVAILABLE;
+        if (source.kind === 'hostedHtml') return options?.hostedHtmlRendererAvailable === true ? AVAILABLE : NO_HTML_RENDERER;
+        if (source.kind === 'widget' && source.instance.definition.kind === 'installed') return AVAILABLE;
+        if (source.kind === 'widget' && readBuiltinWidgetDescriptorV1(source.instance.definition)) return AVAILABLE;
+        return NO_WIDGET_CONTRIBUTION;
     };
 }
 

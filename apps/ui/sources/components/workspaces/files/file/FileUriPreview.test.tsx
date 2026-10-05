@@ -13,7 +13,7 @@ describe('FileUriPreview', () => {
             expect(pdf.findByType('iframe').props.src).toBe('blob:private-pdf');
             expect(pdf.findByType('iframe').props.sandbox).toBe('');
             const html = await renderScreen(<FileUriPreview uri="blob:private-html" mime="text/html" title="HTML"
-                fallback={<span testID="download">Download</span>} />);
+                fallback={<span {...{ testID: 'download' }}>Download</span>} />);
             expect(html.tree.root.findAllByType('iframe')).toHaveLength(0);
             expect(html.findByTestId('download')).not.toBeNull();
         } finally {
@@ -26,7 +26,7 @@ describe('FileUriPreview', () => {
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
         try {
             const pdf = await renderScreen(<FileUriPreview uri="file:///private.pdf" mime="application/pdf" title="Document"
-                fallback={<span testID="open">Open file</span>} />);
+                fallback={<span {...{ testID: 'open' }}>Open file</span>} />);
             expect(pdf.tree.root.findAllByType('iframe')).toHaveLength(0);
             expect(pdf.findByTestId('open')).not.toBeNull();
         } finally {

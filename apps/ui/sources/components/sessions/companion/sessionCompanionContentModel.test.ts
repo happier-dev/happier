@@ -35,26 +35,35 @@ function readyItem(title: string): SessionSurfaceItemV1 {
 }
 
 describe('resolveSessionCompanionContentItems', () => {
+    it('keeps configured native copies on the generic binding path rather than silently reading the surrounding Session', () => {
+        const refs = ['session_summary', 'agent_plan', 'changes', 'local_services'].map((id) => ({
+            kind: 'instance' as const,
+            instance: { v: 1 as const, id: `personal-${id}`, definition: { kind: 'builtin' as const, id }, bindings: {} },
+        }));
+        expect(resolveSessionCompanionContentItems({ refs, boardItemsById: new Map(), inventory: { kind: 'offline' } }))
+            .toEqual(refs.map(ref => ({ kind: 'instance', ref })));
+    });
     it('keeps glances, plugin references and pane links distinct from Summary and Board content', () => {
         const refs = [
             { kind: 'builtin', id: 'changes', frameStyle: 'plain' },
             { kind: 'builtin', id: 'local_services' },
             { kind: 'pane', paneId: 'git' },
-            { kind: 'plugin', surface: { pluginId: 'acme.review', localId: 'glance' } },
+            { kind: 'instance', instance: { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'glance' } }, bindings: {} } },
         ] as const;
         expect(resolveSessionCompanionContentItems({ refs, boardItemsById: new Map(), inventory: { kind: 'offline' } }))
-            .toEqual(refs.map((ref, index) => ({ kind: ['changes', 'local_services', 'pane', 'plugin'][index], ref })));
+            .toEqual(refs.map((ref, index) => ({ kind: ['changes', 'local_services', 'pane', 'instance'][index], ref })));
     });
 
     it('admits compact plugin references through the current placement catalog without requiring a writable Board', () => {
         const pluginUiProjection = widgetProjectionOf([
-            { pluginId: 'acme.review', localId: 'glance', placements: ['companion'] },
+            { pluginId: 'acme.review', localId: 'glance' },
             { pluginId: 'acme.review', localId: 'board-only' },
         ], { 'acme.review': widgetInstalledPackage('acme.review', 'Review') });
         const runtime = { pluginUiProjection, pluginBrowserProjection: null, phase: 'current' as const, interactionEnabled: true, machineId: 'm1', serverId: 'home1', platform: 'web' as const };
-        expect(canAddSessionCompanionItem({ kind: 'plugin', surface: { pluginId: 'acme.review', localId: 'glance' } }, runtime)).toBe(true);
-        expect(canAddSessionCompanionItem({ kind: 'plugin', surface: { pluginId: 'acme.review', localId: 'board-only' } }, runtime)).toBe(false);
-        expect(canAddSessionCompanionItem({ kind: 'plugin', surface: { pluginId: 'acme.review', localId: 'glance' } }, { ...runtime, phase: 'unavailable' })).toBe(false);
+        const direct = (localId: string) => ({ kind: 'instance' as const, instance: { v: 1 as const, id: `copy-${localId}`, definition: { kind: 'installed' as const, surface: { pluginId: 'acme.review', localId } }, bindings: {} } });
+        expect(canAddSessionCompanionItem(direct('glance'), runtime)).toBe(true);
+        expect(canAddSessionCompanionItem(direct('board-only'), runtime)).toBe(true);
+        expect(canAddSessionCompanionItem(direct('glance'), { ...runtime, phase: 'unavailable' })).toBe(false);
         expect(canAddSessionCompanionItem({ kind: 'pane', paneId: 'git' }, null)).toBe(true);
         expect(canAddSessionCompanionItem({ kind: 'pane', paneId: 'not-a-pane' }, runtime)).toBe(false);
     });
@@ -230,13 +239,14 @@ function installedItem(title: string, pluginId: string, localId: string): Sessio
         title,
         frame: 'card',
         height: { mode: 'auto', fallback: 'regular' },
-        source: { kind: 'installedSurface', surface: { pluginId, localId } },
+        source: { kind: 'widget', instance: { v: 1, id: `${pluginId}/${localId}`, definition: { kind: 'installed', surface: { pluginId, localId } }, bindings: {} } },
     } as SessionSurfaceItemV1;
 }
 
 function candidate(pluginId: string, localId: string, title: string): WidgetCandidate {
     return {
         surface: { pluginId, localId },
+        target: 'session',
         key: `${pluginId}/${localId}`,
         title,
         pluginName: pluginId,
@@ -276,11 +286,11 @@ describe('resolveSessionCompanionPickerSections', () => {
             { id: 'changes', added: false },
             { id: 'local_services', added: false },
         ]);
-        // A plugin widget already on the Board is offered once, under its plugin, and reuses that record.
-        expect(sections.board.map((row) => row.widgetId)).toEqual(['note-1']);
+        // Board references remain shared; a Gallery pick creates an independent personal copy.
+        expect(sections.board.map((row) => row.widgetId)).toEqual(['note-1', 'chan-1']);
         expect(sections.plugins).toEqual([
-            expect.objectContaining({ key: 'channels/conversations', existingWidgetId: 'chan-1', added: true }),
-            expect.objectContaining({ key: 'triage/latest', existingWidgetId: null, added: false }),
+            expect.objectContaining({ key: 'channels/conversations', added: false }),
+            expect.objectContaining({ key: 'triage/latest', added: false }),
         ]);
     });
 

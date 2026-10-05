@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { matchWorkspaceRoutePatterns } from './workspaceRouteMatch';
-import { matchWorkspaceDestinationRoute } from './workspaceRouteBodies';
+import { matchWorkspaceDestinationRoute } from './workspaceRoutes';
 
 describe('Expo destination route matching', () => {
+    it('loads the connect journey instead of interpreting connect as a legacy service id', () => {
+        expect(matchWorkspaceDestinationRoute('/settings/connected-services/connect')?.routeKey).toBe('settings/connected-services/connect');
+    });
     it('resolves hosted session subpages through their canonical Expo module identity', () => {
         expect(matchWorkspaceDestinationRoute('/external/browse?machineId=m')).toEqual({
             routeKey: 'external/browse', params: {},

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN, type ScmOperationOutcome, type ScmRemoteResponse } from '@happier-dev/protocol/scm';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { EMPTY_SCM_CAPABILITIES } from '@/scm/core/snapshotMappers';
 import type { machineScmCommitCreate, machineScmCommitUndoLast } from '@/sync/ops/scm/machineScm';
 import { Modal } from '@/modal';
 
@@ -29,14 +30,14 @@ import { executeWorkspaceScmRemoteOperation } from './executeWorkspaceScmRemoteO
 import { runWorkspaceScmMutation } from '@/scm/operations/runSessionScmMutation';
 
 const scope = { serverId: 'server-1', machineId: 'machine-1', rootPath: '/repo' };
-const snapshot: ScmWorkingSnapshot = {
+const snapshot = {
     projectKey: 'server-1:machine-1:/repo', fetchedAt: 1,
     repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
-    capabilities: { writeRemotePush: true } as ScmWorkingSnapshot['capabilities'],
+    capabilities: { ...EMPTY_SCM_CAPABILITIES, writeRemotePush: true },
     branch: { head: 'main', upstream: 'origin/main', ahead: 1, behind: 0, detached: false },
     hasConflicts: false, entries: [],
     totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
-};
+} satisfies ScmWorkingSnapshot;
 const input = () => ({
     scope, commitMessage: 'Commit message', scmCommitStrategy: 'atomic' as const,
     commitSelectionPaths: ['a.ts'], commitSelectionPatches: [],
@@ -111,13 +112,23 @@ describe('workspace SCM public write outcomes', () => {
         expect(push).toHaveBeenCalledWith('machine-1', { cwd: '/repo', remote: 'origin', branch: 'main' }, { serverId: 'server-1' });
         expect(outcomeLine()).toMatchObject({ phase: 'succeeded' });
     });
-    it('keeps a commit warning authoritative over the legacy success bit and preserves selection', async () => {
+    it('keeps a commit warning authoritative over the legacy success bit and retires its landed selection', async () => {
         const outcome: ScmOperationOutcome = { v: 1, kind: 'effect_applied_with_warning', errorCode: 'INDEX_RECONCILIATION_FAILED', effect: { kind: 'commit', commitSha: 'commit-1' }, nextActions: [{ kind: 'reconcile_index' }] };
         commit.mockResolvedValue({ success: true, commitSha: 'commit-1', outcome });
         expect(await executeWorkspaceScmCommit(input())).toEqual({ ok: false });
         expect(outcomeLine()).toMatchObject({ phase: outcome.kind, outcome });
-        expect(storage.getState().getWorkspaceScmCommitSelectionPaths(scope)).toEqual(['a.ts']);
+        expect(storage.getState().getWorkspaceScmCommitSelectionPaths(scope)).toEqual([]);
         expect(Modal.alert).not.toHaveBeenCalled();
+    });
+    it('shows a published candidate without the legacy SHA and only refreshes the repository', async () => {
+        const candidateOid = 'b'.repeat(40);
+        commit.mockResolvedValue({ success: false, errorCode: 'INDEX_RECONCILIATION_FAILED', publication: { state: 'published', candidateOid, expectedHeadOid: 'a'.repeat(40), expectedRef: 'refs/heads/main', indexReconciliation: 'failed' } });
+        const request = input();
+        expect(await executeWorkspaceScmCommit(request)).toEqual({ ok: false });
+        expect(outcomeLine()).toMatchObject({ phase: 'effect_applied_with_warning', result: { sha: candidateOid } });
+        expect(request.refreshScmData).toHaveBeenCalledTimes(1);
+        expect(commit).toHaveBeenCalledTimes(1);
+        expect(storage.getState().getWorkspaceScmCommitSelectionPaths(scope)).toEqual([]);
     });
     it('records transport loss as unknown and keeps commit selection', async () => {
         commit.mockRejectedValue(new Error('socket closed'));

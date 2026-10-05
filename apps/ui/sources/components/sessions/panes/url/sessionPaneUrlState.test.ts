@@ -3,6 +3,59 @@ import { describe, expect, it, vi } from 'vitest';
 import { applySessionPaneUrlState, buildActiveDetailsRouteParams, createSessionPaneDetailsTab, deriveSessionPaneUrlStateFromScopeState, parseSessionPaneUrlState, reconcileSessionPaneScopeFromUrlState, serializeSessionPaneUrlState } from './sessionPaneUrlState';
 
 describe('sessionPaneUrlState', () => {
+    it.each([true, false])('preserves Files Explain=%s through navigation and the shared pane target', (explain) => {
+        const state = parseSessionPaneUrlState({ details: 'scmReview', comparison: 'workingTree', view: 'files', explain: String(explain) });
+        expect(state?.details).toMatchObject({ kind: 'scmReview', explain });
+        const params = serializeSessionPaneUrlState(state!);
+        expect(params.explain).toBe(String(explain));
+        const tab = createSessionPaneDetailsTab(state!.details!);
+        expect(tab?.resource).toMatchObject({ kind: 'scmReview', explain });
+        expect(parseSessionPaneUrlState(buildActiveDetailsRouteParams([tab], tab!.key))).toEqual(state);
+    });
+    it('keeps old Files links valid and ignores malformed Explain values', () => {
+        for (const params of [{ details: 'scmReview' }, { details: 'scmReview', explain: 'yes' }]) {
+            const state = parseSessionPaneUrlState(params);
+            expect(state).toEqual({ details: { kind: 'scmReview' } });
+            expect(createSessionPaneDetailsTab(state!.details!)?.resource).toEqual({ kind: 'scmReview', scope: 'working' });
+        }
+    });
+    it('carries a typed file anchor through URL, destination tab and active-tab URL', () => {
+        const target = { kind: 'file' as const, path: 'src/a.ts', anchor: { kind: 'fileLine' as const, startLine: 12 } };
+        const params = serializeSessionPaneUrlState({ details: target });
+        expect(parseSessionPaneUrlState(params)?.details).toEqual(target);
+        const tab = createSessionPaneDetailsTab(target, { sessionId: 's1', serverId: 'home-a' });
+        expect(tab?.resource).toMatchObject({ path: 'src/a.ts', anchor: target.anchor });
+        expect(parseSessionPaneUrlState(buildActiveDetailsRouteParams([tab], tab!.key))?.details).toEqual(target);
+    });
+    it('preserves an explicit diff range source without inferring it from a side', () => {
+        const target = { kind: 'file' as const, path: 'src/a.ts', anchorSource: 'diff' as const,
+            anchor: { kind: 'range' as const, filePath: 'src/a.ts', startLine: 12, endLine: 14 } };
+        const params = serializeSessionPaneUrlState({ details: target });
+        expect(parseSessionPaneUrlState(params)?.details).toEqual(target);
+        const tab = createSessionPaneDetailsTab(target, { sessionId: 's1', serverId: 'home-a' });
+        expect(parseSessionPaneUrlState(buildActiveDetailsRouteParams([tab], tab!.key))?.details).toEqual(target);
+        expect(deriveSessionPaneUrlStateFromScopeState({ right: { isOpen: false, activeTabId: null }, bottom: { isOpen: false, activeTabId: null },
+            details: { isOpen: true, tabs: [tab!], activeTabKey: tab!.key } })?.details).toEqual(target);
+    });
+    it('roundtrips a receipt-only captured turn without inventing a turn id', () => {
+        const params = { details: 'scmReview', comparison: 'turnCheckpoint', checkpointReceiptId: 'receipt-4', comparisonId: 'captured-4', view: 'walkthrough' };
+        const state = parseSessionPaneUrlState(params);
+        expect(state?.details).toMatchObject({ comparison: { kind: 'turnCheckpoint', checkpointReceiptId: 'receipt-4', comparisonId: 'captured-4' } });
+        if (!state) throw new Error('The captured receipt-only turn must be a valid pane target');
+        expect(serializeSessionPaneUrlState(state)).toEqual(params);
+    });
+    it('preserves a captured comparison identity through links and tab resources', () => {
+        const target = { kind: 'scmReview' as const, comparison: { kind: 'session' as const, comparisonId: 'captured-1' }, view: 'walkthrough' as const };
+        const state = parseSessionPaneUrlState({ details: 'scmReview', comparison: 'session', comparisonId: 'captured-1', view: 'walkthrough' });
+        expect(state?.details).toEqual(target);
+        const tab = createSessionPaneDetailsTab(target, { sessionId: 's', serverId: 'home' });
+        expect(buildActiveDetailsRouteParams([tab], tab!.key)).toMatchObject({ comparisonId: 'captured-1' });
+        const pr = { kind: 'scmReview' as const, comparison: { kind: 'pullRequest' as const,
+            locator: { providerId: 'github', repository: 'org/repo', number: 42, baseOid: 'base', headOid: 'head' }, comparisonId: 'pr-captured' }, view: 'walkthrough' as const };
+        const prTab = createSessionPaneDetailsTab(pr, { sessionId: 's', serverId: 'home' });
+        const route = buildActiveDetailsRouteParams([prTab], prTab!.key);
+        expect(parseSessionPaneUrlState(route)?.details).toEqual(pr);
+    });
     it('constructs independent route-selected surfaces without writing shared pane selection', () => {
         const address = { serverId: 'home-a', sessionId: 'same-session' };
         const first = createSessionPaneDetailsTab({ kind: 'file', path: 'src/first.ts' }, address);

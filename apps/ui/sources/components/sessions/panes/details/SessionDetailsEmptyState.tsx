@@ -17,6 +17,7 @@ export const SessionDetailsEmptyState = React.memo(function SessionDetailsEmptyS
     sessionId: string;
     serverId?: string | null;
     openDetailsTab: AppPaneScopeApi['openDetailsTab'];
+    onBrowseFiles?: () => void;
 }>) {
     const snapshot = useSessionProjectScmSnapshot(props.sessionId, props.serverId ?? undefined);
     // The one change-count truth (the rail badge, the Git header and the tooltip read it too).
@@ -35,6 +36,8 @@ export const SessionDetailsEmptyState = React.memo(function SessionDetailsEmptyS
                 title={t('detailsSurface.chrome.emptyTitle')}
                 reason={t('detailsSurface.chrome.reviewChangesReason', { count: changedFileCount })}
                 action={{ label: t('detailsSurface.chrome.reviewChanges', { count: changedFileCount }), onPress: openReview }}
+                secondaryAction={props.onBrowseFiles ? { label: t('detailsSurface.chrome.browseFiles'), onPress: props.onBrowseFiles } : undefined}
+                note={t('detailsSurface.chrome.previewHint')}
             />
         );
     }
@@ -45,6 +48,8 @@ export const SessionDetailsEmptyState = React.memo(function SessionDetailsEmptyS
             iconName="files"
             title={t('detailsSurface.chrome.emptyTitle')}
             reason={t('detailsSurface.chrome.emptyReason')}
+            action={props.onBrowseFiles ? { label: t('detailsSurface.chrome.browseFiles'), onPress: props.onBrowseFiles } : undefined}
+            note={t('detailsSurface.chrome.previewHint')}
         />
     );
 });

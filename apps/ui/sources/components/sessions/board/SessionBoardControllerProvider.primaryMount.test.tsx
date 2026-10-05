@@ -151,6 +151,8 @@ const companion: SessionCompanionController = {
     availability: 'ready', preferenceExists: true, realmKey: 'alice:home-1:session-1',
     show: () => null, hide: () => null, setCollapsed: () => null, setEdge: () => null, setDensity: () => null,
     addItem: () => null, removeItem: () => null, moveItem: () => null, setItemFrameStyle: () => null, applyLocalInverse: () => false,
+    setInstanceInputs: () => { throw new Error('Instance input mutation is outside this mount fixture'); },
+    renameInstance: () => { throw new Error('Instance rename is outside this mount fixture'); },
     openFullSurface: () => {},
 };
 function viewportSnapshot(recovered: boolean): SessionBoardSnapshot {

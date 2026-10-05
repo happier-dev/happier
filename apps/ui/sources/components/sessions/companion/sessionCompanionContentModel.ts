@@ -56,14 +56,12 @@ export function resolveSessionCompanionAddableItems(input: Readonly<{
 export type SessionCompanionPickerPluginRow = Readonly<{
     key: string;
     candidate: WidgetCandidate;
-    /** The Board record this widget already has; picking it reuses the record. */
-    existingWidgetId: string | null;
     added: boolean;
 }>;
 
 export type SessionCompanionPickerSections = Readonly<{
     builtIn: readonly Readonly<{ id: SessionCompanionBuiltinItemId; added: boolean }>[];
-    /** Board items that are not a current plugin widget (notes, interactive views, …). */
+    /** Shared Board items remain independent references, including configured plugin copies. */
     board: readonly SessionCompanionAddableItem[];
     plugins: readonly SessionCompanionPickerPluginRow[];
 }>;
@@ -72,9 +70,9 @@ export type SessionCompanionPickerSections = Readonly<{
  * The Add to Companion picker: one widget system with three sources.
  *
  * Existing Board records remain available as references, while compact plugin
- * surfaces can be kept directly without creating a shared Board record.
- * `candidates` comes from the canonical current-Session widget selector using
- * the Companion placement; this projection adds no availability policy.
+ * surfaces can be kept as independent personal instances without creating a shared Board record.
+ * `candidates` comes from the canonical universal widget selector; this projection
+ * adds no physical-placement availability policy.
  */
 export function resolveSessionCompanionPickerSections(input: Readonly<{
     refs: readonly SessionCompanionItemRefV1[];
@@ -85,30 +83,8 @@ export function resolveSessionCompanionPickerSections(input: Readonly<{
         id,
         added: input.refs.some((ref) => ref.kind === 'builtin' && ref.id === id),
     }));
-    const boardItems = resolveSessionCompanionAddableItems({ snapshot: input.snapshot, refs: input.refs });
-    const recordByKey = new Map<string, SessionCompanionAddableItem>();
-    for (const item of boardItems) {
-        if (item.source.kind !== 'installedSurface') continue;
-        const key = `${item.source.surface.pluginId}/${item.source.surface.localId}`;
-        const known = recordByKey.get(key);
-        // Prefer the record this Companion already keeps, then the first one.
-        if (!known || (!known.added && item.added)) recordByKey.set(key, item);
-    }
-    const plugins = input.candidates.map((candidate) => {
-        const record = recordByKey.get(candidate.key) ?? null;
-        return Object.freeze({
-            key: candidate.key,
-            candidate,
-            existingWidgetId: record?.widgetId ?? null,
-            added: (record?.added ?? false) || input.refs.some((ref) => ref.kind === 'plugin'
-                && ref.surface.pluginId === candidate.surface.pluginId && ref.surface.localId === candidate.surface.localId),
-        });
-    });
-    const offeredKeys = new Set(input.candidates.map((candidate) => candidate.key));
-    const board = boardItems.filter((item) => (
-        item.source.kind !== 'installedSurface'
-        || !offeredKeys.has(`${item.source.surface.pluginId}/${item.source.surface.localId}`)
-    ));
+    const board = resolveSessionCompanionAddableItems({ snapshot: input.snapshot, refs: input.refs });
+    const plugins = input.candidates.map((candidate) => Object.freeze({ key: candidate.key, candidate, added: false }));
     return Object.freeze({
         builtIn: Object.freeze(builtIn),
         board: Object.freeze(board),
@@ -143,23 +119,23 @@ const REVOKED_INVENTORY = Object.freeze({ kind: 'revoked' as const });
 export type SessionCompanionContentItem =
     | Readonly<{
         kind: 'summary';
-        ref: Extract<SessionCompanionItemRefV1, { kind: 'builtin' }>;
+        ref: Extract<SessionCompanionItemRefV1, { kind: 'builtin' | 'instance' }>;
     }>
     | Readonly<{
         kind: 'plan';
-        ref: Extract<SessionCompanionItemRefV1, { kind: 'builtin' }>;
+        ref: Extract<SessionCompanionItemRefV1, { kind: 'builtin' | 'instance' }>;
     }>
     | Readonly<{
         kind: 'changes' | 'local_services';
-        ref: Extract<SessionCompanionItemRefV1, { kind: 'builtin' }>;
+        ref: Extract<SessionCompanionItemRefV1, { kind: 'builtin' | 'instance' }>;
     }>
     | Readonly<{
         kind: 'pane';
         ref: Extract<SessionCompanionItemRefV1, { kind: 'pane' }>;
     }>
     | Readonly<{
-        kind: 'plugin';
-        ref: Extract<SessionCompanionItemRefV1, { kind: 'plugin' }>;
+        kind: 'instance';
+        ref: Extract<SessionCompanionItemRefV1, { kind: 'instance' }>;
     }>
     | Readonly<{
         kind: 'widget';
@@ -234,7 +210,9 @@ export function resolveSessionCompanionContentItems(input: Readonly<{
             return Object.freeze({ kind, ref });
         }
         if (ref.kind === 'pane') return Object.freeze({ kind: 'pane', ref });
-        if (ref.kind === 'plugin') return Object.freeze({ kind: 'plugin', ref });
+        if (ref.kind === 'instance') {
+            return Object.freeze({ kind: 'instance', ref });
+        }
         const item = input.boardItemsById.get(ref.widgetId);
         if (item) return Object.freeze({ kind: 'widget', ref, item });
         return input.inventory.kind === 'authoritative'
@@ -251,10 +229,17 @@ export function canAddSessionCompanionItem(
 ): boolean {
     if (item.kind === 'builtin') return true;
     if (item.kind === 'widget') return canReadBoardItem(item.widgetId);
+    if (item.kind === 'instance' && item.instance.definition.kind === 'builtin') {
+        const definition = item.instance.definition;
+        return SESSION_COMPANION_BUILTIN_ITEM_IDS.some((id) => id === definition.id);
+    }
     if (item.kind === 'pane' && RIGHT_SIDEBAR_BUILTIN_TABS.some((tab) => tab.id === item.paneId && tab.scopes.includes('session'))) return true;
     if (runtime?.phase !== 'current' || !runtime.pluginUiProjection) return false;
-    if (item.kind === 'plugin') return selectWidgetCandidates(runtime.pluginUiProjection, 'session', undefined, 'companion')
-        .some((candidate) => candidate.surface.pluginId === item.surface.pluginId && candidate.surface.localId === item.surface.localId);
+    if (item.kind === 'instance') {
+        const definition = item.instance.definition;
+        return definition.kind === 'installed' && selectWidgetCandidates(runtime.pluginUiProjection)
+            .some((candidate) => candidate.surface?.pluginId === definition.surface.pluginId && candidate.surface.localId === definition.surface.localId);
+    }
     return resolveRightSidebarPluginTabs({ scope: 'session', placements: selectPluginRightSidebarTabPlacements(runtime.pluginUiProjection, 'session') })
         .some((tab) => tab.id === item.paneId);
 }

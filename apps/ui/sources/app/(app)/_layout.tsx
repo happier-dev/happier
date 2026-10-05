@@ -867,7 +867,7 @@ export default function RootLayout(): React.ReactElement {
     // `<RootLayoutShell />` element reference stays stable and its Stack subtree is not
     // re-rendered when the route changes. Navigation/auth side effects live in the null-rendering
     // `<RootLayoutNavigationEffects />` sibling; the unauthenticated redirect check and the
-    // web-server-override hold live in the `<RootLayoutRedirectGate />`, the only
+    // auth-recovery hold live in the `<RootLayoutRedirectGate />`, the only
     // navigation-subscribing owner in this render path.
     return (
         <>

@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { stripGroupSegmentsFromPath } from 'expo-router/build/matchers';
+import { parseQueryParams } from 'expo-router/build/fork/getStateFromPath-forks';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type {
     PluginUiDestinationPlacementV1,
@@ -44,9 +46,9 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { createSessionPaneDetailsTab, parseSessionPaneUrlState, serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { resolveSettingsRouteTitleKey } from '@/components/settings/navigation/settingsRouteRegistry';
-import { getSessionName, resolveLockedSessionTitle } from '@/utils/sessions/sessionUtils';
+import { readSessionDisplayTitle, sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { useSessionDiscussionTitleProjections } from '@/sync/ops/sessionDiscussions/useSessionDiscussionRepositorySnapshot';
-import { matchWorkspaceDestinationRoute } from '@/components/appShell/workspace/workspaceRouteBodies';
+import { matchWorkspaceDestinationRoute, registeredWorkspaceRoutes } from '@/components/appShell/workspace/workspaceRoutes';
 
 /**
  * The one catalog of shell destinations (user ruling U1, 2026-09-28): the app's own destinations and
@@ -187,6 +189,7 @@ type BuiltinDestinationRow = Readonly<{
     signal?: 'inboxCount';
     suggested?: true;
     available?: (availability: AppBuiltinDestinationAvailability) => boolean;
+    visibility?: CompactAppDestinationVisibility;
 }>;
 
 /**
@@ -256,6 +259,12 @@ const BUILTIN_DESTINATION_ROWS: readonly BuiltinDestinationRow[] = [
         column: 'settings', activation: 'navigate', routePath: '/settings',
         currentRoutePatterns: ['/settings/[...rest]'], shortcut: 'settings.open', suggested: true,
     },
+    ...Object.entries(registeredWorkspaceRoutes).flatMap(([routeKey, registration]) => (
+        registration.catalogEntry ? [{
+            id: registration.destinationId, ...registration.catalogEntry,
+            placement: { kind: 'rail', region: 'account' }, activation: 'navigate', routePath: `/${routeKey}`,
+        } satisfies BuiltinDestinationRow] : []
+    )),
 ];
 
 /** Consumers that are ordinary discovery surfaces honor the catalog's user visibility. */
@@ -329,6 +338,7 @@ export function resolveCompactAppDestinations(input: Readonly<{
             ...(row.shortcut === undefined ? {} : { shortcut: row.shortcut }),
             ...(row.signal === undefined ? {} : { signal: row.signal }),
             ...(row.suggested === undefined ? {} : { suggested: row.suggested }),
+            ...(row.visibility === undefined ? {} : { visibility: row.visibility }),
             availability: 'available',
         }));
     });
@@ -413,7 +423,7 @@ export function resolveCompactAppDestinations(input: Readonly<{
     return Object.freeze(destinations.sort(compare).map((destination, order) => Object.freeze({
         ...destination,
         order,
-        visibility: hiddenIds.has(destination.id) ? 'hidden' : 'visible',
+        visibility: destination.visibility === 'hidden' || hiddenIds.has(destination.id) ? 'hidden' : 'visible',
     })));
 }
 
@@ -429,7 +439,7 @@ export function selectAppDestinationsInPlacement(
 }
 
 function normalizePathname(pathname: string): string {
-    return pathname.trim().replace(/\/+$/, '') || '/';
+    return stripGroupSegmentsFromPath(pathname.trim()).replace(/\/+$/, '') || '/';
 }
 
 function splitPath(path: string): readonly string[] {
@@ -516,14 +526,6 @@ function encodedSegment(segment: string): string {
     return encodeURIComponent(segment);
 }
 
-function queryParams(search: URLSearchParams, excluded: readonly string[] = []): Record<string, string> {
-    const params: Record<string, string> = {};
-    for (const [key, value] of search) {
-        if (!excluded.includes(key)) params[key] = value;
-    }
-    return params;
-}
-
 function appendQuery(path: string, params: Readonly<Record<string, string>>, excluded: readonly string[]): string {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
@@ -552,9 +554,16 @@ export function resolveDestinationRefFromHref(
     if (decodedParts.some((part) => part === null)) return null;
     const parts = decodedParts as string[];
     const [first, second, third, ...rest] = parts;
-    const query = queryParams(url.searchParams);
-    delete query.workspacePathname;
     const route = matchWorkspaceDestinationRoute(path);
+    const parsedQuery = parseQueryParams(`${path}${url.search}`, { name: route?.routeKey ?? path, params: route?.params });
+    const query: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsedQuery ?? {})) {
+        // Destination refs are scalar. Leave multivalued inputs with Expo so
+        // domain readers (notably plugin locations) see and reject ambiguity.
+        if (Array.isArray(value)) return null;
+        query[key] = value;
+    }
+    delete query.workspacePathname;
     if (url.hash.length > 1) {
         const anchor = decodeSegment(url.hash.slice(1));
         if (anchor === null) return null;
@@ -609,6 +618,7 @@ export function resolveDestinationRefFromHref(
         };
     }
     if (destination.id === 'settings') {
+        if (!route) return null;
         if (route?.params.pageId) return { kind: 'settings', params: {
             ...query, ...route.params, workspacePathname: path,
         } };
@@ -766,7 +776,8 @@ export function useActivateAppDestination(): ActivateAppDestination {
             && destination.container === 'appPage'
             && destination.availability === 'available'
         ) {
-            owners.activatePluginAppPage(destination);
+            const result = runGuardedNavigation(() => owners.activatePluginAppPage(destination));
+            if (result !== true) fireAndForget(result, { tag: 'AppDestination.activatePluginPage' });
             return;
         }
         const result = runGuardedNavigation(() => owners.router.push(destination.routePath as never));
@@ -776,11 +787,6 @@ export function useActivateAppDestination(): ActivateAppDestination {
 
 export type DestinationInstanceTitleEntry = Readonly<{ key: string; ref: DestinationRef }>;
 
-/** A session's name as every surface shows it: the session title owner's, locked titles included. */
-function sessionTitle(source: Parameters<typeof getSessionName>[0] | null): string | null {
-    if (!source) return null;
-    return resolveLockedSessionTitle(getSessionName(source, source.serverId));
-}
 
 /**
  * The title of what is open, without asking any store: a Details target's own title (its file name,
@@ -796,11 +802,22 @@ function resolveStaticInstanceTitle(catalog: readonly CompactAppDestination[], r
     }
     const href = hrefForDestinationRef(catalog, ref);
     if (!href) return null;
+    const pathname = href.split(/[?#]/, 1)[0]!;
     if (ref.kind === 'settings') {
-        const key = resolveSettingsRouteTitleKey(href.split(/[?#]/, 1)[0]);
+        const key = resolveSettingsRouteTitleKey(pathname);
         if (key) return t(key);
     }
-    return resolveCurrentAppDestination(catalog, href)?.title ?? null;
+    return resolveCurrentAppDestination(catalog, pathname)?.title ?? null;
+}
+
+/**
+ * The same title, read once without subscribing (a drag preview names what it carries and where it
+ * lands only when the verdict changes). `null` when nothing can name it yet.
+ */
+export function readDestinationInstanceTitle(catalog: readonly CompactAppDestination[], ref: DestinationRef): string | null {
+    const title = resolveStaticInstanceTitle(catalog, ref);
+    if (title || ref.kind !== 'session' || !ref.params.id) return title;
+    return readSessionDisplayTitle({ sessionId: ref.params.id, serverId: ref.params.serverId ?? null });
 }
 
 /**
@@ -818,7 +835,7 @@ export function useDestinationInstanceTitles(
     const addresses = React.useMemo(() => sessionEntries.map((entry) => ({
         sessionId: entry.ref.params.id!, serverId: entry.ref.params.serverId ?? null,
     })), [sessionEntries]);
-    const sessionTitles = useSessionDisplayNameProjections(addresses, sessionTitle);
+    const sessionTitles = useSessionDisplayNameProjections(addresses, sessionDisplayTitle);
     const discussionEntries = React.useMemo(() => entries.flatMap(entry => {
         if (entry.ref.kind !== 'sessionDetails' || !entry.ref.params.id) return [];
         const details = parseSessionPaneUrlState(entry.ref.params)?.details;

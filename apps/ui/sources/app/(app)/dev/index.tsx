@@ -257,10 +257,10 @@ export default function DevScreen() {
                     onPress={() => router.push('/dev/voice-qa')}
                 />
                 <Item
-                    title="Voice Concepts"
-                    subtitle="Design lab — five structurally different Voice directions, side by side"
+                    title="Voice presence"
+                    subtitle="The Voice mark, primitives and containers at fixed states (lab voice-presence)"
                     icon={<Icon name="magic-wand" size={29} color="#6D94FF" />}
-                    onPress={() => router.push('/dev/voice-lab')}
+                    onPress={() => router.push('/dev/voice-presence')}
                 />
                 <Item
                     title="Unistyles Demo"

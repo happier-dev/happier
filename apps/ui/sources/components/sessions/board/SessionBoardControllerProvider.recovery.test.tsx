@@ -122,8 +122,8 @@ function boardSnapshot(): SessionBoardSnapshot {
                     frame: 'card',
                     height: { mode: 'auto', fallback: 'regular' },
                     source: {
-                        kind: 'installedSurface',
-                        surface: { pluginId: 'acme.board', localId: 'status' },
+                        kind: 'widget',
+                        instance: { v: 1, id: 'instance-1', definition: { kind: 'installed', surface: { pluginId: 'acme.board', localId: 'status' } }, bindings: {} },
                     },
                 },
             },

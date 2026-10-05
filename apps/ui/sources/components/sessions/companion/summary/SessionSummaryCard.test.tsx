@@ -4,6 +4,9 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import type { SessionPendingPermission } from '@/sync/ops/sessionPendingPermissions';
 
 vi.mock('@/text', async () => {
@@ -48,6 +51,70 @@ function model(overrides: Partial<SessionSummaryCardModel> = {}): SessionSummary
 }
 
 describe('SessionSummaryCard (the Companion hero)', () => {
+    it('renders a pending question through the shared prompt controls instead of permission answers', async () => {
+        const answerUserAction = vi.fn(async () => {});
+        const request = {
+            id: 'question', kind: 'user_action' as const, tool: 'AskUserQuestion', createdAt: 100,
+            arguments: { questions: [{ header: 'Direction', question: 'Which direction?', options: [{ label: 'Keep', description: 'Keep it' }], multiSelect: false }] },
+        };
+        const screen = await renderWithSessionTranscriptSource(
+            <AppPaneProvider>
+                <SessionSummaryCard
+                    model={model({ needsYou: { request, moreCount: 1 } })}
+                    density="compact"
+                    session={createSessionFixture({ active: true, presence: 'online', serverId: 'home-a' })}
+                    serverId="home-a"
+                />
+            </AppPaneProvider>,
+            createTestSessionTranscriptSource({
+                sessionId: 'session-1', serverId: 'home-a',
+                agentState: { requests: { question: { tool: request.tool, kind: request.kind, arguments: request.arguments, createdAt: 100 } } },
+                interaction: { canSendMessages: true, canApprovePermissions: true },
+                actions: { answerUserAction, respondToPermission: async () => {}, abort: async () => {}, submitMessage: async () => {} },
+            }),
+        );
+        expect(screen.findByTestId('user-action-prompt-card')).not.toBeNull();
+        expect(screen.findByTestId('ask-user-question')).not.toBeNull();
+        expect(screen.findByTestId('session-companion-summary-allow')).toBeNull();
+        expect(screen.findByTestId('ask-user-question.option:0:0')?.props.disabled).toBe(false);
+        expect(screen.findByTestId('session-companion-summary-ask-more-waiting')).not.toBeNull();
+        await act(async () => { screen.findByTestId('ask-user-question.option:0:0')?.props.onPress(); });
+        await act(async () => { screen.findByTestId('ask-user-question.submit')?.props.onPress(); });
+        expect(answerUserAction).toHaveBeenCalledWith({ id: 'question', answers: { 'Which direction?': ['Keep'] } });
+    });
+
+    it('does not admit question answers from the hidden measurement copy', async () => {
+        const answerUserAction = vi.fn(async () => {});
+        const request = {
+            id: 'question', kind: 'user_action' as const, tool: 'AskUserQuestion', createdAt: 100,
+            arguments: { questions: [{ question: 'Which direction?', options: [{ label: 'Keep' }], multiSelect: false }] },
+        };
+        const screen = await renderWithSessionTranscriptSource(
+            <AppPaneProvider>
+                <SessionSummaryCard
+                    model={model({ needsYou: { request, moreCount: 0 } })}
+                    density="compact"
+                    session={createSessionFixture({ active: true, presence: 'online', serverId: 'home-a' })}
+                    serverId="home-a"
+                    readOnly
+                />
+            </AppPaneProvider>,
+            {
+                ...createTestSessionTranscriptSource({
+                    sessionId: 'session-1', serverId: 'home-a',
+                    agentState: { requests: { question: { tool: request.tool, kind: request.kind, arguments: request.arguments, createdAt: 100 } } },
+                    interaction: { canSendMessages: true, canApprovePermissions: true },
+                    actions: { answerUserAction, respondToPermission: async () => {}, abort: async () => {}, submitMessage: async () => {} },
+                }),
+                kind: 'app',
+            },
+        );
+        expect(screen.findByTestId('ask-user-question.option:0:0')?.props.disabled).toBe(true);
+        await act(async () => { screen.findByTestId('ask-user-question.option:0:0')?.props.onPress(); });
+        await act(async () => { screen.findByTestId('ask-user-question.submit')?.props.onPress(); });
+        expect(answerUserAction).not.toHaveBeenCalled();
+    });
+
     it('names an unproven Home as unavailable and presents no invented status line', async () => {
         const screen = await renderScreen(
             <SessionSummaryCard

@@ -9,7 +9,6 @@ import type { ScmStashListResponse } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
 import { publishActiveReviewFile, readActiveReviewFile, resetActiveReviewFilesForTests } from '@/components/workspaces/scm/review/activeReviewFile';
-import { WorkspaceSourceControlView } from './WorkspaceSourceControlView';
 import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
