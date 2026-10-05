@@ -61,6 +61,25 @@ function requireArtifactBodyKind(header: Readonly<Record<string, unknown>>, body
     }
 }
 
+async function requireArtifactHtmlWriteContent(params: Readonly<{
+    header: Readonly<Record<string, unknown>>;
+    body: ArtifactBodyInput;
+    signal?: AbortSignal;
+    readReference?: (reference: ArtifactBlobReferenceV1) => Promise<Uint8Array>;
+}>): Promise<void> {
+    if (!isArtifactHtmlHeaderV1(params.header)) return;
+    try {
+        if (typeof params.body === 'string') artifactHtmlBundleFromBodyV1(params.body);
+        else if (params.body !== null && 'bytes' in params.body) artifactHtmlBundleFromBodyV1(params.body.bytes, params.body.mime);
+        else if (params.body !== null && params.readReference) {
+            artifactHtmlBundleFromBodyV1(await params.readReference(params.body), params.body.mime);
+        } else throw new Error('HTML content is unavailable');
+    } catch {
+        params.signal?.throwIfAborted();
+        throw new HappyError('HTML Artifact content is invalid', false, { code: 'artifact_html_content_invalid' });
+    }
+}
+
 function artifactAccessProjection(artifact: Artifact) {
     return { access: artifact.access, ownerAccountId: artifact.ownerAccountId };
 }
@@ -740,6 +759,7 @@ export async function createArtifactWithHeaderViaApi(params: {
     }
     const body = prepareArtifactBody(params.body);
     requireArtifactBodyKind(header, body);
+    await requireArtifactHtmlWriteContent(params);
     const rawHeader = withArtifactExcerptV1(header, body);
 
     try {
@@ -969,6 +989,10 @@ export async function updateArtifactWithHeaderViaApi(params: {
     if (!storageMode) {
         throw new Error('Artifact storage mode is unavailable');
     }
+    const currentStorageMode = storageMode;
+    await requireArtifactHtmlWriteContent({ ...params,
+        readReference: reference => openFetchedArtifactBinary({ ...params, reference }, currentStorageMode),
+    });
     const artifactEncryption = storageMode === 'e2ee'
         ? new ArtifactEncryption(dataEncryptionKey!)
         : null;

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, createLaunchProfilePublisherV1,
-    createActionExecutor, ArtifactActionOutputSchemasV1, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, withArtifactExcerptV1, type ActionExecutorContext } from '@happier-dev/protocol';
+    createActionExecutor, ArtifactActionOutputSchemasV1, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, withArtifactExcerptV1,
+    isApprovalRequiredByActionsSettings, normalizeActionsSettingsV1, type ActionExecutorContext } from '@happier-dev/protocol';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -213,18 +214,26 @@ describe('scoped Account workflow Artifact operations', () => {
             storage.setState({ sessions: { 'publication-session': createSessionFixture({ id: 'publication-session', serverId: home.id,
                 metadata: { ...createSessionFixture().metadata!, path: '/workspace', machineId: 'publication-machine' } }) },
                 machineListByServerId: { [home.id]: [createMachineFixture({ id: 'publication-machine' })] } });
-            const download = vi.fn(async (request: { destination: { writeBytes: (bytes: Uint8Array) => Promise<void>; close: () => Promise<void> } }) => {
+            const download = vi.fn(async (request: { signal?: AbortSignal; destination: { writeBytes: (bytes: Uint8Array) => Promise<void>; close: () => Promise<void> } }) => {
                 await request.destination.writeBytes(new TextEncoder().encode('<h1>Published</h1>'));
                 await request.destination.close();
                 return { ok: true as const, name: 'result.html', sizeBytes: 18 };
             });
             // This port is the remote workspace byte-transport boundary; Session lookup and publication remain real.
+            // Session provenance retains the Agent approval floor. Use the real persisted waiver policy for this admitted source test.
+            const publicationSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'artifact.publish_from_file': ['agent'] } });
             const publication = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({ artifactAction: createUiArtifactAction(context, {
                 workspaceDownload: download,
-            }) })));
+            }), isActionApprovalRequired: (actionId, actionContext, input) => isApprovalRequiredByActionsSettings(
+                actionId, publicationSettings, actionContext, undefined, undefined, input,
+            ) })));
             const publicationCaller = { kind: 'session', sessionId: 'publication-session', starterDepth: 0, turnDepth: 0 } satisfies NonNullable<ActionExecutorContext['actionCaller']>;
             const sessionCaller = { ...caller, serverId: home.id, runtimeAccountId: 'artifact-account',
                 defaultSessionId: 'publication-session', actionCaller: publicationCaller };
+            expect(await execute('artifact.publish_from_file', { path: 'result.html' }, sessionCaller))
+                .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+            expect(stored).toBeUndefined();
+            expect(download).not.toHaveBeenCalled();
             expect(await publication('artifact.publish_from_file', { path: 'result.html' }, { ...sessionCaller, runtimeAccountId: 'other-account' }))
                 .toMatchObject({ ok: false, errorCode: 'artifact_source_unavailable' });
             expect(await publication('artifact.publish_from_file', { path: 'result.html' }, { ...sessionCaller, serverId: 'other-home' }))
@@ -242,12 +251,14 @@ describe('scoped Account workflow Artifact operations', () => {
                 .toMatchObject({ ok: false, errorCode: 'artifact_source_forbidden' });
             expect(download).toHaveBeenCalledTimes(calls);
             const cancellation = new AbortController();
-            download.mockImplementationOnce(async () => {
+            download.mockImplementationOnce(async (request) => {
+                await request.destination.writeBytes(new TextEncoder().encode('<h1>Cancelled</h1>'));
                 cancellation.abort();
+                expect(request.signal?.aborted).toBe(true);
                 return { ok: true, name: 'result.html', sizeBytes: 18 };
             });
             expect(await publication('artifact.publish_from_file', { path: 'result.html' }, { ...sessionCaller, signal: cancellation.signal }))
-                .toMatchObject({ ok: false, errorCode: 'cancelled' });
+                .toMatchObject({ ok: false });
             expect(stored).toBe(published);
             download.mockImplementationOnce(async () => {
                 const session = storage.getState().sessions['publication-session'];

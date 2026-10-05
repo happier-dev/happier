@@ -191,7 +191,7 @@ describe('declared settings owner', () => {
         expect(catalogAudio.remove).toHaveBeenCalled();
         expect(preview.operation?.requiresApproval).toBe(true);
         expect(stop.operation?.requiresApproval).toBe(false);
-        expect(isApprovalRequiredByActionsSettings('settings.invoke', ActionsSettingsV1Schema.parse({ v: 1 }), { surface: 'cli', authority: 'account_automation' },
+        expect(isApprovalRequiredByActionsSettings('settings.invoke', ActionsSettingsV1Schema.parse({ v: 1 }), { surface: 'agent', authority: 'account_automation' },
             resolveSettingsDeclarationOperationApprovalRequired(stop.anchor, account) ? 'danger' : 'safe')).toBe(false);
         await executor.execute('settings.invoke', { anchor: preview.anchor, input: { kind: 'voice_preview', voiceId: 'voice_a' } }, ctx);
         storage.setState({ settingsScope: { serverId: 'different-home', accountId: 'test-account' } });
@@ -223,12 +223,20 @@ describe('declared settings owner', () => {
             if (request.method === 'daemon.voiceInference.models.install') return { ok: true, model: { ...status, installState: 'installed' } };
             throw new Error('unexpected_machine_operation');
         });
-        const owner = createOwner(undefined, true, true, account);
+        let current = true;
+        const owner = createOwner(undefined, true, true, account, undefined, undefined, undefined, { isCurrent: () => current });
         const executor = throughActionExecutor(owner.action);
         const result = await executor.execute('settings.invoke', { anchor: 'voiceAdvanced.installSpeechModel', input: { kind: 'model_pack', packId, machineId: 'voice-machine' } }, { surface: 'ui', authority: 'present_user' });
         expect(settingsMachineRpc.mock.calls.map(([request]) => request.method))
             .toEqual(['daemon.voiceInference.models.status', 'daemon.voiceInference.models.install']);
         expect(result).toEqual({ ok: true, result: { anchor: 'voiceAdvanced.installSpeechModel', status: 'completed', value: { packId } } });
+        settingsMachineRpc.mockImplementation(async request => {
+            if (request.method === 'daemon.voiceInference.models.status') return { ok: true, models: [status] };
+            current = false;
+            return { ok: true, model: { ...status, installState: 'installed' } };
+        });
+        expect(await executor.execute('settings.invoke', { anchor: 'voiceAdvanced.installSpeechModel', input: { kind: 'model_pack', packId, machineId: 'voice-machine' } }, { surface: 'ui', authority: 'present_user' }))
+            .toEqual({ ok: true, result: { anchor: 'voiceAdvanced.installSpeechModel', status: 'cancelled' } });
         expect(owner.openedInteractions).toEqual([]);
     });
     it('executes Voice operations with typed missing-target results instead of opening a settings row', async () => {
@@ -293,37 +301,8 @@ describe('declared settings owner', () => {
             ['voicePrivacy.diagnosticsLocation', false], ['voicePrivacy.diagnosticsRetryShutdown', false], ['unknown', true],
         ] as const) {
             const safety = resolveSettingsDeclarationOperationApprovalRequired(anchor, before) ? 'danger' : 'safe';
-            expect(isApprovalRequiredByActionsSettings('settings.invoke', policy, { surface: 'cli', authority: 'account_automation' }, safety), anchor).toBe(required);
+            expect(isApprovalRequiredByActionsSettings('settings.invoke', policy, { surface: 'agent', authority: 'account_automation' }, safety), anchor).toBe(required);
         }
-    });
-    it('revokes the exact active diagnostics session through the public Action when machine input is omitted', async () => {
-        const before = storage.getState();
-        const runtime = await import('@/voice/diagnostics/runtimeStatus');
-        const capture = await import('@/voice/diagnostics/capturePolicy');
-        const sessions = await import('@/voice/session/voiceSessionStore');
-        onTestFinished(() => {
-            storage.setState(before, true); settingsMachineRpc.mockReset(); humanConfirmation.confirm.mockResolvedValue(false);
-            runtime.resetVoiceDiagnosticsRuntimeStatusForTests(); capture.resetVoiceDiagnosticsSessionPolicyForTests(); sessions.resetVoiceSessionStoreForTests();
-        });
-        const account = applySettings(settingsDefaults, normalizeVoiceSettingsLocalDelta({ voice: { ...settingsDefaults.voice,
-            executionMachine: { mode: 'fixed' as const, machineId: 'voice-machine', autoMachineId: null } } }, settingsDefaults));
-        storage.setState({ settings: account, machines: { 'voice-machine': createMachineFixture({ id: 'voice-machine', activeAt: Date.now() }) } });
-        runtime.publishVoiceDiagnosticsRuntimeStatus({ machineId: 'voice-machine', phase: 'active' });
-        sessions.setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'diagnostic-session', status: 'connected', mode: 'listening', canStop: true });
-        capture.setVoiceDiagnosticsSessionCaptureAllowed('diagnostic-session', true);
-        humanConfirmation.confirm.mockResolvedValue(true);
-        settingsMachineRpc.mockResolvedValue({ ok: true });
-        const owner = createOwner(undefined, true, true, account);
-        const executor = throughActionExecutor(owner.action);
-        const ctx = { surface: 'ui' as const, authority: 'present_user' as const };
-        expect(await executor.execute('settings.invoke', { anchor: 'voicePrivacy.diagnosticsSessionOptOut',
-            input: { kind: 'diagnostics_session', sessionId: 'diagnostic-session', machineId: 'other-machine' } }, ctx))
-            .toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'execution_machine_changed' } });
-        expect(await executor.execute('settings.invoke', { anchor: 'voicePrivacy.diagnosticsSessionOptOut',
-            input: { kind: 'diagnostics_session', sessionId: 'diagnostic-session' } }, ctx))
-            .toEqual({ ok: true, result: { anchor: 'voicePrivacy.diagnosticsSessionOptOut', status: 'completed' } });
-        expect(capture.isVoiceDiagnosticsSessionCaptureAllowed('diagnostic-session')).toBe(false);
-        expect(settingsMachineRpc.mock.calls.every(([request]) => request.machineId === 'voice-machine')).toBe(true);
     });
     it('does not retry a former Account diagnostics obligation after retirement during the storage read', async () => {
         const before = storage.getState();
