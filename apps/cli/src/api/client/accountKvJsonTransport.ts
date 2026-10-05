@@ -8,7 +8,7 @@ import { decodeBase64, encodeBase64, decryptResult, encrypt } from '@/api/encryp
 import { fetchAccountEncryptionCurrentness } from './connectedServiceCredentialApi';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 
-export type AccountKvAuthorizationRequest = Readonly<{ method: 'GET' | 'POST'; path: string }>;
+export type AccountKvAuthorizationRequest = Readonly<{ method: 'GET' | 'POST'; path: string; body?: unknown }>;
 export type CliAccountKvJsonTransportParams = Readonly<{
   credentials: StoredCredentials; key: string; serverBaseUrl?: string; signal?: AbortSignal; shouldContinue?: () => boolean;
   resolveAuthorizationHeaders: (request: AccountKvAuthorizationRequest) => Readonly<Record<string, string>> | null;
@@ -85,8 +85,9 @@ export function createCliAccountKvJsonTransport(params: CliAccountKvJsonTranspor
     },
     compareAndSet: async (value, version) => {
       check(); const admitted = await context();
-      const response = await axios.post(`${base}/v1/kv`, { mutations: [{ key: params.key, value: encode(value, admitted), version }] },
-        { headers: headers({ method: 'POST', path: '/v1/kv' }), validateStatus: () => true, ...(params.signal ? { signal: params.signal } : {}) });
+      const body = { mutations: [{ key: params.key, value: encode(value, admitted), version }] };
+      const response = await axios.post(`${base}/v1/kv`, body,
+        { headers: headers({ method: 'POST', path: '/v1/kv', body }), validateStatus: () => true, ...(params.signal ? { signal: params.signal } : {}) });
       check();
       if (response.status !== 200 && response.status !== 409) throw new AccountKvJsonTransportError('account_kv_unavailable', 'Account KV mutation failed');
       const result = mutationResponse.parse(response.data);
